@@ -3,71 +3,99 @@
 > 本仓库由 AI 开发与维护，所有代码变更均由 AI 执行。
 <!-- vibe-coding-declaration:end -->
 
-# DSHarbor
+<p align="center">
+  <img src="assets/logo.png" width="128" height="128" alt="DSHarbor">
+</p>
 
-DSH（DeepSeek Harness）Web 版的桌面壳：**安装包尽量小**、关闭界面时释放内存（DSH 后端照常运行）、**自动拿到每次启动动态生成的登录链接**（DSH 内部桥接插件优先、启动日志解析兜底，可一键在壳窗口或系统浏览器打开且已登录）、支持四种启动方式（官方 npx 命令 / 系统全局命令 / 指定二进制路径 / WSL 跨系统）。
+<h1 align="center">DSHarbor</h1>
 
-> 目前状态：**开发中**。骨架、启动器、登录链接、轻量模式与托盘、配置持久化（含端口覆盖）已跑通（WSL2 交叉编译出 Windows 安装包 → 真机安装；界面里可选四种启动方式拉起 DSH，显示运行状态与带 token 的登录链接，可一键停止、两种方式打开 DSH 界面（当前程序/浏览器）；桥接插件支持在 Windows / WSL 两侧一键安装/卸载并自动备份回滚；关闭窗口即进入轻量模式释放界面内存，托盘菜单五档、单击目标可配置；启动配置自动保存、重开壳保留，端口可跟随或覆盖 DSH 配置；「最近输出 / 操作输出」折叠块在启动、停止、桥接安装/卸载/恢复等操作时会自动展开）；单实例（重复启动聚焦已有窗口）、DSH 意外退出提示与「重新启动」入口、安装包元数据与卸载数据保留均已跑通；文档收尾完成（术语表与手动验收手册见仓库；等待维护者确认提交与发布）。功能计划见[需求单 #1](https://github.com/BoxMiao007/dsharbor/issues/1)。
+<p align="center">
+  DSH（DeepSeek Harness）Web 版的轻量桌面壳<br>
+  安装包约 2 MB · 关窗即释放界面内存 · 登录链接自动到手
+</p>
 
-## 给使用者：怎么装、怎么用
+## 它解决什么
 
-> 第一个可日常使用的版本尚未正式发布；想现在就用，按下方「给开发者」一节自己打包即可（装到当前用户目录、不需要管理员权限；Win10/11 自带 WebView2 运行时）。
+DSH Web 版（`dsh web`）每次启动会在本地起 HTTP 服务，并随机生成一次性 token——你得从终端日志里找到带 token 的地址，再丢进浏览器。浏览器标签开着不动会持续吃内存，终端一关链接也就找不回来了。
 
-使用方式：
+DSHarbor 把这些收进一个 2 MB 出头的 Windows 桌面壳：
 
-- 安装：双击安装包按向导完成（静默安装：命令后加 `/S`）
-- 日常使用：右键托盘提供「浏览器打开 / 当前程序打开 / 打开启动界面 / 重启 DSH / 停止 DSH / 完全退出」（Win11 默认收在「隐藏的图标」里，可拖到任务栏常显）；单击托盘图标打开你在界面里配置的默认窗口（启动界面或程序窗口）；「停止 DSH」只停后端，壳与窗口照样用
-- 两种打开方式（相互独立，关一个不影响另一个）：「当前程序打开」在弹出的壳窗口里看已登录的 DSH 界面（Token 由壳自动换取，不用手拼链接）；「浏览器打开」显式交给系统默认浏览器
-- 默认不碰系统浏览器：界面就在壳自己的窗口里（Windows 自带 WebView2 内核，关窗即释放）；启动 DSH 时壳自动加 `--no-open`，不会自动弹出浏览器——想用浏览器时点「浏览器打开」手动开
-- 关闭主窗口 = 轻量模式：界面内存释放（实测两窗口全开 1037 MB → 关窗后 474 MB，减少的约 563 MB 全部来自 WebView），DSH 后端继续运行，登录链接保留；单击托盘（或菜单「打开启动界面」）窗口原地重建，登录链接自动恢复
-- 启动配置（启动方式、附加参数、WSL 发行版、端口）在界面里改完即自动保存，重开壳后保留；壳自己的配置与桥接插件备份存放在 `%APPDATA%\DSHarbor`，卸载时保留
-- 端口默认跟随你 DSH 配置里的值（界面会显示当前生效值，如 3080）；也可以填自定义端口，壳以一次性覆盖层生效——不改动你的任何 DSH 配置文件
-- 重复启动壳只会切回已开着的那个窗口；DSH 意外退出时界面会提示并给出「重新启动 DSH」
-- 卸载说明（只删安装目录：不动你的 DSH 数据，也不删壳自己的配置与桥接备份）
+- **一键启动**：四种启动方式（官方 npx 命令 / 系统全局命令 / 指定二进制路径 / WSL 跨系统），启动、停止、重启都在界面上；
+- **登录链接自动到手**：壳以 DSH 插件（`dsharbor-bridge`）为第一通道现场铸造链接、启动日志解析兜底；「当前程序打开」弹出的窗口**直接是登录态**，不用手拼链接；
+- **界面内存可释放**：关闭窗口即销毁 WebView（实测两窗口全开 1037 MB → 关窗后 474 MB），DSH 后端与托盘常驻，托盘一点窗口原地重建；
+- **不碰你的 DSH 配置**：端口覆盖用一次性 launcher 层；桥接插件走官方 `dsh plugin` 安装，装前自动备份、可一键回滚。
 
-## 给开发者：怎么构建
+## 功能一览（v0.1.0）
+
+| 能力 | 说明 |
+|---|---|
+| 四种启动方式 | 官方 npx / 系统全局命令 / 指定二进制路径 / WSL 跨系统（在发行版内拉起 DSH） |
+| 登录链接 | 桥接插件（首选）+ 启动日志解析（兜底）；token 只驻内存、不落盘 |
+| 两种打开方式 | 「当前程序打开」（壳内 WebView2 窗口）/「浏览器打开」（系统默认浏览器）；两窗口相互独立 |
+| 轻量模式 | 关闭窗口释放界面内存，DSH 与托盘常驻；关一个窗口不连带关另一个 |
+| 托盘菜单 | 浏览器打开 / 当前程序打开 / 打开启动界面 / 重启 DSH / 停止 DSH / 完全退出；单击目标可配置 |
+| 配置持久化 | 启动方式、附加参数、WSL 发行版、端口改完即存（`%APPDATA%\DSHarbor`），卸载不删 |
+| 端口覆盖 | 默认跟随 DSH 配置（界面显示当前生效值），也可自定义；不改动任何 DSH 文件 |
+| 桥接插件管理 | Windows / WSL 两侧一键安装 · 卸载 · 回滚（自动备份 profile 文件并附哈希清单） |
+| 单实例与健壮性 | 重复启动聚焦已有窗口；DSH 意外退出给出提示与「重新启动 DSH」入口 |
+
+功能计划与进度见[需求单 #1](https://github.com/BoxMiao007/dsharbor/issues/1)。
+
+## 给使用者
+
+> 安装包未做代码签名，首次运行 Windows 可能提示 SmartScreen，选「仍要运行」即可。需要 Win10/11（自带 WebView2 运行时）。
+
+1. **安装**：双击 `DSHarbor_0.1.0_x64-setup.exe` 按向导完成（静默安装：命令后加 `/S`）。装到当前用户目录，不需要管理员权限。
+2. **启动**：打开 DSHarbor → 选启动方式（默认「官方 npx 命令」）→ 点「启动 DSH」。首次用 npx 会自动下载 DSH，稍慢。
+3. **看界面**：状态显示「运行中」后，点「当前程序打开」（或托盘菜单）即可看到已登录的 DSH 界面；也可以用「浏览器打开」交给系统默认浏览器。
+4. **省内存**：直接关闭窗口即可——界面内存立刻释放，DSH 继续运行；单击托盘图标随时回来（打开哪个窗口可在界面里配置）。
+5. **卸载**：只删安装目录；DSH 数据（`%USERPROFILE%\.dsh`）与壳配置、桥接备份（`%APPDATA%\DSHarbor`）都会保留。
+
+## 给开发者
 
 ### 一次性准备（WSL2 / Ubuntu）
 
 ```bash
-# 系统工具：LLVM 工具链（交叉编译用）+ NSIS（打 Windows 安装包用）
-sudo apt-get install -y clang lld llvm nsis
-
-# Rust：Windows 目标编译器 + 交叉编译工具
-rustup target add x86_64-pc-windows-msvc
-cargo install --locked cargo-xwin
-
-# 前端依赖
-pnpm install
+sudo apt-get install -y clang lld llvm nsis        # LLVM 工具链 + NSIS
+rustup target add x86_64-pc-windows-msvc           # Windows 目标
+cargo install --locked cargo-xwin                  # 交叉编译工具
+pnpm install                                       # 前端依赖
 ```
 
-### 日常命令
+### 验证门（提交前必过）
 
 ```bash
-cargo fmt --check            # Rust 格式检查
-cargo test -p dsharbor-core  # 纯逻辑核心库的单元测试（开发机直接跑）
-node --test plugins/dsharbor-bridge/test/bridge.test.js  # 桥接插件测试
-pnpm build                    # 前端类型检查 + 构建
-pnpm pack:bridge              # 桥接插件打 tgz（tauri build 会自动执行）
-
-# 静态检查（按真实交付目标 Windows 跑）
+cargo fmt --check
+cargo test -p dsharbor-core
+node --test plugins/dsharbor-bridge/test/bridge.test.js
+pnpm build
 cargo xwin clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+```
 
-# 一条命令产出 Windows 安装包
+### 一条命令出 Windows 安装包
+
+```bash
 pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 # 产物：target/x86_64-pc-windows-msvc/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe
 ```
 
 ### 仓库结构
 
-- `crates/dsharbor-core/` —— 与界面、系统 API 无关的纯逻辑（开发机可全自动测试）
-- `src-tauri/` —— Tauri 2 外壳（窗口、启动器、登录链接、轻量模式）
-- `src/` —— 前端界面（Vite + TypeScript）
-- `plugins/dsharbor-bridge/` —— DSH 桥接插件（壳经它取登录链接；以 tgz 形式随安装包分发）
-- `docs/decisions.md` —— 重大技术决策记录
-- `docs/manual-acceptance.md` —— 发布前 Windows 手动验收手册（每步含操作与期望结果）
-- `GLOSSARY.md` —— 项目与 DSH 生态的核心术语表
+| 目录 | 内容 |
+|---|---|
+| `crates/dsharbor-core/` | 纯逻辑核心库（启动命令构造、token 解析、端口覆盖层、轻量模式状态机）——开发机可全自动测试 |
+| `plugins/dsharbor-bridge/` | DSH 桥接插件（随安装包以 tgz 分发） |
+| `src-tauri/` | Tauri 2 外壳（启动器、登录链接、轻量模式、托盘、桥接插件管理） |
+| `src/` | 前端界面（Vite 8 + TypeScript 7，无 UI 框架） |
+| `assets/` | 图标源：`icon-source.png`（主用）、`icon-source.svg`（备用）、`logo.png` |
+| `docs/decisions.md` | 重大技术决策记录（每条含决策、原因、放弃了什么） |
+| `docs/manual-acceptance.md` | 发布前 Windows 手动验收手册 |
+| `GLOSSARY.md` | 项目与 DSH 生态术语表 |
+
+### 技术栈
+
+Tauri 2（Rust + 系统 WebView2）和 Vite 8 / TypeScript 7；在 WSL2 用 `cargo-xwin` 交叉编译、NSIS 打安装包。为什么这么选、放弃了什么，都记在 `docs/decisions.md`。
 
 ## 给 AI agent 的约定
 
-本仓库的协作规则见 [AGENTS.md](AGENTS.md)。
+本仓库由 AI 开发与维护：维护者只提需求与验收，实现、验证、文档、提交由 AI 完成。协作规则见 [AGENTS.md](AGENTS.md)。
