@@ -379,6 +379,57 @@ fn plugin_command(config: &LaunchConfig, op: &PluginOp) -> Result<Command, Strin
     }))
 }
 
+/// 暂存目录：pnpm 会把含空格的 `file:` 规格在空格处截断（`file:D:\Program` → 当包名
+/// 去 registry 查 → 404），而默认安装目录 `D:\Program Files\DSHarbor` 就含空格，
+/// 所以插件包必须先复制到一个不含空格的路径再安装。
+fn staging_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut candidates = vec![crate::app_data_root(app)?.join("cache")];
+    if let Ok(temp) = std::env::var("TEMP") {
+        candidates.push(PathBuf::from(temp).join("dsharbor-cache"));
+    }
+    for dir in candidates {
+        if !dir.to_string_lossy().contains(' ') {
+            std::fs::create_dir_all(&dir)
+                .map_err(|err| format!("创建暂存目录失败（{}）：{err}", dir.display()))?;
+            return Ok(dir);
+        }
+    }
+    Err(
+        "找不到不含空格的暂存目录：pnpm 无法解析含空格的插件包路径，\
+         请把 DSHarbor 安装到不含空格的目录（或把 TEMP 指向无空格目录）后重试。"
+            .to_string(),
+    )
+}
+
+/// 把桥接插件包暂存到无空格位置，返回可交给 `pnpm add file:` 的路径
+/// （宿主 → Windows 路径；WSL → 发行版内路径）。
+fn stage_bridge_tgz(app: &tauri::AppHandle, target: &Target, tgz: &str) -> Result<String, String> {
+    let name = std::path::Path::new(tgz)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .ok_or_else(|| format!("插件包路径缺少文件名：{tgz}"))?;
+    match target {
+        Target::Host => {
+            let dest = staging_dir(app)?.join(&name);
+            std::fs::copy(tgz, &dest)
+                .map_err(|err| format!("复制插件包到暂存目录失败（{}）：{err}", dest.display()))?;
+            Ok(strip_extended_prefix(&dest.to_string_lossy()))
+        }
+        Target::Wsl { distro } => {
+            let source = windows_path_to_wsl(tgz).ok_or_else(|| {
+                format!("插件包路径无法转换为 WSL 路径（需位于 Windows 盘符）：{tgz}")
+            })?;
+            if source.contains('\'') || name.contains('\'') {
+                return Err(format!("插件包路径包含不允许的字符 '：{source}"));
+            }
+            let dir = "/tmp/dsharbor-bridge";
+            let script = format!("/bin/mkdir -p {dir} && /bin/cp -- '{source}' '{dir}/{name}'");
+            wsl_run(distro, &script, PLUGIN_OP_TIMEOUT)?;
+            Ok(format!("{dir}/{name}"))
+        }
+    }
+}
+
 /// 安装桥接插件（先备份、再走官方 plugin add、最后校验 bundles 登记）。
 pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOutcome, String> {
     let target = Target::of(config);
@@ -396,12 +447,8 @@ pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOu
 
     let tgz = find_bridge_tgz(app)?;
     let backup_dir = backup_profile(app, &target)?;
-    let package_ref = match &target {
-        Target::Host => tgz.clone(),
-        Target::Wsl { .. } => windows_path_to_wsl(&tgz).ok_or_else(|| {
-            format!("插件包路径无法转换为 WSL 路径（需位于 Windows 盘符）：{tgz}")
-        })?,
-    };
+    // 先暂存到无空格路径：pnpm 无法解析含空格的 `file:` 规格（见 stage_bridge_tgz）。
+    let package_ref = stage_bridge_tgz(app, &target, &tgz)?;
 
     let op = PluginOp::Install {
         package: format!("file:{package_ref}"),
@@ -417,6 +464,8 @@ pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOu
     };
     let message = format!(
         "安装命令：dsh plugin --profile {PROFILE_NAME} add file:{package_ref}（经 {}）\n\
+         插件包：{tgz}\n\
+         暂存路径：{package_ref}\n\
          退出码：{code}\n\
          校验：{verify}\n\
          输出：\n{}\n\
