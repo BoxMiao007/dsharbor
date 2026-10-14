@@ -61,7 +61,7 @@
 
 ## 11. 卸载与数据保留
 
-- 操作：Windows 设置 → 应用 → DSHarbor → 卸载（静默：`%LOCALAPPDATA%\DSHarbor\uninstall.exe /S`）。
+- 操作：Windows 设置 → 应用 → DSHarbor → 卸载（静默：安装目录下的 `uninstall.exe /S`；默认当前用户目录，若安装时改过路径以实际安装目录为准）。
 - 期望：仅删除安装目录；`%USERPROFILE%\.dsh`（DSH 数据）与 `%APPDATA%\DSHarbor`（壳配置与桥接备份）完整保留。
 
 ## 排查
@@ -69,4 +69,5 @@
 - **端口被占用（EADDRINUSE）**：profile 里 webserver 端口被别的程序占用（注意 WSL 镜像网络下 Windows/WSL 共用 localhost 端口，刚停过 DSH 时等 1~2 分钟 TIME_WAIT 消散）。改「端口」字段用自定义端口，或释放占用。
 - **桥接未启用（日志兜底就绪）**：DSH 启动时没带 nonce（例如你自己在终端跑 `dsh web`），属预期降级。
 - **WSL 插件安装报 pnpm 错误**：确认壳运行时已注入清洗后的 PATH（4.0 起内置）；发行版内 pnpm 版本冲突时 `npx @deepseek-ai/dsh plugin --profile web …` 手动复核。
+- **「安装桥接插件」报 `ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_LATEST`（v0.1.0 实机缺陷，已修）**：安装目录含空格（默认 `D:\Program Files\DSHarbor`）时，pnpm 会把 `file:` 规格在空格处截断后当包名去 registry 查。现在壳会先把插件包暂存到无空格目录（`%APPDATA%\DSHarbor\cache`，WSL 侧为 `/tmp/dsharbor-bridge`）再安装；若仍报错，检查暂存目录与 `TEMP` 是否都含空格。
 - **看不到托盘图标**：Win11 默认折叠，拖到任务栏常显或点「隐藏的图标」。
