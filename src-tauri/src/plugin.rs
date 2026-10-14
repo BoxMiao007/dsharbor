@@ -1,0 +1,541 @@
+//! 桥接插件的安装 / 卸载 / 备份与恢复（外壳侧）。
+//!
+//! 设计（为什么这样做）：
+//! - 安装走 DSH 官方命令 `dsh plugin --profile web add file:<tgz>`。官方
+//!   plugin-manager 在 pnpm 安装完成后会读取包的 `dsh.bundle` 声明，自动把
+//!   包名登记进 profile 的 `dsh.profile.bundles`；`remove` 时自动摘除。
+//!   这就是「一键安装 / 一键卸载」的官方语义——壳不手改用户配置文件，
+//!   也不碰标注「托管，勿改」的块。
+//! - 操作前先把 profile 目录里 pnpm 会改写的文件备份到应用数据目录
+//!   （时间戳目录 + 内容哈希清单），失败或想回滚时可整体恢复。
+//! - 目标环境跟随当前启动方式：Npx/System/Binary → Windows 宿主文件系统；
+//!   Wsl → 经 `wsl.exe -d <distro> --` 在发行版内部读写。插件包（tgz）位于
+//!   Windows 磁盘上的应用资源目录，WSL 场景装换为 /mnt/<盘>/… 路径交给发行版。
+
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use dsharbor_core::launch::{
+    build_plugin_plan, LaunchConfig, LaunchMode, LaunchPlan, PluginOp, PROFILE_NAME,
+};
+use dsharbor_core::paths::windows_path_to_wsl;
+use serde::Serialize;
+use tauri::Manager;
+
+use crate::launcher::{apply_no_window, command_for_plan, spawn_line_reader};
+
+/// profile 目录里需要备份的文件（pnpm 会改写前三个；patch 文件一并存证）。
+const BACKUP_FILES: [&str; 4] = [
+    "package.json",
+    "pnpm-workspace.yaml",
+    "pnpm-lock.yaml",
+    "cordis.patch.yml",
+];
+/// 安装/卸载命令的超时（首次可能触发 pnpm 解析依赖，给足时间）。
+const PLUGIN_OP_TIMEOUT: Duration = Duration::from_secs(240);
+
+/// 插件操作的目标环境。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// Windows 宿主文件系统。
+    Host,
+    /// WSL 发行版内部。
+    Wsl { distro: String },
+}
+
+impl Target {
+    pub fn of(config: &LaunchConfig) -> Target {
+        match &config.mode {
+            LaunchMode::Wsl { distro, .. } => Target::Wsl {
+                distro: distro.clone(),
+            },
+            _ => Target::Host,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Target::Host => "Windows".to_string(),
+            Target::Wsl { distro } => format!("WSL（{distro}）"),
+        }
+    }
+}
+
+/// 安装/卸载的结果（回给界面直接展示）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeOutcome {
+    pub ok: bool,
+    pub message: String,
+    /// 本次操作前的备份目录（恢复时的依据）。
+    pub backup_dir: String,
+}
+
+/// 桥接插件在当前目标环境中的状态。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeState {
+    pub installed: bool,
+    pub target: String,
+    pub profile_dir: String,
+    pub detail: String,
+    pub latest_backup: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// 目标环境访问（宿主直连 / WSL 内经 wsl.exe）
+// ---------------------------------------------------------------------------
+
+fn host_dsh_home() -> Result<String, String> {
+    if let Ok(custom) = std::env::var("DSH_HOME") {
+        if !custom.trim().is_empty() {
+            return Ok(custom);
+        }
+    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "找不到用户主目录（USERPROFILE / HOME 都未设置）".to_string())?;
+    let sep = if cfg!(windows) { '\\' } else { '/' };
+    Ok(format!("{home}{sep}.dsh"))
+}
+
+/// WSL 发行版里的 DSH 主目录（尊重发行版内部的 DSH_HOME）。
+fn wsl_dsh_home(distro: &str) -> Result<String, String> {
+    let out = wsl_run(
+        distro,
+        "printf %s \"${DSH_HOME:-$HOME/.dsh}\"",
+        Duration::from_secs(30),
+    )?;
+    let home = out.trim();
+    if home.is_empty() {
+        return Err(format!("无法在 WSL 发行版 {distro} 中确定 DSH 主目录"));
+    }
+    Ok(home.to_string())
+}
+
+/// 当前目标环境的 profile 目录（v1 固定使用 web profile）。
+pub fn profile_dir(target: &Target) -> Result<String, String> {
+    match target {
+        Target::Host => {
+            let home = host_dsh_home()?;
+            let sep = if cfg!(windows) { '\\' } else { '/' };
+            Ok(format!("{home}{sep}profiles{sep}{PROFILE_NAME}"))
+        }
+        Target::Wsl { distro } => Ok(format!(
+            "{}/profiles/{}",
+            wsl_dsh_home(distro)?,
+            PROFILE_NAME
+        )),
+    }
+}
+
+fn join_path(target: &Target, dir: &str, name: &str) -> String {
+    match target {
+        Target::Host => PathBuf::from(dir).join(name).to_string_lossy().to_string(),
+        Target::Wsl { .. } => format!("{dir}/{name}"),
+    }
+}
+
+/// 在 WSL 发行版里跑一条 bash 脚本并返回 stdout+stderr。
+fn wsl_run(distro: &str, script: &str, timeout: Duration) -> Result<String, String> {
+    let mut command = Command::new("wsl.exe");
+    command.args(["-d", distro, "--", "bash", "-lc", script]);
+    let (code, output) = run_capture(command, timeout)?;
+    if code != 0 {
+        return Err(format!(
+            "WSL（{distro}）命令失败（退出码 {code}）：{}",
+            tail_chars(&output, 600)
+        ));
+    }
+    Ok(output)
+}
+
+/// 读文件（跨目标环境）。
+pub(crate) fn read_file(target: &Target, path: &str) -> Result<String, String> {
+    match target {
+        Target::Host => {
+            std::fs::read_to_string(path).map_err(|err| format!("读取 {path} 失败：{err}"))
+        }
+        Target::Wsl { distro } => {
+            wsl_run(distro, &format!("cat -- '{path}'"), Duration::from_secs(30))
+        }
+    }
+}
+
+/// 写文件（跨目标环境；WSL 经 stdin 送内容，避免命令行长度与转义问题）。
+fn write_file(target: &Target, path: &str, content: &str) -> Result<(), String> {
+    match target {
+        Target::Host => {
+            std::fs::write(path, content).map_err(|err| format!("写入 {path} 失败：{err}"))
+        }
+        Target::Wsl { distro } => {
+            use std::io::Write;
+            let mut child = Command::new("wsl.exe")
+                .args([
+                    "-d",
+                    distro,
+                    "--",
+                    "bash",
+                    "-lc",
+                    &format!("cat > '{path}'"),
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|err| format!("启动 WSL 写入命令失败：{err}"))?;
+            if let Some(stdin) = child.stdin.as_mut() {
+                stdin
+                    .write_all(content.as_bytes())
+                    .map_err(|err| format!("写入 WSL 文件失败：{err}"))?;
+            }
+            drop(child.stdin.take());
+            let status = child
+                .wait()
+                .map_err(|err| format!("等待 WSL 写入结束失败：{err}"))?;
+            if !status.success() {
+                return Err(format!("WSL 写入 {path} 失败（{status}）"));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// 运行一条一次性命令：限时等待，收集解码后的输出（stdout+stderr 合并）。
+pub(crate) fn run_capture(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<(i32, String), String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_no_window(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("执行命令失败：{err}"))?;
+    let buffer = Arc::new(Mutex::new(String::new()));
+    let push = {
+        let buffer = buffer.clone();
+        move |line: String| {
+            if let Ok(mut guard) = buffer.lock() {
+                guard.push_str(&line);
+                guard.push('\n');
+            }
+        }
+    };
+    if let Some(stdout) = child.stdout.take() {
+        let push = push.clone();
+        spawn_line_reader(stdout, push);
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let push = push.clone();
+        spawn_line_reader(stderr, push);
+    }
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if started.elapsed() > timeout {
+                    let _ = child.kill();
+                    return Err(format!("命令超时（{} 秒未结束）", timeout.as_secs()));
+                }
+                std::thread::sleep(Duration::from_millis(120));
+            }
+            Err(err) => return Err(format!("等待命令结束失败：{err}")),
+        }
+    };
+    // 输出线程还在处理管道里最后几行，稍等片刻再取结果。
+    std::thread::sleep(Duration::from_millis(150));
+    let text = buffer.lock().map(|guard| guard.clone()).unwrap_or_default();
+    Ok((status.code().unwrap_or(-1), text.trim_end().to_string()))
+}
+
+fn tail_chars(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        text.to_string()
+    } else {
+        text.chars().skip(count - max).collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 安装 / 卸载 / 备份 / 恢复
+// ---------------------------------------------------------------------------
+
+/// 去掉 Windows 扩展长度前缀（`\\?\`）。
+/// Tauri 的 resource_dir 在 Windows 上可能返回带 `\\?\` 前缀的路径，
+/// 而 pnpm/npm 读本地 tarball 不接受它（实机症状：os error 123
+/// 「文件名、目录名或卷标语法不正确」）。`\\?\UNC\` 还原成 `\\` 形式。
+pub(crate) fn strip_extended_prefix(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+/// 在应用资源目录里找桥接插件包（`dsharbor-bridge-*.tgz`）。
+fn find_bridge_tgz(app: &tauri::AppHandle) -> Result<String, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|err| format!("找不到应用资源目录：{err}"))?;
+    let candidates = [resource_dir.clone(), resource_dir.join("resources")];
+    for dir in &candidates {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("dsharbor-bridge-") && name.ends_with(".tgz") {
+                return Ok(strip_extended_prefix(&entry.path().to_string_lossy()));
+            }
+        }
+    }
+    Err("找不到桥接插件包（dsharbor-bridge-*.tgz）。\
+         请确认安装包完整，或在源码仓库先执行 pnpm pack:bridge。"
+        .to_string())
+}
+
+fn backups_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::app_data_root(app)?.join("backups"))
+}
+
+/// 备份 profile 目录里会被 pnpm 改写的文件（含内容哈希清单），返回备份目录。
+fn backup_profile(app: &tauri::AppHandle, target: &Target) -> Result<String, String> {
+    let dir = profile_dir(target)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let backup_dir = backups_root(app)?.join(format!("backup-{stamp}"));
+    std::fs::create_dir_all(&backup_dir).map_err(|err| format!("创建备份目录失败：{err}"))?;
+
+    let mut manifest = String::new();
+    for name in BACKUP_FILES {
+        let source = join_path(target, &dir, name);
+        match read_file(target, &source) {
+            Ok(content) => {
+                std::fs::write(backup_dir.join(name), &content)
+                    .map_err(|err| format!("写入备份失败：{err}"))?;
+                manifest.push_str(&format!(
+                    "{name}\t已备份\t{}\n",
+                    dsharbor_core::fnv1a64_hex(content.as_bytes())
+                ));
+            }
+            Err(_) => manifest.push_str(&format!("{name}\t不存在\n")),
+        }
+    }
+    std::fs::write(backup_dir.join("manifest.txt"), &manifest)
+        .map_err(|err| format!("写入备份清单失败：{err}"))?;
+    Ok(backup_dir.to_string_lossy().to_string())
+}
+
+fn latest_backup(app: &tauri::AppHandle) -> Option<String> {
+    let root = backups_root(app).ok()?;
+    let entries = std::fs::read_dir(&root).ok()?;
+    let mut dirs: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    dirs.sort();
+    dirs.pop()
+        .map(|name| root.join(name).to_string_lossy().to_string())
+}
+
+/// 读 profile 的 package.json，检查 dsharbor-bridge 是否登记进了 bundles。
+fn is_installed(target: &Target, profile: &str) -> Result<bool, String> {
+    let package_json = read_file(target, &join_path(target, profile, "package.json"))?;
+    let value: serde_json::Value = serde_json::from_str(&package_json)
+        .map_err(|err| format!("profile 的 package.json 不是合法 JSON：{err}"))?;
+    let in_bundles = value
+        .get("dsh")
+        .and_then(|dsh| dsh.get("profile"))
+        .and_then(|profile| profile.get("bundles"))
+        .and_then(|bundles| bundles.as_array())
+        .map(|bundles| {
+            bundles
+                .iter()
+                .any(|item| item.as_str() == Some("dsharbor-bridge"))
+        })
+        .unwrap_or(false);
+    Ok(in_bundles)
+}
+
+fn plugin_command(config: &LaunchConfig, op: &PluginOp) -> Result<Command, String> {
+    let spawn = build_plugin_plan(config, op)?;
+    Ok(command_for_plan(&LaunchPlan {
+        spawn,
+        env: Vec::new(),
+    }))
+}
+
+/// 安装桥接插件（先备份、再走官方 plugin add、最后校验 bundles 登记）。
+pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOutcome, String> {
+    let target = Target::of(config);
+    let profile = profile_dir(&target)?;
+    if is_installed(&target, &profile).unwrap_or(false) {
+        return Ok(BridgeOutcome {
+            ok: true,
+            message: format!(
+                "{} 上已经安装过桥接插件（dsh.profile.bundles 已登记），未重复操作。",
+                target.label()
+            ),
+            backup_dir: latest_backup(app).unwrap_or_default(),
+        });
+    }
+
+    let tgz = find_bridge_tgz(app)?;
+    let backup_dir = backup_profile(app, &target)?;
+    let package_ref = match &target {
+        Target::Host => tgz.clone(),
+        Target::Wsl { .. } => windows_path_to_wsl(&tgz).ok_or_else(|| {
+            format!("插件包路径无法转换为 WSL 路径（需位于 Windows 盘符）：{tgz}")
+        })?,
+    };
+
+    let op = PluginOp::Install {
+        package: format!("file:{package_ref}"),
+    };
+    let command = plugin_command(config, &op)?;
+    let (code, output) = run_capture(command, PLUGIN_OP_TIMEOUT)?;
+    let installed = is_installed(&target, &profile).unwrap_or(false);
+    let ok = code == 0 && installed;
+    let verify = if installed {
+        "已登记 dsh.profile.bundles ✓"
+    } else {
+        "未在 dsh.profile.bundles 中找到 dsharbor-bridge ✗（安装可能未生效）"
+    };
+    let message = format!(
+        "安装命令：dsh plugin --profile {PROFILE_NAME} add file:{package_ref}（经 {}）\n\
+         退出码：{code}\n\
+         校验：{verify}\n\
+         输出：\n{}\n\
+         备份目录：{backup_dir}",
+        target.label(),
+        tail_chars(&output, 4000)
+    );
+    Ok(BridgeOutcome {
+        ok,
+        message,
+        backup_dir,
+    })
+}
+
+/// 卸载桥接插件（先备份、再走官方 plugin remove、最后校验 bundles 已摘除）。
+pub fn uninstall(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOutcome, String> {
+    let target = Target::of(config);
+    let profile = profile_dir(&target)?;
+    if !is_installed(&target, &profile).unwrap_or(false) {
+        return Ok(BridgeOutcome {
+            ok: true,
+            message: format!("{} 上未安装桥接插件，无需卸载。", target.label()),
+            backup_dir: latest_backup(app).unwrap_or_default(),
+        });
+    }
+
+    let backup_dir = backup_profile(app, &target)?;
+    let op = PluginOp::Uninstall {
+        name: "dsharbor-bridge".to_string(),
+    };
+    let command = plugin_command(config, &op)?;
+    let (code, output) = run_capture(command, PLUGIN_OP_TIMEOUT)?;
+    let still_installed = is_installed(&target, &profile).unwrap_or(false);
+    let ok = code == 0 && !still_installed;
+    let verify = if still_installed {
+        "bundles 中仍能找到 dsharbor-bridge ✗（卸载可能未生效）"
+    } else {
+        "已从 dsh.profile.bundles 摘除 ✓"
+    };
+    let message = format!(
+        "卸载命令：dsh plugin --profile {PROFILE_NAME} remove dsharbor-bridge（经 {}）\n\
+         退出码：{code}\n\
+         校验：{verify}\n\
+         输出：\n{}\n\
+         备份目录：{backup_dir}",
+        target.label(),
+        tail_chars(&output, 4000)
+    );
+    Ok(BridgeOutcome {
+        ok,
+        message,
+        backup_dir,
+    })
+}
+
+/// 从备份目录恢复 profile 文件（回滚演示与失败兜底用）。
+pub fn restore(
+    app: &tauri::AppHandle,
+    config: &LaunchConfig,
+    backup_dir: &str,
+) -> Result<String, String> {
+    let root = backups_root(app)?;
+    let candidate = PathBuf::from(backup_dir)
+        .canonicalize()
+        .map_err(|err| format!("备份目录不可用：{err}"))?;
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("备份根目录不可用：{err}"))?;
+    if !candidate.starts_with(&root) {
+        return Err("只允许恢复本应用创建的备份（必须在应用数据目录内）".to_string());
+    }
+
+    let target = Target::of(config);
+    let profile = profile_dir(&target)?;
+    let mut restored: Vec<String> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for name in BACKUP_FILES {
+        let source = candidate.join(name);
+        if !source.is_file() {
+            skipped.push(name.to_string());
+            continue;
+        }
+        let content = std::fs::read_to_string(&source)
+            .map_err(|err| format!("读取备份文件 {name} 失败：{err}"))?;
+        write_file(&target, &join_path(&target, &profile, name), &content)?;
+        restored.push(name.to_string());
+    }
+    if restored.is_empty() {
+        return Err("这个备份里没有任何可恢复的文件。".to_string());
+    }
+    let mut message = format!(
+        "已恢复 {} 上的 profile 文件：{}",
+        target.label(),
+        restored.join("、")
+    );
+    if !skipped.is_empty() {
+        message.push_str(&format!("（备份中不存在、未处理：{}）", skipped.join("、")));
+    }
+    message.push_str("。恢复后建议重启 DSH 使配置生效。");
+    Ok(message)
+}
+
+/// 查询桥接插件状态（界面展示用）。
+pub fn state(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeState, String> {
+    let target = Target::of(config);
+    let profile = profile_dir(&target)?;
+    let installed = is_installed(&target, &profile).unwrap_or(false);
+    let detail = if installed {
+        "dsh.profile.bundles 已登记 dsharbor-bridge：DSH 启动时插件会自动挂载，\
+         壳经 /dsharbor-bridge/url 取登录链接。"
+            .to_string()
+    } else {
+        "未安装：壳将退化为从启动日志解析登录链接（可用但依赖日志格式）。".to_string()
+    };
+    Ok(BridgeState {
+        installed,
+        target: target.label(),
+        profile_dir: profile,
+        detail,
+        latest_backup: latest_backup(app),
+    })
+}
