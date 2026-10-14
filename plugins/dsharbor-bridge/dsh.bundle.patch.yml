@@ -1,0 +1,14 @@
+# DSHarbor 桥接插件的 bundle patch 层。
+#
+# 本文件在 profile 的 dsh.profile.bundles 列出 dsharbor-bridge 后由加载器
+# 自动应用；`name` 从 profile 的 node_modules 解析（与 billion-context 等
+# 第三方插件同款机制，官方文档见 @deepseek-ai/dsh-app-boot 的 profile 模块）。
+#
+# nonce 由 DSHarbor 壳在启动 DSH 时通过环境变量注入、随每次启动重新生成，
+# 因此这里用 !!js 在运行时读取，不落任何配置文件。
+# nonce 缺失（例如用户自己跑 `dsh web`）时插件接口只回 503，不影响正常使用。
+- insert:
+    - id: dsharbor-bridge
+      name: dsharbor-bridge
+      config:
+        nonce: !!js process.env.DSHARBOR_BRIDGE_NONCE

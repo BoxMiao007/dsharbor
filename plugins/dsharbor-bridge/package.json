@@ -1,0 +1,20 @@
+{
+  "name": "dsharbor-bridge",
+  "version": "0.1.0",
+  "description": "DSHarbor 桥接插件：把本次启动的带 token 登录链接交给本机 DSHarbor 桌面壳",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "dsh.bundle.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh.bundle.patch.yml"
+    }
+  }
+}
