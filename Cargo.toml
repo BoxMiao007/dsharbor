@@ -1,0 +1,21 @@
+# 工作区：纯逻辑核心库 + Tauri 外壳
+# 核心库与界面解耦，保证不依赖系统 API 也能 `cargo test` 直接验证。
+[workspace]
+resolver = "2"
+members = ["crates/dsharbor-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77.2"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# 安装包体积优先（轻量壳目标之一）：LTO + strip
+lto = true
+codegen-units = 1
+strip = true

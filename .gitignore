@@ -10,4 +10,13 @@
 Thumbs.db
 desktop.ini
 
-# 技术栈相关条目待确定后由 agent 补全
+# 前端
+node_modules/
+/dist/
+
+# Rust / Tauri
+/target/
+/src-tauri/gen/schemas/
+
+# 桥接插件打包产物（由 pnpm pack:bridge 生成）
+src-tauri/resources/*.tgz
