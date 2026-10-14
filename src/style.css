@@ -1,0 +1,433 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 26px 16px 34px;
+  background: radial-gradient(circle at 50% 20%, #223459 0%, #131c2e 70%);
+  color: #eef2fa;
+}
+
+#app {
+  width: min(680px, 96vw);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.head {
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.head h1 {
+  font-size: 30px;
+  letter-spacing: 4px;
+  margin-bottom: 6px;
+}
+
+.tagline {
+  color: #9fb2d8;
+  font-size: 14px;
+}
+
+.light-hint {
+  margin-top: 8px;
+  color: #7f93bb;
+  font-size: 12.5px;
+}
+
+.card {
+  padding: 22px 24px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.card h2 {
+  font-size: 16px;
+  color: #cdd9f2;
+  margin-bottom: 14px;
+  letter-spacing: 1px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.badge {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.badge-running {
+  background: rgba(46, 204, 113, 0.18);
+  color: #6ee7a8;
+  border: 1px solid rgba(46, 204, 113, 0.4);
+}
+
+.login-row {
+  margin-top: 14px;
+  justify-content: space-between;
+}
+
+.badge-stopped {
+  background: rgba(148, 163, 184, 0.15);
+  color: #a8b6cf;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.badge-failed {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.status-meta {
+  font-size: 13px;
+  color: #9fb2d8;
+}
+
+.status-meta b {
+  color: #eef2fa;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+button {
+  padding: 8px 22px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07);
+  color: #eef2fa;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: #3b6fe0;
+  border-color: #4f82f0;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #4a7cf0;
+}
+
+.error {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.hidden {
+  display: none;
+}
+
+.log-box {
+  margin-top: 14px;
+  font-size: 13px;
+  color: #9fb2d8;
+}
+
+.log-box summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.log-box pre {
+  margin-top: 10px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c8d6f0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mode {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.mode:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mode input {
+  margin-top: 4px;
+  accent-color: #4f82f0;
+}
+
+.mode b {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.mode small {
+  color: #8296b8;
+  font-size: 12px;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 10px 34px;
+}
+
+.fields label {
+  font-size: 13px;
+  color: #9fb2d8;
+}
+
+input[type="text"],
+select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.25);
+  color: #eef2fa;
+  font-size: 13px;
+}
+
+input[type="text"]:focus,
+select:focus {
+  outline: none;
+  border-color: #4f82f0;
+}
+
+/* 端口行：输入框 + 覆盖状态徽章并排 */
+.port-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.port-row input {
+  flex: 1;
+}
+
+.port-row .badge {
+  flex: none;
+  white-space: nowrap;
+}
+
+.hint {
+  font-size: 12px;
+  color: #6d7f9e;
+  line-height: 1.7;
+}
+
+.hint code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ---- 交互细节（维护者要求：下拉框与滚动条美化、展开开关更明显） ---- */
+
+/* 下拉框：统一外观 + 自绘箭头（WebView2 = Chromium，appearance 生效） */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%239fb2d8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  cursor: pointer;
+}
+
+select option {
+  background: #1b2740;
+  color: #eef2fa;
+}
+
+/* 滚动条：细、圆角、低对比 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* 展开开关（最近输出 / 操作输出）：整行可点、带旋转箭头指示 */
+.log-box {
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.log-box summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: #b9c8e6;
+  font-size: 13px;
+  list-style: none;
+}
+
+.log-box summary::-webkit-details-marker {
+  display: none;
+}
+
+.log-box summary:hover {
+  color: #eef2fa;
+}
+
+.log-box .chev {
+  display: inline-block;
+  font-size: 11px;
+  color: #7f93bb;
+  transition: transform 0.15s ease;
+}
+
+.log-box[open] .chev {
+  transform: rotate(90deg);
+}
+
+.log-box[open] summary {
+  margin-bottom: 10px;
+}
+
+.log-box[open] pre {
+  margin-top: 0;
+}
+
+/* 通用设置分组（附加参数 / 端口） */
+.subcard {
+  margin-top: 12px;
+  padding: 14px 16px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.subcard-title {
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #b9c8e6;
+  letter-spacing: 0.4px;
+}
+
+.subcard .fields {
+  padding: 0;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 18px;
+}
+
+@media (max-width: 620px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 键值行（桥接插件卡片） */
+.kv {
+  display: flex;
+  flex-direction: column;
+  margin: 14px 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.kv-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.kv-row:first-child {
+  border-top: none;
+}
+
+.kv-key {
+  flex: 0 0 76px;
+  color: #8fa3c8;
+}
+
+.kv-value {
+  color: #eef2fa;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.bridge-actions {
+  margin-bottom: 4px;
+}
