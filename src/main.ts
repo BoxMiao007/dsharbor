@@ -102,7 +102,7 @@ async function main(): Promise<void> {
       <div class="actions">
         <button id="btn-start" class="primary">启动 DSH</button>
         <button id="btn-stop">停止</button>
-        <button id="btn-restart" class="hidden">重新启动 DSH</button>
+        <button id="btn-restart">重启 DSH</button>
       </div>
       <div class="status-row login-row">
         <span id="login-badge" class="badge badge-stopped">登录链接：等待中</span>
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
         </span>
       </div>
       <p id="login-note" class="hint hidden"></p>
-      <div class="fields">
+      <div class="fields tray-fields">
         <label for="tray-click">托盘单击打开</label>
         <select id="tray-click">
           <option value="launcher">启动界面（默认）</option>
@@ -132,7 +132,7 @@ async function main(): Promise<void> {
         <input type="radio" name="mode" value="npx" checked />
         <span>
           <b>官方 npx 命令</b>
-          <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）</small>
+          <small>未全局安装 DSH 时用；执行 <code>npx --yes @deepseek-ai/dsh web --no-open</code>，首次启动会自动下载（较慢）</small>
         </span>
       </label>
       <label class="mode">
@@ -430,8 +430,7 @@ async function main(): Promise<void> {
     const running = status.state === "running";
     btnStart.disabled = running;
     btnStop.disabled = !running && status.state !== "failed";
-    // DSH 意外退出（启动失败）时给出「重新启动」入口，一键按当前配置再拉起。
-    btnRestart.classList.toggle("hidden", status.state !== "failed");
+    // 「重启 DSH」常驻（与托盘菜单同款入口）：运行中可一键重启，停止时等价于启动。
 
     // 登录链接徽章：桥接就绪 > 日志兜底就绪 > 等待中 > 获取失败。
     if (status.loginReady) {
@@ -464,8 +463,8 @@ async function main(): Promise<void> {
     }
   }
 
-  /** 按当前界面配置启动 DSH（「启动」与「重新启动」共用）。 */
-  async function startSession(): Promise<void> {
+  /** 按当前界面配置启动 DSH；`restart_dsh` 会先停掉现有会话再拉起（「启动」与「重启」共用）。 */
+  async function startOrRestart(command: "start_dsh" | "restart_dsh"): Promise<void> {
     localError = null;
     // 端口非法输入：明确提示、不保存、不启动。
     const portError = portFieldError();
@@ -477,15 +476,15 @@ async function main(): Promise<void> {
     // 启动/重启 DSH 都会产生终端输出：自动展开「最近输出」（维护者要求）。
     expandLog();
     try {
-      await invoke("start_dsh", { config: collectConfig() });
+      await invoke(command, { config: collectConfig() });
     } catch (err) {
       localError = String(err);
     }
     await refresh();
   }
 
-  btnStart.addEventListener("click", () => void startSession());
-  btnRestart.addEventListener("click", () => void startSession());
+  btnStart.addEventListener("click", () => void startOrRestart("start_dsh"));
+  btnRestart.addEventListener("click", () => void startOrRestart("restart_dsh"));
 
   btnStop.addEventListener("click", () => {
     void (async () => {

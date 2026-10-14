@@ -49,6 +49,21 @@ fn app_info() -> AppInfo {
     }
 }
 
+/// 启动 DSH 的公共路径：校验并持久化配置 → 构造端口覆盖 → 拉起进程 → 记住配置。
+/// 「启动」与「重启」共用；`restart_dsh` 在此基础上先停掉现有会话。
+fn start_session(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    config: &LaunchConfig,
+) -> Result<(), String> {
+    // 先过校验并持久化（保留托盘单击等壳偏好）：非法输入在这里报错——不写配置、不启动进程。
+    settings::save_launch(app, config)?;
+    let launcher_args = profile::port_overlay_args(app, config)?;
+    spawn_session(state, config, &launcher_args)?;
+    remember_config(state, config);
+    Ok(())
+}
+
 /// 拉起 DSH。已有会话在运行时拒绝，残留的已退出会话会先清掉。
 #[tauri::command]
 fn start_dsh(
@@ -56,12 +71,20 @@ fn start_dsh(
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<(), String> {
-    // 先过校验并持久化（保留托盘单击等壳偏好）：非法输入在这里报错——不写配置、不启动进程。
-    settings::save_launch(&app, &config)?;
-    let launcher_args = profile::port_overlay_args(&app, &config)?;
-    spawn_session(&state, &config, &launcher_args)?;
-    remember_config(&state, &config);
-    Ok(())
+    start_session(&app, &state, &config)
+}
+
+/// 重启 DSH：先停掉现有会话再按传入配置拉起（界面「重启 DSH」按钮）。
+/// 与托盘「重启 DSH」共用停止 + 拉起路径；区别：托盘的复用最近一次成功启动的
+/// 配置（`ShellAction::RestartDsh`），界面的用当前界面配置。
+#[tauri::command]
+fn restart_dsh(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+) -> Result<(), String> {
+    stop_session(&state);
+    start_session(&app, &state, &config)
 }
 
 /// 拉起 DSH 并把新会话放进共享状态（启动命令与托盘「重启 DSH」共用）。
@@ -570,6 +593,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             start_dsh,
+            restart_dsh,
             stop_dsh,
             dsh_status,
             list_wsl_distros,

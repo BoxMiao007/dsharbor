@@ -265,7 +265,8 @@ select:focus {
   line-height: 1.7;
 }
 
-.hint code {
+.hint code,
+.mode small code {
   background: rgba(255, 255, 255, 0.08);
   padding: 1px 5px;
   border-radius: 4px;
@@ -380,6 +381,11 @@ select option {
 
 .subcard .fields {
   padding: 0;
+}
+
+/* 会话卡片里的「托盘单击打开」是卡片顶层字段，不跟随启动方式单选组的左缩进 */
+.tray-fields {
+  padding-left: 0;
 }
 
 .grid-2 {
