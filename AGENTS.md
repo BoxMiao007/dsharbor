@@ -4,7 +4,9 @@
 
 ## 项目是什么
 
-待补全:开发启动后,由 agent 用用户描述项目的原话补全本节,不改写成技术术语。
+DSH(DeepSeek Harness)Web 版的桌面壳:安装包尽量小、关掉界面时释放内存但 DSH 后端照常跑、自动拿到每次启动动态生成的登录链接、支持四种启动方式(官方 npx 命令 / 系统全局命令 / 指定二进制路径 / WSL 跨系统)。
+
+v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见需求单 #1(https://github.com/BoxMiao007/dsharbor/issues/1)。
 
 ## 协作模式
 
@@ -14,7 +16,13 @@
 
 ## 完成定义(每次交付前逐项核对)
 
-1. 验证门全部通过:验证门命令**待补全**——技术栈确定后,按"类型检查 + 测试"的组合实测回填,没实测过的命令不得写入;回填之前,以第 2 条作为最低标准。
+1. 验证门全部通过(以下命令均已实测):
+   - `cargo fmt --check`(Rust 格式)
+   - `cargo xwin clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`(静态检查,按交付目标 Windows 跑)
+   - `cargo test -p dsharbor-core`(纯逻辑核心库单元测试,开发机直接跑)
+   - `node --test plugins/dsharbor-bridge/test/bridge.test.js`(桥接插件测试)
+   - `pnpm build`(前端类型检查 + 构建)
+   - `pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`(完整 Windows 安装包;改动涉及外壳或打包时必须跑)
 2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。
 3. 交付说明讲给不写代码的人听:做了什么、怎么看到结果(地址/命令/截图)、有什么限制和后续建议;没把握或未完成的部分明说,不藏在细节里。
 
@@ -26,8 +34,8 @@
 
 ## 知识沉淀(保证任何新会话都能接手)
 
-- 全新环境的依赖安装命令**待补全**:技术栈确定后实测回填到这里和 README;步骤变化时同步更新。
-- 重大技术决策(选型、数据模型、外部服务)在 `docs/decisions.md` 记一行:日期、决策、为什么、放弃了什么。技术栈选型是第一条要记的决策。
+- 全新环境的依赖安装命令(已在 WSL2 实测):`sudo apt-get install -y clang lld llvm nsis`、`rustup target add x86_64-pc-windows-msvc`、`cargo install --locked cargo-xwin`、`pnpm install`;步骤变化时同步更新 README。
+- 重大技术决策(选型、数据模型、外部服务)在 `docs/decisions.md` 记一行:日期、决策、为什么、放弃了什么。技术栈选型是第一条要记的决策。发布前按 `docs/manual-acceptance.md` 在 Windows 真机复核。
 - README 面向用户维护:项目是什么、怎么启动、日常怎么用,保持非程序员能看懂。
 
 ## Agent skills
@@ -42,4 +50,4 @@ Issues 与规格存放在 GitHub Issues(用 `gh` CLI 操作)。见 `docs/agents/
 
 ### Domain docs
 
-single-context 布局:根目录 `GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`。
+single-context 布局:根目录 `GLOSSARY.md`；重大技术决策按本仓库约定记录在 `docs/decisions.md`（模板中的 docs/adr/ 未启用）。见 `docs/agents/domain.md`。
