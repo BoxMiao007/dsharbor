@@ -1,0 +1,13 @@
+# 密钥与凭据
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# 操作系统杂项
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 技术栈相关条目待确定后由 agent 补全
