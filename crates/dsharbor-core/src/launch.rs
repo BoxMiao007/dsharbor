@@ -422,6 +422,14 @@ fn validate_package_ref(package: &str) -> Result<(), String> {
     if package.is_empty() || package.len() > 512 {
         return Err("插件包引用不能为空且不超过 512 字符".into());
     }
+    // 空格不是 shell 转义问题（本模块自己加引号），而是 pnpm 的 `file:` 规格解析问题：
+    // 实测含空格的规格会在空格处被截断（`file:D:\Program`）后当包名去 registry 查，
+    // 报 ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_LATEST。调用方必须先把 tgz 暂存到无空格路径。
+    if package.contains(' ') {
+        return Err(format!(
+            "插件包引用不能包含空格（pnpm 无法解析 file: 规格，请先把插件包复制到无空格路径）：{package}"
+        ));
+    }
     let banned = [
         '"', '\'', '\n', '\r', '&', '|', '<', '>', '^', '%', '!', '(', ')', '`', '$', ';',
     ];
@@ -956,6 +964,21 @@ mod tests {
                 "应被拒绝：{bad}"
             );
         }
+    }
+
+    #[test]
+    fn plugin_package_ref_rejects_space_in_file_spec() {
+        // 回归（v0.1.0 实机缺陷）：安装目录含空格（D:\Program Files\DSHarbor）时，
+        // pnpm 会把 `file:D:\Program` 当包名去 registry 查 → 404，安装必失败。
+        let err = build_plugin_plan(
+            &cfg(LaunchMode::Npx, &[]),
+            &PluginOp::Install {
+                package: "file:D:\\Program Files\\DSHarbor\\resources\\dsharbor-bridge-0.1.0.tgz"
+                    .into(),
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("空格"), "错误信息应说明空格问题：{err}");
     }
 
     #[test]
