@@ -18,7 +18,8 @@ body {
   min-height: 100vh;
   display: flex;
   justify-content: center;
-  padding: 26px 16px 34px;
+  /* 顶部 34px 是给固定定位的自绘标题栏让出的位置（见 .titlebar） */
+  padding: 60px 16px 34px;
   /* 背景：复刻官网 hero 的深蓝雾光。
      官网那层是 canvas 画的模糊光斑（blur 20px）再叠 radial-gradient，这里用多层
      radial-gradient + 底色渐变逼近，零额外资源、任意窗口尺寸与 DPI 都不失真。
@@ -41,6 +42,70 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* ---- 自绘标题栏（tauri.conf.json: decorations: false） ----
+   固定在最顶端、脱离文档流，整条可拖拽（data-tauri-drag-region）。
+   完全透明：不留底色也不留分隔线，直接坐在页面背景上，与雾光无缝相接。 */
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 14px;
+  background: transparent;
+  user-select: none;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: #cfe0f5;
+}
+
+/* 图标源与托盘/安装包同一个（assets/logo.png，即 SDK 图标源导出的 128px 图）：
+   小尺寸下让指针穿透，否则点在图上不会触发标题栏拖拽，还可能拖出一个图片残影。 */
+.titlebar-logo {
+  display: block;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.titlebar-buttons {
+  display: flex;
+  align-self: stretch;
+}
+
+/* 三个窗口按钮：与 Windows 一致地铺满整条高度、无圆角，悬停给浅底，
+   关闭按钮悬停变红（系统那两个按钮的惯例）。 */
+.win-btn {
+  width: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #cfe0f5;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.win-btn.win-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
 }
 
 .head {

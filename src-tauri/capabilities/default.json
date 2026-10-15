@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "主窗口默认能力：仅开放核心权限；后续按需追加（托盘、shell 等将在对应票内引入）",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close"
+  ]
 }

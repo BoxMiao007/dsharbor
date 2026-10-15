@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import logoUrl from "./assets/logo.png";
 import "./style.css";
 
 /** 与 Rust 侧 `app_info` 命令的返回结构一一对应。 */
@@ -270,6 +272,19 @@ async function main(): Promise<void> {
   }
 
   root.innerHTML = `
+    <!-- 自绘标题栏（tauri.conf.json 里 decorations: false）：整条可拖动，
+         按钮只发窗口命令，关闭走的还是原生关闭那条路（Rust 侧转轻量模式）。 -->
+    <div class="titlebar" data-tauri-drag-region>
+      <span class="titlebar-brand" data-tauri-drag-region>
+        <img class="titlebar-logo" src="${logoUrl}" alt="" draggable="false" />DSHarbor
+      </span>
+      <div class="titlebar-buttons">
+        <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">–</button>
+        <button id="win-max" class="win-btn" type="button" title="最大化 / 还原" aria-label="最大化 / 还原">□</button>
+        <button id="win-close" class="win-btn win-close" type="button" title="关闭（轻量模式）" aria-label="关闭">✕</button>
+      </div>
+    </div>
+
     <header class="head">
       <h1>${info.name}</h1>
       <p class="tagline">DSH Web 的轻量桌面壳</p>
@@ -468,6 +483,9 @@ async function main(): Promise<void> {
   const btnBridgeBackups = $<HTMLButtonElement>("btn-bridge-backups");
   const aboutDsh = $<HTMLElement>("about-dsh");
   const aboutNote = $<HTMLParagraphElement>("about-note");
+  const btnWinMin = $<HTMLButtonElement>("win-min");
+  const btnWinMax = $<HTMLButtonElement>("win-max");
+  const btnWinClose = $<HTMLButtonElement>("win-close");
   const btnAboutRepo = $<HTMLButtonElement>("btn-about-repo");
   const btnAboutSite = $<HTMLButtonElement>("btn-about-site");
   const btnAboutConfig = $<HTMLButtonElement>("btn-about-config");
@@ -1006,6 +1024,26 @@ async function main(): Promise<void> {
   btnAboutSite.addEventListener("click", () => openExternal("site"));
   btnAboutConfig.addEventListener("click", () => openShellDir("config"));
   btnAboutLogs.addEventListener("click", () => openShellDir("logs"));
+
+  // 自绘标题栏的窗口按钮。拖拽与双击最大化由 data-tauri-drag-region 交给系统处理，
+  // 这里只发最小化 / 最大化切换 / 关闭；关窗命令和原生关闭按钮走同一条路径，
+  // 最终由 Rust 侧的 CloseRequested 拦下来转成轻量模式。
+  try {
+    const appWindow = getCurrentWindow();
+    const windowButtons: Array<[HTMLButtonElement, () => Promise<void>]> = [
+      [btnWinMin, () => appWindow.minimize()],
+      [btnWinMax, () => appWindow.toggleMaximize()],
+      [btnWinClose, () => appWindow.close()],
+    ];
+    for (const [button, action] of windowButtons) {
+      button.addEventListener("click", () => {
+        void action().catch((err) => console.error("窗口操作失败:", err));
+      });
+    }
+  } catch (err) {
+    // 普通浏览器里没有 Tauri 窗口环境（预览用），按钮保留但点了没反应。
+    console.error("无法获取当前窗口:", err);
+  }
 
   /** 首启/重开壳时把已保存的设置填回界面（后端缺省时返回默认值）。 */
   async function loadSavedConfig(): Promise<void> {
