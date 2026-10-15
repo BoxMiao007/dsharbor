@@ -27,11 +27,14 @@
 | 当前程序打开 | open in app | 在壳自己的 WebView2 窗口（`dsh-view`）里打开已登录的 DSH 界面；窗口与启动界面相互独立。 |
 | 浏览器打开 | open in browser | 显式把登录链接交给系统默认浏览器（手动动作；壳的启动流程自动弹出始终禁止）。 |
 | 托盘单击目标 | tray click target | 单击托盘图标默认打开的窗口：启动界面（默认）或程序窗口；随配置存在 `config.json` 的 `trayClick`。 |
-| 版本徽章 | version badge | 「DSH 会话」状态行里显示**当前运行的 DSH 版本**的徽章（两个四角星 + `DSH v…`，外观同「已停止」）；版本由壳在每次成功启动后用 `dsh web --version` 查询缓存，未取到显示「DSH 版本未知」。 |
+| 版本徽章 | version badge | 「DSH 会话」状态行里显示**当前运行的 DSH 版本**的徽章（两个四角星 + `DSH v…`，外观同「已停止」）；版本由壳在每次成功启动后用 `--version` 查询，查到就记进 `%APPDATA%\DSHarbor\dsh-version.txt`，所以壳重开后直接沿用上次的值（不再显示「DSH 版本未知」）。 |
 | 登录徽章 | login badge | 「DSH 会话」状态行**第一个**徽章，显示登录链接的通路与状态：登录等待中 / 桥接就绪（走桥接插件）/ 日志兜底就绪（日志解析）/ 登录获取失败；细节说明在徽章内感叹号图标的悬停气泡，获取失败时登录行显示原因原文。 |
 | 启动中 | starting | 「DSH 会话」状态徽章的一种：DSH 进程已拉起、登录链接尚未就绪（`running` 且未就绪、未报错），带转圈动画；就绪后自动变「运行中」。 |
-| 折叠摘要徽章 | card summary badge | 卡片收起时显示在标题行右侧的小徽章：「启动方式」显示当前方式名、「桥接插件」显示已安装 / 未安装；展开时隐藏。 |
+| 折叠摘要徽章 | card summary badge | 卡片收起时显示在标题行右侧的小徽章：「启动方式」显示当前方式名、「桥接插件」显示已安装 / 未安装；展开时隐藏。收起状态记在界面本地存储（`localStorage` 键 `dsharbor.ui.cardCollapsed`），壳重开后沿用。 |
 | 关于卡片 | about card | 启动界面末尾常开的卡片：壳与核心库版本、DSH 版本、许可证、仓库、官网，以及配置目录 / 日志目录的一键打开入口。 |
 | 回滚备份 | bridge backup | 安装/卸载桥接插件前，壳把 profile 中会被 pnpm 改写的文件（package.json、pnpm-workspace.yaml、pnpm-lock.yaml、cordis.patch.yml）备份到 `%APPDATA%\DSHarbor\backups`（含内容哈希清单）；只保留最近 5 份，超出删最旧的。 |
+| 自绘标题栏 | custom titlebar | 主窗口顶部那条自己画的标题栏（窗口用 `decorations: false`，没有系统标题栏）：左上角应用图标 + `DSHarbor`，右上角最小化 / 最大化 / 关闭（关闭 = 轻量模式）；整条可拖动、双击最大化 / 还原、背景全透明。已知取舍：Windows 11 贴靠布局与 `Alt+Space` 系统菜单在自绘标题栏下不可用。 |
+| 滚动指示条 | scroll indicator | 页面右缘那条 5px 淡蓝细胶囊：滚动时或指针移到那条带上才出现，可按住上下拖；它替代了占宽度的视口滚动条（后者已隐藏），内部框（「最近输出 / 操作输出」）另用 8px 极淡细条。 |
+| 预览台 | mock preview（`scripts/mock-preview.mjs`） | 界面改动的第一道证据：`pnpm build` 后把 `dist/index.html` 拷成 `mock.html` 并注入假的 `__TAURI_INTERNALS__`（假 DSH 状态、假桥接、假窗口命令），在普通浏览器里量尺寸、截图；看不到的部分（WebView2 渲染差异、无边框窗口拖动 / 缩放 / 贴靠、真 DSH 进程与托盘）才上真机。 |
 | 验证门 | verification gates | 交付前必过的命令集合，见 `AGENTS.md`「完成定义」。 |
-| 手动验收 | manual acceptance | Windows 真机发布前复核流程，见 `docs/manual-acceptance.md`。 |
+| 手动验收 | manual acceptance | 需要真机才能确认的复核清单（WebView2 渲染差异、无边框窗口拖动 / 缩放 / 贴靠、真 DSH 进程与托盘、安装与卸载），见 `docs/manual-acceptance.md`；日常界面改动不走它，改用预览台，只有发布或涉及真机行为时才逐项走。 |
