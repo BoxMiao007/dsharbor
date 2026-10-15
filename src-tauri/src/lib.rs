@@ -658,7 +658,12 @@ fn show_or_create_main(app: &tauri::AppHandle) {
     dispatch_lifecycle(app, ShellEvent::TrayShow);
 }
 
-/// 重建主窗口：参数与 tauri.conf.json 的 main 窗口保持一致。
+/// 重建主窗口：参数与 tauri.conf.json 的 main 窗口逐项一致（改了那边就要改这里）。
+///
+/// 已知陷阱：`decorations(false)` 必须跟着写在 builder 上。窗口参数在配置与代码两处，
+/// 漏一项不会有编译错误，只会让重建出来的窗口套回系统标题栏，而页面里的 .titlebar
+/// 依旧照画，于是「关窗后从托盘重开界面」变成上下两个标题栏（真机实测：客户区高度
+/// 之外的标题栏从 8px 变成 38px）。
 ///
 /// 关键：经 `run_on_main_thread` 排队到主线程创建。窗口创建必须发生在主线程；
 /// 从 async_runtime 任务里直接 build 会触发 WebView2 的卡死/进程崩溃
@@ -677,8 +682,9 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), String> {
             WebviewWindowBuilder::new(&app_for_main, "main", WebviewUrl::App("index.html".into()))
                 .title("DSHarbor")
                 .inner_size(1000.0, 700.0)
-                .min_inner_size(720.0, 520.0)
+                .min_inner_size(960.0, 520.0)
                 .center()
+                .decorations(false)
                 .build();
         if let Err(err) = result {
             eprintln!("[dsharbor] 创建主窗口失败：{err}");
