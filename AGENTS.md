@@ -25,11 +25,12 @@ v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见�
    - `pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`(完整 Windows 安装包;改动涉及外壳或打包时必须跑)
 2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。
 3. 交付说明讲给不写代码的人听:做了什么、怎么看到结果(地址/命令/截图)、有什么限制和后续建议;没把握或未完成的部分明说,不藏在细节里。
-4. 构建完成后默认把产物替换到本机安装目录(维护者要求,无需再问;运行中的 DSHarbor 会占用 exe,替换前先关掉):
-   - `cp target/x86_64-pc-windows-msvc/release/dsharbor.exe "/mnt/d/Program Files/DSHarbor/dsharbor.exe"`
-   - 桥接插件包重新打包过时一并覆盖 `"/mnt/d/Program Files/DSHarbor/resources/dsharbor-bridge-0.1.0.tgz"`
-   - 用 `sha256sum` 核对两份文件一致,再启动该目录下的 exe 确认界面能打开,然后关掉
-   - 替换的是已安装副本,不动注册表与 `uninstall.exe`;需要重装或换路径时走安装包(见 `docs/manual-acceptance.md` 卸载与数据保留)
+4. 构建完成后默认把产物装到本机安装目录(维护者要求,无需再问;运行中的 DSHarbor 会占用文件,先关掉再装):
+   - 关掉在跑的实例:`Stop-Process -Name dsharbor -Force`(或托盘里完全退出)
+   - 把 `target/x86_64-pc-windows-msvc/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe` 复制到 Windows 侧,静默执行 `<setup>.exe /S`(安装包会一并刷新注册表卸载项、开始菜单与 `uninstall.exe`,不用再手工 copy 文件)
+   - 安装目录沿用上次选择的位置(已实测:NSIS 从注册表卸载项读回 `InstallLocation`,当前是 `D:\Program Files\DSHarbor`;装完 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSHarbor` 的 `DisplayVersion` 会跟着更新)
+   - 装完启动该目录下的 exe 确认界面能打开,然后关掉
+   - 不要再用纯文件替换:那只换 exe 与资源、不动注册表与 `uninstall.exe`,装出来的版本信息会对不上
 
 ## 提交与推送
 
