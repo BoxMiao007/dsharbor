@@ -483,10 +483,17 @@ input[type="text"]:focus,
   cursor: pointer;
 }
 
-/* 蓝色底只标「正要选中的这一项」（鼠标悬停 / 键盘上下移动），
-   已经选中的那一项不加底色，只靠行首的 ✓ 表示（维护者要求）。 */
+/* 蓝底表示「正要选中的这一项」。静止（指针不在列表里）时蓝底先落在当前值那一行，
+   指针一进列表或键盘一按上下键，蓝底就只跟光标走，当前值那一行让出底色、只留行首 ✓
+   （维护者要求：不指向时已选中行就是蓝底，指向时跟鼠标走、不固定在已选中行上）。 */
 .picker-option:hover,
 .picker-option.active {
+  background: rgba(77, 107, 254, 0.38);
+  color: #eef2fa;
+}
+
+.picker-list:not(:hover):not(:has(.picker-option.active))
+  .picker-option[aria-selected="true"] {
   background: rgba(77, 107, 254, 0.38);
   color: #eef2fa;
 }
