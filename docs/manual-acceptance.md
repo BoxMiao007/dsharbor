@@ -1,6 +1,6 @@
-# Windows 手动验收手册（发布前完整流程）
+# Windows 手动验收手册（真机复核用）
 
-每次发布前在 Windows 真机上按本手册复核。每步给出「操作」与「期望结果」；不满足时看文末「排查」。
+日常界面改动不用走这里：跑完 `pnpm build` 后用 `node scripts/mock-preview.mjs` 在普通浏览器里按假数据渲染，量尺寸 / 截图即可（快得多）。本手册用于需要真机才能确认的部分——WebView2 的渲染差异、无边框窗口的拖动 / 缩放 / 贴靠、真 DSH 进程与托盘、安装与卸载——需要时逐项走；每步给出「操作」与「期望结果」，不满足时看文末「排查」。
 
 > 开发机参考：自动化脚本与截图存放于 `C:\Users\<你>\AppData\Local\Temp\dsharbor-test`（`launch-app.ps1`、`capture-window2.ps1`、`kill-app.ps1` 等）。正式验收只需按本手册手动操作。
 

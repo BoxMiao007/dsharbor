@@ -23,7 +23,7 @@ v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见�
    - `node --test plugins/dsharbor-bridge/test/bridge.test.js`(桥接插件测试)
    - `pnpm build`(前端类型检查 + 构建)
    - `pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`(完整 Windows 安装包;改动涉及外壳或打包时必须跑)
-2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。
+2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。界面改动先用 `node scripts/mock-preview.mjs`(跑完 `pnpm build` 后在普通浏览器里按假数据渲染、量尺寸、截图)出预览与证据,再交给维护者看;它比打包 + 静默安装 + 真机一轮快得多。它的盲区——WebView2 与 Chromium 的渲染差异(例如 `::-webkit-scrollbar` 在预览的 overlay 滚动条下被忽略)、无边框窗口的原生拖动/缩放/贴靠、真 DSH 进程与托盘——只能上真机看。
 3. 交付说明讲给不写代码的人听:做了什么、怎么看到结果(地址/命令/截图)、有什么限制和后续建议;没把握或未完成的部分明说,不藏在细节里。
 4. 构建完成后默认把产物装到本机安装目录(维护者要求,无需再问;运行中的 DSHarbor 会占用文件,先关掉再装):
    - 关掉在跑的实例:`Stop-Process -Name dsharbor -Force`(或托盘里完全退出)
@@ -42,7 +42,7 @@ v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见�
 ## 知识沉淀(保证任何新会话都能接手)
 
 - 全新环境的依赖安装命令(已在 WSL2 实测):`sudo apt-get install -y clang lld llvm nsis`、`rustup target add x86_64-pc-windows-msvc`、`cargo install --locked cargo-xwin`、`pnpm install`;步骤变化时同步更新 README。
-- 重大技术决策(选型、数据模型、外部服务)在 `docs/decisions.md` 记一行:日期、决策、为什么、放弃了什么。技术栈选型是第一条要记的决策。发布前按 `docs/manual-acceptance.md` 在 Windows 真机复核。
+- 重大技术决策(选型、数据模型、外部服务)在 `docs/decisions.md` 记一行:日期、决策、为什么、放弃了什么。技术栈选型是第一条要记的决策。发布前至少走一遍界面预览台 `node scripts/mock-preview.mjs` 确认界面能渲染、核心交互可用;`docs/manual-acceptance.md` 保留作真机复核清单,需要时再照它走。
 - README 面向用户维护:项目是什么、怎么启动、日常怎么用,保持非程序员能看懂。
 
 ## Agent skills
