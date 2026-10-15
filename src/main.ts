@@ -45,6 +45,9 @@ interface LaunchConfig {
 /** 与 Rust 侧 `settings::TrayClick` 对应：托盘单击打开哪个窗口。 */
 type TrayClick = "launcher" | "dsh";
 
+/** 可折叠的两张卡片：「启动方式」与「桥接插件」。 */
+type CardKey = "modes" | "bridge";
+
 /** 与 Rust 侧 `settings::ShellConfig` 对应（整份壳设置）。 */
 interface ShellConfig {
   launch: LaunchConfig;
@@ -500,19 +503,49 @@ async function main(): Promise<void> {
   const btnAboutConfig = $<HTMLButtonElement>("btn-about-config");
   const btnAboutLogs = $<HTMLButtonElement>("btn-about-logs");
 
-  // 卡片折叠（「启动方式」「桥接插件」）：默认展开，收起状态只活在 DOM 里，不持久化。
-  const cardToggle = (key: "modes" | "bridge"): HTMLButtonElement => $<HTMLButtonElement>(`card-toggle-${key}`);
-  const expandCard = (key: "modes" | "bridge"): void => {
+  // 卡片折叠（「启动方式」「桥接插件」）：默认展开；用户点出来的折叠状态记在 localStorage，
+  // 壳重启、轻量模式重建窗口后沿用（维护者要求）。不放 config.json：那是整份回写的设置文件，
+  // 折叠只是界面偏好，丢了不影响功能。
+  const CARD_COLLAPSE_KEY = "dsharbor.ui.cardCollapsed";
+  const cardToggle = (key: CardKey): HTMLButtonElement => $<HTMLButtonElement>(`card-toggle-${key}`);
+
+  function readCardCollapsed(): Partial<Record<CardKey, boolean>> {
+    try {
+      const raw = window.localStorage.getItem(CARD_COLLAPSE_KEY);
+      const parsed: unknown = raw === null ? null : JSON.parse(raw);
+      return typeof parsed === "object" && parsed !== null
+        ? (parsed as Partial<Record<CardKey, boolean>>)
+        : {};
+    } catch {
+      // 存储被禁用，或内容被改坏：当成「都没折叠」，不影响使用
+      return {};
+    }
+  }
+
+  const cardCollapsed = readCardCollapsed();
+
+  /** 单一入口：改 DOM + 记状态。persist 只在用户点击时为真——桥接操作触发的临时展开不落盘。 */
+  const setCardCollapsed = (key: CardKey, collapsed: boolean, persist: boolean): void => {
+    cardCollapsed[key] = collapsed;
     const toggle = cardToggle(key);
-    toggle.closest(".card")?.classList.remove("collapsed");
-    toggle.setAttribute("aria-expanded", "true");
+    toggle.closest(".card")?.classList.toggle("collapsed", collapsed);
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    if (persist) {
+      try {
+        window.localStorage.setItem(CARD_COLLAPSE_KEY, JSON.stringify(cardCollapsed));
+      } catch {
+        // 存储被禁用时忽略：本次会话仍按内存里的状态走
+      }
+    }
   };
+
+  const expandCard = (key: CardKey): void => setCardCollapsed(key, false, false);
+
   for (const key of ["modes", "bridge"] as const) {
-    const toggle = cardToggle(key);
-    toggle.addEventListener("click", () => {
-      const collapsed = toggle.closest(".card")?.classList.toggle("collapsed") ?? false;
-      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    cardToggle(key).addEventListener("click", () => {
+      setCardCollapsed(key, cardCollapsed[key] !== true, true);
     });
+    setCardCollapsed(key, cardCollapsed[key] === true, false);
   }
 
   // 「最近输出」「操作输出」折叠块：对应操作产生终端输出时自动展开（维护者要求）。
