@@ -14,7 +14,16 @@ body {
   display: flex;
   justify-content: center;
   padding: 26px 16px 34px;
-  background: radial-gradient(circle at 50% 20%, #223459 0%, #131c2e 70%);
+  /* 背景：复刻 DeepSeek Harness 官网 hero 的深蓝光晕。
+     官网那层是 canvas 画的模糊光斑（blur 20px）再叠 radial-gradient 光晕，
+     这里用多层 radial-gradient 逼近同样的观感：零额外资源、任意窗口尺寸与
+     缩放比例都不会失真（用官网原图会在高 DPI 下发虚）。
+     取色来自官网：光晕 #1A3870、品牌蓝 #4d6bfe。 */
+  background:
+    radial-gradient(circle at 22% 8%, rgba(26, 56, 112, 0.9) 0%, rgba(26, 56, 112, 0) 52%),
+    radial-gradient(circle at 82% 22%, rgba(77, 107, 254, 0.22) 0%, rgba(77, 107, 254, 0) 48%),
+    radial-gradient(circle at 46% 100%, rgba(38, 74, 150, 0.6) 0%, rgba(38, 74, 150, 0) 62%),
+    linear-gradient(168deg, #071128 0%, #102348 46%, #0a1730 100%);
   color: #eef2fa;
 }
 
@@ -64,14 +73,21 @@ body {
 .status-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 14px;
   margin-bottom: 12px;
 }
 
 .badge {
-  padding: 4px 12px;
+  /* 徽章背景比初版小一圈（维护者要求）：内边距 4/12 → 3/10，高度 30 → 28px。 */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
   border-radius: 999px;
   font-size: 13px;
+  /* 固定行高：徽章里有的带 SVG 图标、有的纯文字，统一后高度完全一致。 */
+  line-height: 20px;
   font-weight: 600;
 }
 
@@ -81,9 +97,92 @@ body {
   border: 1px solid rgba(46, 204, 113, 0.4);
 }
 
+/* 「启动中」：进程已起、登录链接还没就绪（npx 首次下载也会停在这一步） */
+.badge-starting {
+  background: rgba(96, 165, 250, 0.16);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.42);
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(147, 197, 253, 0.3);
+  border-top-color: #93c5fd;
+  animation: dsh-spin 0.7s linear infinite;
+}
+
+@keyframes dsh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .login-row {
   margin-top: 14px;
-  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 登录说明只在出错时留在行内；正常状态改挂在登录徽章的感叹号气泡里。
+   说明独占一行（flex-basis: 100%），两个打开按钮因此与上面的启动/重启/停止左对齐。 */
+.login-row #login-note {
+  flex-basis: 100%;
+}
+
+/* ---- 徽章里的感叹号圆圈 + 悬停气泡 ---- */
+
+.info-dot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.info-dot::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 300px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #0c1830;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+  color: #dbe6fb;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.info-dot:hover::after,
+.info-dot:focus-visible::after {
+  opacity: 1;
+}
+
+.info-dot:focus-visible {
+  outline: none;
 }
 
 .badge-stopped {
@@ -171,7 +270,10 @@ button.primary:hover:not(:disabled) {
 .log-box pre {
   margin-top: 10px;
   padding: 10px 12px;
-  max-height: 220px;
+  /* 15 行（12px × 1.6 = 19.2px/行）：超出部分滚动，避免日志把卡片撑长。
+     全局 `box-sizing: border-box` 下 max-height 含 padding 与边框，
+     所以取值是 15 × 19.2 + 10 × 2 + 1 × 2 = 310px（写 288px 只装得下 13.8 行）。 */
+  max-height: 310px;
   overflow: auto;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.35);
@@ -182,6 +284,23 @@ button.primary:hover:not(:disabled) {
   color: #c8d6f0;
   white-space: pre-wrap;
   word-break: break-all;
+  /* 日志要能随手拖选复制（维护者要求）；上面标题行保持不可选。 */
+  user-select: text;
+  cursor: text;
+}
+
+/* 「最近输出 / 操作输出」标题行右侧的复制按钮 */
+.log-copy {
+  margin-left: auto;
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: #9fb2d8;
+}
+
+.log-copy:hover:not(:disabled) {
+  color: #eef2fa;
 }
 
 .mode {
@@ -226,11 +345,15 @@ button.primary:hover:not(:disabled) {
   color: #9fb2d8;
 }
 
+/* 输入框与自绘下拉框共用同一套外观（原生 select 的弹层由系统绘制、圆角管不到，
+   所以下拉框改成自绘：见下方 .picker） */
 input[type="text"],
-select {
+.picker-btn {
   width: 100%;
   padding: 8px 10px;
-  border-radius: 8px;
+  /* 圆角取官网输入控件的取值（--ds-radius-input: 10px）；下拉框与输入框一起改，
+     否则「通过 WSL 启动」那组上下相邻的下拉框和输入框圆角会不一致。 */
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(0, 0, 0, 0.25);
   color: #eef2fa;
@@ -238,7 +361,7 @@ select {
 }
 
 input[type="text"]:focus,
-select:focus {
+.picker-btn:focus-visible {
   outline: none;
   border-color: #4f82f0;
 }
@@ -274,20 +397,95 @@ select:focus {
 
 /* ---- 交互细节（维护者要求：下拉框与滚动条美化、展开开关更明显） ---- */
 
-/* 下拉框：统一外观 + 自绘箭头（WebView2 = Chromium，appearance 生效） */
-select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: 34px;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%239fb2d8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
+/* ---- 自绘下拉框（维护者要求：选择弹层也要圆角，原生弹层由系统绘制、无法加圆角） ---- */
+
+.picker {
+  position: relative;
+  width: 100%;
+}
+
+.picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
   cursor: pointer;
 }
 
-select option {
-  background: #1b2740;
+.picker-btn:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.picker-btn[aria-expanded="true"] {
+  border-color: #4f82f0;
+}
+
+.picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-chev {
+  flex: none;
+  font-size: 11px;
+  color: #9fb2d8;
+  transition: transform 0.15s ease;
+}
+
+.picker-btn[aria-expanded="true"] .picker-chev {
+  transform: rotate(180deg);
+}
+
+.picker-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #111f38;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #dbe6fb;
+  cursor: pointer;
+}
+
+.picker-option:hover,
+.picker-option.active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.picker-option[aria-selected="true"] {
+  background: rgba(77, 107, 254, 0.24);
   color: #eef2fa;
+}
+
+.picker-option .tick {
+  flex: none;
+  font-size: 11px;
+  color: #8fb4ff;
+}
+
+.picker-option .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 滚动条：细、圆角、低对比 */
@@ -436,4 +634,96 @@ select option {
 
 .bridge-actions {
   margin-bottom: 4px;
+}
+
+/* ---- 版本徽章（DSH 会话卡片状态行内，配色与「已停止」一致） ---- */
+
+.badge-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(148, 163, 184, 0.15);
+  color: #a8b6cf;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.badge-version svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  /* 官网原样是 -translate-y-[1.5px]：星形视觉重心偏上，微调以对齐文字基线。 */
+  transform: translateY(-1.5px);
+}
+
+/* ---- 卡片折叠（「DSH 会话」「关于」不折叠；默认展开，收起状态只记内存） ---- */
+
+.card-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 负外边距 + 内边距：平时与卡片标题左对齐，鼠标悬停时露出一圈圆角背景（不留直角）。 */
+  margin: -4px -10px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: #cdd9f2;
+  font-size: 16px;
+  letter-spacing: 1px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-toggle:hover {
+  color: #eef2fa;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.card-toggle:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 2px rgba(79, 130, 240, 0.45);
+}
+
+.card-toggle .chev {
+  display: inline-block;
+  font-size: 11px;
+  color: #7f93bb;
+  transition: transform 0.15s ease;
+}
+
+.card-toggle[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+
+/* 收起后显示的摘要徽章（展开时不显示） */
+.card-summary {
+  display: none;
+  margin-left: auto;
+}
+
+.card.collapsed .card-summary {
+  display: inline-flex;
+}
+
+.card.collapsed .card-head {
+  margin-bottom: 0;
+}
+
+.card.collapsed .card-body {
+  display: none;
+}
+
+/* ---- 「关于」卡片 ---- */
+
+.about-links {
+  justify-content: center;
+  flex-wrap: wrap;
+  /* 与下面的说明文字留出间距（维护者要求） */
+  margin-bottom: 12px;
+}
+
+.about-links button {
+  padding: 6px 14px;
+  font-size: 13px;
 }

@@ -6,6 +6,15 @@ interface AppInfo {
   name: string;
   version: string;
   core_version: string;
+  /** 项目仓库地址（「关于」卡片展示与一键打开）。 */
+  repository: string;
+  /** DSH 官网地址。 */
+  site_url: string;
+  license: string;
+  /** 壳配置目录（%APPDATA%\DSHarbor）。 */
+  config_dir: string;
+  /** DSH 日志目录（%USERPROFILE%\.dsh\logs）。 */
+  logs_dir: string;
 }
 
 /** 与 Rust 侧 `launch::LaunchMode`（serde tag = kind）一一对应。 */
@@ -50,6 +59,8 @@ interface SessionStatus {
   loginChannel: "bridge" | "log" | null;
   /** 两条通道都失败时的说明（超时等）。 */
   loginError: string | null;
+  /** 最近一次成功启动的 DSH 版本号；还没取到时为 null。 */
+  dshVersion: string | null;
 }
 
 /** 与 Rust 侧 `plugin::BridgeState` 对应。 */
@@ -70,13 +81,180 @@ interface BridgeOutcome {
 
 const WSL_DEFAULT_INNER = "npx --yes @deepseek-ai/dsh web";
 
+/** 版本徽章里的两个四角星图标（取自 DeepSeek Harness 官网，路径原样保留）。 */
+const SPARKLE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true">
+          <defs>
+            <linearGradient id="harness-badge-sparkle" x1="2" y1="22" x2="22" y2="2" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#D2E0FF" stop-opacity="0.6"></stop>
+              <stop offset="1" stop-color="#A6C2FF" stop-opacity="0.38"></stop>
+            </linearGradient>
+          </defs>
+          <path d="M9 6C10.53 9.82 13.68 12.97 17.5 14.5C13.68 16.03 10.53 19.18 9 23C7.47 19.18 4.32 16.03 0.5 14.5C4.32 12.97 7.47 9.82 9 6Z" fill="url(#harness-badge-sparkle)"></path>
+          <path d="M19.5 1C20.22 2.8 21.7 4.28 23.5 5C21.7 5.72 20.22 7.2 19.5 9C18.78 7.2 17.3 5.72 15.5 5C17.3 4.28 18.78 2.8 19.5 1Z" fill="url(#harness-badge-sparkle)"></path>
+        </svg>`;
+
+/** 启动方式的界面文案（折叠摘要徽章与单选组共用一份，避免两处漂移）。 */
+const MODE_LABELS: Record<string, string> = {
+  npx: "官方 npx 命令",
+  system: "系统全局命令",
+  binary: "指定程序路径",
+  wsl: "通过 WSL 启动",
+};
+
+interface PickerChoice {
+  value: string;
+  label: string;
+}
+
+/**
+ * 自绘下拉框：原生 `<select>` 的弹出列表由系统绘制，圆角与配色都管不到，
+ * 所以选择器改成「按钮 + 列表」自绘（维护者要求弹层也是圆角）。
+ * 只实现用得到的部分：单选、键盘上下移动 + 回车选中、Esc 关闭、点外面关闭。
+ */
+class Picker {
+  private readonly root: HTMLElement;
+  private readonly button: HTMLButtonElement;
+  private readonly label: HTMLElement;
+  private readonly list: HTMLUListElement;
+  private choices: PickerChoice[] = [];
+  private selected = "";
+  private activeIndex = -1;
+  private readonly onChange: (value: string) => void;
+
+  constructor(rootId: string, onChange: (value: string) => void) {
+    this.onChange = onChange;
+    this.root = document.querySelector<HTMLElement>(`#${rootId}`) ?? (() => { throw new Error(`缺少元素 #${rootId}`); })();
+    this.root.classList.add("picker");
+    this.root.innerHTML = `<button type="button" class="picker-btn" aria-haspopup="listbox" aria-expanded="false"><span class="picker-label"></span><span class="picker-chev">▾</span></button><ul class="picker-list hidden" role="listbox"></ul>`;
+    this.button = this.root.querySelector<HTMLButtonElement>(".picker-btn")!;
+    this.label = this.root.querySelector<HTMLElement>(".picker-label")!;
+    this.list = this.root.querySelector<HTMLUListElement>(".picker-list")!;
+    this.button.addEventListener("click", () => (this.isOpen() ? this.close() : this.open()));
+    this.button.addEventListener("keydown", (event) => this.onKeyDown(event));
+    document.addEventListener("pointerdown", (event) => {
+      if (this.isOpen() && !this.root.contains(event.target as Node)) {
+        this.close();
+      }
+    });
+  }
+
+  get value(): string {
+    return this.selected;
+  }
+
+  /** 程序化赋值（不触发 onChange，避免与自动保存互相回环）。 */
+  setValue(value: string): void {
+    this.selected = value;
+    this.renderLabel();
+    this.renderOptions();
+  }
+
+  /** 重设候选列表；当前选中项不在新列表里时退回第一项。 */
+  setChoices(choices: PickerChoice[]): void {
+    this.choices = choices.slice();
+    if (!this.choices.some((choice) => choice.value === this.selected)) {
+      this.selected = this.choices[0]?.value ?? "";
+    }
+    this.renderLabel();
+    this.renderOptions();
+  }
+
+  private isOpen(): boolean {
+    return !this.list.classList.contains("hidden");
+  }
+
+  private renderLabel(): void {
+    const current = this.choices.find((choice) => choice.value === this.selected);
+    this.label.textContent = current?.label ?? "（未选择）";
+  }
+
+  private renderOptions(): void {
+    this.list.innerHTML = this.choices
+      .map((choice, index) => {
+        const selected = choice.value === this.selected;
+        return `<li class="picker-option${index === this.activeIndex ? " active" : ""}" role="option" data-index="${index}" aria-selected="${selected}"><span class="tick">${selected ? "✓" : ""}</span><span class="text">${escapeHtml(choice.label)}</span></li>`;
+      })
+      .join("");
+    for (const option of Array.from(this.list.querySelectorAll<HTMLElement>(".picker-option"))) {
+      option.addEventListener("click", () => {
+        const index = Number.parseInt(option.dataset.index ?? "", 10);
+        this.commit(index);
+      });
+    }
+  }
+
+  private open(): void {
+    this.activeIndex = this.choices.findIndex((choice) => choice.value === this.selected);
+    this.renderOptions();
+    this.list.classList.remove("hidden");
+    this.button.setAttribute("aria-expanded", "true");
+  }
+
+  private close(): void {
+    this.list.classList.add("hidden");
+    this.button.setAttribute("aria-expanded", "false");
+    this.activeIndex = -1;
+  }
+
+  private commit(index: number): void {
+    const choice = this.choices[index];
+    if (!choice) {
+      return;
+    }
+    const changed = choice.value !== this.selected;
+    this.selected = choice.value;
+    this.renderLabel();
+    this.close();
+    if (changed) {
+      this.onChange(choice.value);
+    }
+  }
+
+  private onKeyDown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      this.close();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!this.isOpen()) {
+        this.open();
+        return;
+      }
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      this.activeIndex = Math.min(this.choices.length - 1, Math.max(0, this.activeIndex + step));
+      this.renderOptions();
+      this.list.querySelector<HTMLElement>(".picker-option.active")?.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if ((event.key === "Enter" || event.key === " ") && this.isOpen()) {
+      event.preventDefault();
+      this.commit(this.activeIndex);
+    }
+  }
+}
+
+/** 候选文案来自后端（发行版名），插进 innerHTML 前统一转义。 */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
+}
+
 async function main(): Promise<void> {
   const root = document.querySelector<HTMLDivElement>("#app");
   if (!root) {
     return;
   }
 
-  let info: AppInfo = { name: "DSHarbor", version: "未知", core_version: "未知" };
+  let info: AppInfo = {
+    name: "DSHarbor",
+    version: "未知",
+    core_version: "未知",
+    repository: "未知",
+    site_url: "未知",
+    license: "未知",
+    config_dir: "未知",
+    logs_dir: "未知",
+  };
   try {
     info = await invoke<AppInfo>("app_info");
   } catch (err) {
@@ -94,58 +272,59 @@ async function main(): Promise<void> {
     <section class="card">
       <h2>DSH 会话</h2>
       <div class="status-row">
-        <span id="status-badge" class="badge badge-stopped">已停止</span>
+        <span id="login-badge" class="badge badge-stopped"><span id="login-text">登录等待中</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="登录链接说明" data-tip="登录链接就绪后即可打开 DSH 界面">!</span></span>
+        <span id="status-badge" class="badge badge-stopped"><span id="status-spinner" class="spinner hidden"></span><span id="status-text">已停止</span></span>
+        <span id="version-badge" class="badge badge-version" title="每次成功启动 DSH 后自动读取">${SPARKLE_SVG}<span id="version-text">DSH 版本未知</span></span>
         <span class="status-meta">PID：<b id="status-pid">—</b></span>
         <span class="status-meta">端口：<b id="status-port">—</b></span>
       </div>
       <p id="status-error" class="error hidden"></p>
       <div class="actions">
         <button id="btn-start" class="primary">启动 DSH</button>
-        <button id="btn-stop">停止</button>
         <button id="btn-restart">重启 DSH</button>
+        <button id="btn-stop">停止</button>
       </div>
       <div class="status-row login-row">
-        <span id="login-badge" class="badge badge-stopped">登录链接：等待中</span>
+        <p id="login-note" class="hint hidden"></p>
         <span class="actions">
           <button id="btn-open-app" disabled>当前程序打开</button>
           <button id="btn-open-browser" disabled>浏览器打开</button>
         </span>
       </div>
-      <p id="login-note" class="hint hidden"></p>
       <div class="fields tray-fields">
-        <label for="tray-click">托盘单击打开</label>
-        <select id="tray-click">
-          <option value="launcher">启动界面（默认）</option>
-          <option value="dsh">当前程序打开的窗口</option>
-        </select>
+        <label>托盘单击打开</label>
+        <div class="picker" id="tray-picker"></div>
         <p class="hint">单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 当前程序打开 / 打开启动界面」随时可用。</p>
       </div>
       <details class="log-box">
-        <summary><span class="chev">▸</span>最近输出</summary>
+        <summary><span class="chev">▸</span>最近输出<button type="button" class="log-copy" id="btn-copy-log">复制</button></summary>
         <pre id="log">（暂无输出）</pre>
       </details>
     </section>
 
     <section class="card">
-      <h2>启动方式</h2>
+      <h2 class="card-head">
+        <button id="card-toggle-modes" class="card-toggle" aria-expanded="true"><span class="chev">▸</span>启动方式<span id="modes-summary" class="badge badge-stopped card-summary">官方 npx 命令</span></button>
+      </h2>
+      <div class="card-body">
       <label class="mode">
         <input type="radio" name="mode" value="npx" checked />
         <span>
-          <b>官方 npx 命令</b>
-          <small>未全局安装 DSH 时用；执行 <code>npx --yes @deepseek-ai/dsh web --no-open</code>，首次启动会自动下载（较慢）</small>
+          <b>${MODE_LABELS.npx}</b>
+          <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）<br />执行 <code>npx --yes @deepseek-ai/dsh web --no-open</code></small>
         </span>
       </label>
       <label class="mode">
         <input type="radio" name="mode" value="system" />
         <span>
-          <b>系统全局命令</b>
-          <small>已执行过 npm install -g @deepseek-ai/dsh</small>
+          <b>${MODE_LABELS.system}</b>
+          <small>已执行过 <code>npm install -g @deepseek-ai/dsh</code></small>
         </span>
       </label>
       <label class="mode">
         <input type="radio" name="mode" value="binary" />
         <span>
-          <b>指定程序路径</b>
+          <b>${MODE_LABELS.binary}</b>
           <small>最可靠：直接启动 dsh.exe / dsh.cmd 的完整路径</small>
         </span>
       </label>
@@ -155,12 +334,12 @@ async function main(): Promise<void> {
       <label class="mode">
         <input type="radio" name="mode" value="wsl" />
         <span>
-          <b>通过 WSL 启动</b>
+          <b>${MODE_LABELS.wsl}</b>
           <small>Windows 壳启动 WSL 发行版里的 DSH</small>
         </span>
       </label>
       <div id="wsl-fields" class="fields hidden">
-        <select id="wsl-distro"><option value="">（正在读取发行版列表…）</option></select>
+        <div class="picker" id="wsl-distro-picker"></div>
         <input id="wsl-inner" type="text" value="${WSL_DEFAULT_INNER}" />
       </div>
       <div class="subcard">
@@ -182,11 +361,15 @@ async function main(): Promise<void> {
         </div>
         <p class="hint">四种启动方式共用这两个字段，WSL 模式同样生效（壳注入的端口覆盖层会经 /mnt 路径送进发行版）。配置改完自动保存，重开壳后保留。</p>
       </div>
+      </div>
     </section>
 
     <section class="card">
-      <h2>桥接插件（登录链接的可靠通道）</h2>
-      <p class="hint">安装后壳经 DSH 内部插件接口直接取带 token 的登录链接，不依赖日志格式；未安装时自动降级为日志解析（可用但较脆）。安装/卸载前请先停止 DSH。</p>
+      <h2 class="card-head">
+        <button id="card-toggle-bridge" class="card-toggle" aria-expanded="true"><span class="chev">▸</span>桥接插件（登录链接的可靠通道）<span id="bridge-summary" class="badge badge-stopped card-summary">读取中…</span></button>
+      </h2>
+      <div class="card-body">
+      <p class="hint">安装后壳经 DSH 内部插件接口直接取带 token 的登录链接，不依赖日志格式；未安装时自动降级为日志解析（可用但较脆）。安装/卸载前请先停止 DSH。每次安装或卸载都会自动备份 profile 文件，只保留最近 5 份，超出后删掉最旧的。</p>
       <div class="kv">
         <div class="kv-row"><span class="kv-key">目标环境</span><span class="kv-value" id="bridge-target">—</span></div>
         <div class="kv-row"><span class="kv-key">安装状态</span><span class="kv-value" id="bridge-status">读取中…</span></div>
@@ -199,9 +382,31 @@ async function main(): Promise<void> {
       </div>
       <p id="bridge-error" class="error hidden"></p>
       <details class="log-box">
-        <summary><span class="chev">▸</span>操作输出</summary>
+        <summary><span class="chev">▸</span>操作输出<button type="button" class="log-copy" id="btn-copy-bridge-output">复制</button></summary>
         <pre id="bridge-output">（暂无操作）</pre>
       </details>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>关于</h2>
+      <div class="kv">
+        <div class="kv-row"><span class="kv-key">壳版本</span><span class="kv-value" id="about-shell">—</span></div>
+        <div class="kv-row"><span class="kv-key">DSH 版本</span><span class="kv-value" id="about-dsh">未知</span></div>
+        <div class="kv-row"><span class="kv-key">开源许可证</span><span class="kv-value" id="about-license">—</span></div>
+        <div class="kv-row"><span class="kv-key">项目仓库</span><span class="kv-value" id="about-repo">—</span></div>
+        <div class="kv-row"><span class="kv-key">DSH 官网</span><span class="kv-value" id="about-site">—</span></div>
+        <div class="kv-row"><span class="kv-key">配置目录</span><span class="kv-value" id="about-config-dir">—</span></div>
+        <div class="kv-row"><span class="kv-key">日志目录</span><span class="kv-value" id="about-logs-dir">—</span></div>
+      </div>
+      <div class="actions about-links">
+        <button id="btn-about-repo">打开 GitHub 仓库</button>
+        <button id="btn-about-site">打开 DSH 官网</button>
+        <button id="btn-about-config">打开配置目录</button>
+        <button id="btn-about-logs">打开日志目录</button>
+      </div>
+      <p id="about-note" class="hint hidden"></p>
+      <p class="hint">DSH 版本在每次成功启动后自动读取；配置目录放壳设置与桥接备份，日志目录放 DSH 的启动日志（WSL 模式下日志在发行版内的 <code>~/.dsh/logs</code>）。</p>
     </section>
   `;
 
@@ -214,6 +419,9 @@ async function main(): Promise<void> {
   };
 
   const badge = $<HTMLSpanElement>("status-badge");
+  const statusText = $<HTMLElement>("status-text");
+  const statusSpinner = $<HTMLElement>("status-spinner");
+  const versionText = $<HTMLElement>("version-text");
   const pidEl = $<HTMLElement>("status-pid");
   const portEl = $<HTMLElement>("status-port");
   const errorEl = $<HTMLParagraphElement>("status-error");
@@ -223,16 +431,30 @@ async function main(): Promise<void> {
   const btnRestart = $<HTMLButtonElement>("btn-restart");
   const extraInput = $<HTMLInputElement>("extra-args");
   const binaryPath = $<HTMLInputElement>("binary-path");
-  const distroSelect = $<HTMLSelectElement>("wsl-distro");
   const innerInput = $<HTMLInputElement>("wsl-inner");
   const portInput = $<HTMLInputElement>("port");
   const portBadge = $<HTMLSpanElement>("port-badge");
   const portHintEl = $<HTMLParagraphElement>("port-hint");
   const loginBadge = $<HTMLSpanElement>("login-badge");
+  const loginText = $<HTMLElement>("login-text");
+  const loginInfo = $<HTMLElement>("login-info");
   const loginNote = $<HTMLParagraphElement>("login-note");
   const btnOpenApp = $<HTMLButtonElement>("btn-open-app");
   const btnOpenBrowser = $<HTMLButtonElement>("btn-open-browser");
-  const traySelect = $<HTMLSelectElement>("tray-click");
+  const trayPicker = new Picker("tray-picker", () => void persistConfigQuiet());
+  trayPicker.setChoices([
+    { value: "launcher", label: "启动界面（默认）" },
+    { value: "dsh", label: "当前程序打开的窗口" },
+  ]);
+  const distroPicker = new Picker("wsl-distro-picker", () => {
+    void persistConfigQuiet();
+    void refreshPortHint();
+  });
+  distroPicker.setChoices([{ value: "", label: "（正在读取发行版列表…）" }]);
+  const modesSummary = $<HTMLSpanElement>("modes-summary");
+  const bridgeSummary = $<HTMLSpanElement>("bridge-summary");
+  const btnCopyLog = $<HTMLButtonElement>("btn-copy-log");
+  const btnCopyBridgeOutput = $<HTMLButtonElement>("btn-copy-bridge-output");
   const bridgeTarget = $<HTMLElement>("bridge-target");
   const bridgeStatus = $<HTMLElement>("bridge-status");
   const bridgeBackup = $<HTMLElement>("bridge-backup");
@@ -241,6 +463,27 @@ async function main(): Promise<void> {
   const btnBridgeInstall = $<HTMLButtonElement>("btn-bridge-install");
   const btnBridgeUninstall = $<HTMLButtonElement>("btn-bridge-uninstall");
   const btnBridgeRestore = $<HTMLButtonElement>("btn-bridge-restore");
+  const aboutDsh = $<HTMLElement>("about-dsh");
+  const aboutNote = $<HTMLParagraphElement>("about-note");
+  const btnAboutRepo = $<HTMLButtonElement>("btn-about-repo");
+  const btnAboutSite = $<HTMLButtonElement>("btn-about-site");
+  const btnAboutConfig = $<HTMLButtonElement>("btn-about-config");
+  const btnAboutLogs = $<HTMLButtonElement>("btn-about-logs");
+
+  // 卡片折叠（「启动方式」「桥接插件」）：默认展开，收起状态只活在 DOM 里，不持久化。
+  const cardToggle = (key: "modes" | "bridge"): HTMLButtonElement => $<HTMLButtonElement>(`card-toggle-${key}`);
+  const expandCard = (key: "modes" | "bridge"): void => {
+    const toggle = cardToggle(key);
+    toggle.closest(".card")?.classList.remove("collapsed");
+    toggle.setAttribute("aria-expanded", "true");
+  };
+  for (const key of ["modes", "bridge"] as const) {
+    const toggle = cardToggle(key);
+    toggle.addEventListener("click", () => {
+      const collapsed = toggle.closest(".card")?.classList.toggle("collapsed") ?? false;
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    });
+  }
 
   // 「最近输出」「操作输出」折叠块：对应操作产生终端输出时自动展开（维护者要求）。
   const logDetails = $<HTMLElement>("log").closest("details");
@@ -255,6 +498,49 @@ async function main(): Promise<void> {
       bridgeOutputDetails.open = true;
     }
   };
+
+  /** 日志块右侧的「复制」：先走剪贴板 API，不可用时退回「选中 + execCommand」。 */
+  function copyLog(pre: HTMLPreElement, button: HTMLButtonElement): void {
+    void (async () => {
+      const text = pre.textContent ?? "";
+      const flash = (label: string): void => {
+        button.textContent = label;
+        window.setTimeout(() => {
+          button.textContent = "复制";
+        }, 1500);
+      };
+      try {
+        if (!navigator.clipboard?.writeText) {
+          throw new Error("剪贴板 API 不可用");
+        }
+        await navigator.clipboard.writeText(text);
+        flash("已复制");
+        return;
+      } catch {
+        // 兜底：临时选中文本交给浏览器复制（WebView2 支持 execCommand）。
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        const ok = document.execCommand("copy");
+        selection?.removeAllRanges();
+        flash(ok ? "已复制" : "复制失败");
+      }
+    })();
+  }
+
+  // 复制按钮在 <summary> 里：拦掉默认行为，避免顺带折叠/展开日志块。
+  for (const [button, pre] of [
+    [btnCopyLog, logEl],
+    [btnCopyBridgeOutput, bridgeOutput],
+  ] as const) {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      copyLog(pre, button);
+    });
+  }
 
   // 桥接插件卡片状态：busy 防重复点击；lastBridgeState 供「恢复最近备份」用。
   let bridgeBusy = false;
@@ -320,7 +606,7 @@ async function main(): Promise<void> {
     try {
       const shell: ShellConfig = {
         launch: collectConfig(),
-        trayClick: traySelect.value as TrayClick,
+        trayClick: trayPicker.value as TrayClick,
       };
       await invoke("save_shell_config", { config: shell });
       // 配置已回到合法状态：把之前因非法输入显示的错误消掉。
@@ -339,6 +625,13 @@ async function main(): Promise<void> {
   function syncModeFields(): void {
     $("binary-fields").classList.toggle("hidden", currentMode() !== "binary");
     $("wsl-fields").classList.toggle("hidden", currentMode() !== "wsl");
+    // 卡片收起后靠这个徽章显示当前启动方式（展开时徽章隐藏，见 CSS）。
+    const mode = currentMode();
+    modesSummary.textContent = MODE_LABELS[mode] ?? "启动方式";
+    if (mode === "wsl") {
+      // 发行版列表原先是下拉框获得焦点时才读；自绘下拉框没有这个时机，改成切到 WSL 模式就读。
+      void ensureDistros();
+    }
     // 桥接插件与端口提示都跟随启动方式（Windows 宿主 / WSL 发行版），换模式就刷新。
     void refreshBridgeState();
     void refreshPortHint();
@@ -360,24 +653,16 @@ async function main(): Promise<void> {
     distrosLoaded = true;
     try {
       const distros = await invoke<string[]>("list_wsl_distros");
-      distroSelect.innerHTML = "";
       if (distros.length === 0) {
-        distroSelect.innerHTML = `<option value="">（未检测到 WSL 发行版）</option>`;
+        distroPicker.setChoices([{ value: "", label: "（未检测到 WSL 发行版）" }]);
         return;
       }
-      for (const distro of distros) {
-        const option = document.createElement("option");
-        option.value = distro;
-        option.textContent = distro;
-        distroSelect.appendChild(option);
-      }
+      distroPicker.setChoices(distros.map((distro) => ({ value: distro, label: distro })));
     } catch (err) {
-      distroSelect.innerHTML = `<option value="">（读取失败）</option>`;
+      distroPicker.setChoices([{ value: "", label: "（读取失败）" }]);
       console.error("读取 WSL 发行版失败:", err);
     }
   }
-  distroSelect.addEventListener("focus", () => void ensureDistros());
-  distroSelect.addEventListener("pointerdown", () => void ensureDistros());
 
   function collectConfig(): LaunchConfig {
     const extraArgs = extraInput.value.trim().split(/\s+/).filter(Boolean);
@@ -392,30 +677,44 @@ async function main(): Promise<void> {
       case "binary":
         return { ...base, mode: { kind: "binary", path: binaryPath.value.trim() } };
       case "wsl":
-        return { ...base, mode: { kind: "wsl", distro: distroSelect.value.trim(), inner: innerInput.value.trim() } };
+        return { ...base, mode: { kind: "wsl", distro: distroPicker.value.trim(), inner: innerInput.value.trim() } };
       default:
         return { ...base, mode: { kind: "npx" } };
     }
   }
 
   // 配置自动保存：任一字段变更后尝试写盘（当前不合法时不写、不打扰；启动时会再校验）。
-  for (const input of [extraInput, binaryPath, distroSelect, innerInput, portInput, traySelect]) {
+  // 两个自绘下拉框（托盘单击打开 / WSL 发行版）的回调在构造时已接进 persistConfigQuiet。
+  for (const input of [extraInput, binaryPath, innerInput, portInput]) {
     input.addEventListener("change", () => void persistConfigQuiet());
   }
   // 端口：输入即刷新徽章（不含程序化赋值）；失焦再刷新一次保证同步。
   portInput.addEventListener("input", renderPortHint);
   portInput.addEventListener("change", renderPortHint);
-  distroSelect.addEventListener("change", () => void refreshPortHint());
 
   // 启动/停止失败时后端返回的错误（与轮询到的会话错误分开保存，
   // 否则下一次轮询（每秒一次）会把刚显示的错误清掉）。
   let localError: string | null = null;
 
+  /** 把说明写进登录徽章的感叹号气泡（悬停或键盘聚焦时显示）。 */
+  function setLoginTip(text: string): void {
+    loginInfo.dataset.tip = text;
+    loginInfo.setAttribute("aria-label", `登录链接说明：${text}`);
+  }
+
+  /** 「启动中」= 进程已起来、登录链接还没就绪（npx 首次下载与 DSH 冷启动都停在这一步）。 */
+  function isStarting(status: SessionStatus): boolean {
+    return status.state === "running" && !status.loginReady && !status.loginError;
+  }
+
   function render(status: SessionStatus): void {
-    const badgeClass = status.state === "running" ? "badge-running" : status.state === "failed" ? "badge-failed" : "badge-stopped";
-    const badgeText = status.state === "running" ? "运行中" : status.state === "failed" ? "启动失败" : "已停止";
-    badge.className = `badge ${badgeClass}`;
-    badge.textContent = badgeText;
+    const starting = isStarting(status);
+    badge.className = `badge ${starting ? "badge-starting" : status.state === "running" ? "badge-running" : status.state === "failed" ? "badge-failed" : "badge-stopped"}`;
+    statusText.textContent = starting ? "启动中" : status.state === "running" ? "运行中" : status.state === "failed" ? "启动失败" : "已停止";
+    statusSpinner.classList.toggle("hidden", !starting);
+    // DSH 版本：后端在每次成功启动后异步补上，重启壳后为「未知」直到再次启动。
+    versionText.textContent = status.dshVersion ? `DSH v${status.dshVersion}` : "DSH 版本未知";
+    aboutDsh.textContent = status.dshVersion ?? "未知";
     pidEl.textContent = status.pid === null ? "—" : String(status.pid);
     portEl.textContent = status.port === null ? "—" : String(status.port);
     const message = localError ?? status.error;
@@ -433,22 +732,27 @@ async function main(): Promise<void> {
     // 「重启 DSH」常驻（与托盘菜单同款入口）：运行中可一键重启，停止时等价于启动。
 
     // 登录链接徽章：桥接就绪 > 日志兜底就绪 > 等待中 > 获取失败。
+    // 正常状态的细节说明放在徽章的感叹号气泡里（维护者要求），失败信息仍留在行内便于直接排查。
     if (status.loginReady) {
       const viaBridge = status.loginChannel === "bridge";
       loginBadge.className = "badge badge-running";
-      loginBadge.textContent = viaBridge ? "登录链接：桥接就绪" : "登录链接：日志兜底就绪";
-      loginNote.textContent = viaBridge
-        ? "已通过桥接插件取得带 token 的登录链接。"
-        : "桥接插件未启用，已从启动日志解析出登录链接。";
-      loginNote.classList.remove("hidden");
+      loginText.textContent = viaBridge ? "桥接就绪" : "日志兜底就绪";
+      setLoginTip(
+        viaBridge
+          ? "已通过桥接插件取得带 token 的登录链接。"
+          : "桥接插件未启用，已从启动日志解析出带 token 的登录链接（可用，但依赖 DSH 的日志格式）。",
+      );
+      loginNote.classList.add("hidden");
     } else if (status.loginError) {
       loginBadge.className = "badge badge-failed";
-      loginBadge.textContent = "登录链接：获取失败";
+      loginText.textContent = "登录获取失败";
+      setLoginTip(status.loginError);
       loginNote.textContent = status.loginError;
       loginNote.classList.remove("hidden");
     } else {
       loginBadge.className = "badge badge-stopped";
-      loginBadge.textContent = running ? "登录链接：等待中…" : "登录链接：等待中";
+      loginText.textContent = running ? "登录等待中…" : "登录等待中";
+      setLoginTip("登录链接就绪后即可打开 DSH 界面。");
       loginNote.classList.add("hidden");
     }
     btnOpenApp.disabled = !status.loginReady;
@@ -537,11 +841,16 @@ async function main(): Promise<void> {
       lastBridgeState = state;
       bridgeTarget.textContent = state.target;
       bridgeStatus.textContent = state.installed ? "已安装（优先走桥接通道）" : "未安装（走日志兜底）";
+      // 卡片收起后靠这个徽章显示安装状态（展开时徽章隐藏，见 CSS）。
+      bridgeSummary.className = `badge ${state.installed ? "badge-running" : "badge-stopped"} card-summary`;
+      bridgeSummary.textContent = state.installed ? "已安装" : "未安装";
       bridgeBackup.textContent = state.latestBackup
         ? `最近备份：${state.latestBackup}`
         : "还没有备份：安装或卸载时会自动创建，可用「恢复最近备份」回滚。";
     } catch (err) {
       bridgeStatus.textContent = `读取失败：${err}`;
+      bridgeSummary.className = "badge badge-failed card-summary";
+      bridgeSummary.textContent = "读取失败";
     }
   }
 
@@ -550,7 +859,8 @@ async function main(): Promise<void> {
       bridgeBusy = true;
       updateBridgeButtons();
       bridgeError.classList.add("hidden");
-      // 桥接操作会产生 pnpm/命令的终端输出：自动展开「操作输出」（维护者要求）。
+      // 桥接操作会产生 pnpm/命令的终端输出：自动展开卡片与「操作输出」（维护者要求）。
+      expandCard("bridge");
       expandBridgeOutput();
       bridgeOutput.textContent = "执行中…（首次可能较慢，pnpm 需要解析依赖）";
       try {
@@ -584,7 +894,8 @@ async function main(): Promise<void> {
       bridgeBusy = true;
       updateBridgeButtons();
       try {
-        // 恢复同样产生终端输出：自动展开「操作输出」。
+        // 恢复同样产生终端输出：自动展开卡片与「操作输出」。
+        expandCard("bridge");
         expandBridgeOutput();
         const message = await invoke<string>("bridge_restore", {
           config: collectConfig(),
@@ -602,6 +913,39 @@ async function main(): Promise<void> {
       }
     })();
   });
+
+  /** 「关于」卡片：打开项目仓库 / DSH 官网（URL 固定在 Rust 侧，界面只传目标键）。 */
+  function openExternal(target: "repo" | "site"): void {
+    void (async () => {
+      aboutNote.classList.add("hidden");
+      try {
+        await invoke("open_external", { target });
+      } catch (err) {
+        aboutNote.textContent = `打开失败：${err}`;
+        aboutNote.classList.remove("hidden");
+      }
+    })();
+  }
+
+  /** 「关于」卡片：在系统文件管理器里打开壳配置目录 / DSH 日志目录。 */
+  function openShellDir(kind: "config" | "logs"): void {
+    void (async () => {
+      aboutNote.classList.add("hidden");
+      try {
+        const path = await invoke<string>("open_shell_dir", { kind });
+        aboutNote.textContent = `已在资源管理器中打开：${path}`;
+        aboutNote.classList.remove("hidden");
+      } catch (err) {
+        aboutNote.textContent = `打开目录失败：${err}`;
+        aboutNote.classList.remove("hidden");
+      }
+    })();
+  }
+
+  btnAboutRepo.addEventListener("click", () => openExternal("repo"));
+  btnAboutSite.addEventListener("click", () => openExternal("site"));
+  btnAboutConfig.addEventListener("click", () => openShellDir("config"));
+  btnAboutLogs.addEventListener("click", () => openShellDir("logs"));
 
   /** 首启/重开壳时把已保存的设置填回界面（后端缺省时返回默认值）。 */
   async function loadSavedConfig(): Promise<void> {
@@ -622,17 +966,25 @@ async function main(): Promise<void> {
     }
     if (launch.mode.kind === "wsl") {
       await ensureDistros();
-      distroSelect.value = launch.mode.distro;
+      distroPicker.setValue(launch.mode.distro);
       innerInput.value = launch.mode.inner;
     }
     extraInput.value = launch.extraArgs.join(" ");
     if (launch.port !== null && launch.port !== undefined) {
       portInput.value = String(launch.port);
     }
-    traySelect.value = saved.trayClick;
+    trayPicker.setValue(saved.trayClick);
     syncModeFields();
     renderPortHint();
   }
+
+  // 「关于」卡片：静态信息来自 app_info；DSH 版本随状态轮询更新（见 render）。
+  $("about-shell").textContent = `${info.name} ${info.version}（核心库 ${info.core_version}）`;
+  $("about-license").textContent = info.license;
+  $("about-repo").textContent = info.repository;
+  $("about-site").textContent = info.site_url;
+  $("about-config-dir").textContent = info.config_dir;
+  $("about-logs-dir").textContent = info.logs_dir;
 
   await loadSavedConfig();
   // 发行版列表提前读好，切到 WSL 模式即可选。

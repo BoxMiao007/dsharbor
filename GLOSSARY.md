@@ -27,6 +27,11 @@
 | 当前程序打开 | open in app | 在壳自己的 WebView2 窗口（`dsh-view`）里打开已登录的 DSH 界面；窗口与启动界面相互独立。 |
 | 浏览器打开 | open in browser | 显式把登录链接交给系统默认浏览器（手动动作；壳的启动流程自动弹出始终禁止）。 |
 | 托盘单击目标 | tray click target | 单击托盘图标默认打开的窗口：启动界面（默认）或程序窗口；随配置存在 `config.json` 的 `trayClick`。 |
-| 回滚备份 | bridge backup | 安装/卸载桥接插件前，壳把 profile 中会被 pnpm 改写的文件（package.json、pnpm-workspace.yaml、pnpm-lock.yaml、cordis.patch.yml）备份到 `%APPDATA%\DSHarbor\backups`（含内容哈希清单）。 |
+| 版本徽章 | version badge | 「DSH 会话」状态行里显示**当前运行的 DSH 版本**的徽章（两个四角星 + `DSH v…`，外观同「已停止」）；版本由壳在每次成功启动后用 `dsh web --version` 查询缓存，未取到显示「DSH 版本未知」。 |
+| 登录徽章 | login badge | 「DSH 会话」状态行**第一个**徽章，显示登录链接的通路与状态：登录等待中 / 桥接就绪（走桥接插件）/ 日志兜底就绪（日志解析）/ 登录获取失败；细节说明在徽章内感叹号图标的悬停气泡，获取失败时登录行显示原因原文。 |
+| 启动中 | starting | 「DSH 会话」状态徽章的一种：DSH 进程已拉起、登录链接尚未就绪（`running` 且未就绪、未报错），带转圈动画；就绪后自动变「运行中」。 |
+| 折叠摘要徽章 | card summary badge | 卡片收起时显示在标题行右侧的小徽章：「启动方式」显示当前方式名、「桥接插件」显示已安装 / 未安装；展开时隐藏。 |
+| 关于卡片 | about card | 启动界面末尾常开的卡片：壳与核心库版本、DSH 版本、许可证、仓库、官网，以及配置目录 / 日志目录的一键打开入口。 |
+| 回滚备份 | bridge backup | 安装/卸载桥接插件前，壳把 profile 中会被 pnpm 改写的文件（package.json、pnpm-workspace.yaml、pnpm-lock.yaml、cordis.patch.yml）备份到 `%APPDATA%\DSHarbor\backups`（含内容哈希清单）；只保留最近 5 份，超出删最旧的。 |
 | 验证门 | verification gates | 交付前必过的命令集合，见 `AGENTS.md`「完成定义」。 |
 | 手动验收 | manual acceptance | Windows 真机发布前复核流程，见 `docs/manual-acceptance.md`。 |
