@@ -25,11 +25,17 @@ v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见�
    - `pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`(完整 Windows 安装包;改动涉及外壳或打包时必须跑)
 2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。
 3. 交付说明讲给不写代码的人听:做了什么、怎么看到结果(地址/命令/截图)、有什么限制和后续建议;没把握或未完成的部分明说,不藏在细节里。
+4. 构建完成后默认把产物替换到本机安装目录(维护者要求,无需再问;运行中的 DSHarbor 会占用 exe,替换前先关掉):
+   - `cp target/x86_64-pc-windows-msvc/release/dsharbor.exe "/mnt/d/Program Files/DSHarbor/dsharbor.exe"`
+   - 桥接插件包重新打包过时一并覆盖 `"/mnt/d/Program Files/DSHarbor/resources/dsharbor-bridge-0.1.0.tgz"`
+   - 用 `sha256sum` 核对两份文件一致,再启动该目录下的 exe 确认界面能打开,然后关掉
+   - 替换的是已安装副本,不动注册表与 `uninstall.exe`;需要重装或换路径时走安装包(见 `docs/manual-acceptance.md` 卸载与数据保留)
 
 ## 提交与推送
 
-- 不自动提交:完成并验证后向用户报告,用户明确说提交时才提交;一个独立功能、一处缺陷修复或一次重构各提交一次。
+- 默认自行提交:完成并验证后直接按下面的粒度提交,不再等用户点头;交付说明里写明提交号与提交内容。
 - 不自动推送:提交后留在本地,用户明确说推送时才推送到 origin。
+- 提交粒度:一个独立功能、一处缺陷修复或一次重构各提交一次;提交前验证门必须全部通过。
 - 密钥、凭据等敏感内容一律不提交;新增构建产物或本地环境文件类型时,同步补充 `.gitignore`。
 
 ## 知识沉淀(保证任何新会话都能接手)
