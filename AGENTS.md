@@ -31,6 +31,7 @@ v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见�
    - 安装目录沿用上次选择的位置(已实测:NSIS 从注册表卸载项读回 `InstallLocation`,当前是 `D:\Program Files\DSHarbor`;装完 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSHarbor` 的 `DisplayVersion` 会跟着更新)
    - 装完启动该目录下的 exe 确认界面能打开,然后关掉
    - 不要再用纯文件替换:那只换 exe 与资源、不动注册表与 `uninstall.exe`,装出来的版本信息会对不上
+   - 更不要拿裸 `cargo xwin build --release` 的 `target/x86_64-pc-windows-msvc/release/dsharbor.exe` 去替换:那是开发版(没开 tauri 的 `custom-protocol`,运行时按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server),脱离 dev server 只会看到「localhost 拒绝连接」的错误页,而无边框主窗口的关闭按钮就在页面里
 
 ## 提交与推送
 

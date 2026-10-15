@@ -74,6 +74,7 @@
 
 ## 排查
 
+- **打开只有一个「无法访问此页面 / localhost 拒绝连接（ERR_CONNECTION_REFUSED）」的错误页，而且窗口没有关闭按钮**：安装目录里的 exe 是裸 `cargo build` 编出来的开发版——没开 tauri 的 `custom-protocol`，前端没嵌进去，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server。主窗口是无边框的（`decorations: false`），页面没渲染出来就没有自绘标题栏、也就没有关闭按钮。退出方式：`Alt+F4`、任务栏图标右键「关闭窗口」，或托盘图标右键「完全退出」。修复：用 `pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc` 出的安装包重装（安装目录里那份安装包也可以 `<setup>.exe /S` 静默重装）；不要用裸构建的 `target/.../release/dsharbor.exe` 去替换安装目录。
 - **端口被占用（EADDRINUSE）**：profile 里 webserver 端口被别的程序占用（注意 WSL 镜像网络下 Windows/WSL 共用 localhost 端口，刚停过 DSH 时等 1~2 分钟 TIME_WAIT 消散）。改「端口」字段用自定义端口，或释放占用。
 - **桥接未启用**：DSH 启动时没带 nonce（例如你自己在终端跑 `dsh web`），属预期降级（登录徽章显示「日志兜底就绪」）。
 - **WSL 插件安装报 pnpm 错误**：确认壳运行时已注入清洗后的 PATH（4.0 起内置）；发行版内 pnpm 版本冲突时 `npx @deepseek-ai/dsh plugin --profile web …` 手动复核。
