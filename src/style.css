@@ -1,6 +1,11 @@
 :root {
   color-scheme: dark;
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 徽章尺寸统一（维护者要求）：全站徽章与「复制」胶囊按钮共用这三个值，
+     改一处即整体变化，不会再出现某一个徽章或胶囊偏大偏小。 */
+  --badge-height: 28px;
+  --badge-padding-x: 10px;
+  --badge-font-size: 13px;
 }
 
 * {
@@ -79,15 +84,17 @@ body {
 }
 
 .badge {
-  /* 徽章背景比初版小一圈（维护者要求）：内边距 4/12 → 3/10，高度 30 → 28px。 */
+  /* 高度、内边距、字号统一走 :root 里的 --badge-* 变量。
+     固定 height + line-height: 1：徽章里有的带 SVG 图标、有的带旋转圈、有的纯文字，
+     按内容定高时高度会差 2~4px，统一钉死后完全一致。 */
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
+  height: var(--badge-height);
+  padding: 0 var(--badge-padding-x);
   border-radius: 999px;
-  font-size: 13px;
-  /* 固定行高：徽章里有的带 SVG 图标、有的纯文字，统一后高度完全一致。 */
-  line-height: 20px;
+  font-size: var(--badge-font-size);
+  line-height: 1;
   font-weight: 600;
 }
 
@@ -118,18 +125,6 @@ body {
   to {
     transform: rotate(360deg);
   }
-}
-
-.login-row {
-  margin-top: 14px;
-  align-items: center;
-  gap: 10px;
-}
-
-/* 登录说明只在出错时留在行内；正常状态改挂在登录徽章的感叹号气泡里。
-   说明独占一行（flex-basis: 100%），两个打开按钮因此与上面的启动/重启/停止左对齐。 */
-.login-row #login-note {
-  flex-basis: 100%;
 }
 
 /* ---- 徽章里的感叹号圆圈 + 悬停气泡 ---- */
@@ -211,6 +206,26 @@ body {
   gap: 10px;
 }
 
+/* 两组操作按钮同排（维护者要求）：组内间距 10px；窗口有余量时第二组（打开界面）
+   被 `margin-left: auto` 推到右缘，与左侧「控制 DSH」分列左右；余量不足时先退到
+   28px 的组间距，再整体换行，不挤压按钮。 */
+.actions-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+}
+
+.actions-row > .actions + .actions {
+  margin-left: auto;
+}
+
+/* 登录说明只在出错时出现；正常状态改挂在登录徽章的感叹号气泡里。
+   独立成段（不再和按钮同排），出现或消失都不会挤动上面的两排按钮。 */
+.login-note {
+  margin-top: 10px;
+}
+
 button {
   padding: 8px 22px;
   border-radius: 8px;
@@ -289,13 +304,15 @@ button.primary:hover:not(:disabled) {
   cursor: text;
 }
 
-/* 「最近输出 / 操作输出」标题行右侧的复制按钮 */
+/* 「最近输出 / 操作输出」标题行右侧的复制按钮：同样按徽章尺寸统一。 */
 .log-copy {
   margin-left: auto;
   flex: none;
-  padding: 3px 10px;
+  height: var(--badge-height);
+  padding: 0 var(--badge-padding-x);
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: var(--badge-font-size);
+  line-height: 1;
   color: #9fb2d8;
 }
 
@@ -466,13 +483,11 @@ input[type="text"]:focus,
   cursor: pointer;
 }
 
+/* 蓝色底只标「正要选中的这一项」（鼠标悬停 / 键盘上下移动），
+   已经选中的那一项不加底色，只靠行首的 ✓ 表示（维护者要求）。 */
 .picker-option:hover,
 .picker-option.active {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.picker-option[aria-selected="true"] {
-  background: rgba(77, 107, 254, 0.24);
+  background: rgba(77, 107, 254, 0.38);
   color: #eef2fa;
 }
 
@@ -632,6 +647,26 @@ input[type="text"]:focus,
   word-break: break-all;
 }
 
+/* 条目自带操作按钮的行（「关于」卡片）：按钮贴右，键值部分吃掉剩余宽度，
+   左侧键名与其它行保持同一列。 */
+.kv-row-action {
+  align-items: center;
+}
+
+.kv-row-action .kv-value {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 条目内按钮：与其它按钮同款，只是更紧凑，不把行高撑起来。 */
+.kv-action {
+  flex: none;
+  align-self: center;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
 .bridge-actions {
   margin-bottom: 4px;
 }
@@ -639,9 +674,6 @@ input[type="text"]:focus,
 /* ---- 版本徽章（DSH 会话卡片状态行内，配色与「已停止」一致） ---- */
 
 .badge-version {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   background: rgba(148, 163, 184, 0.15);
   color: #a8b6cf;
   border: 1px solid rgba(148, 163, 184, 0.35);
@@ -716,14 +748,7 @@ input[type="text"]:focus,
 
 /* ---- 「关于」卡片 ---- */
 
-.about-links {
-  justify-content: center;
-  flex-wrap: wrap;
-  /* 与下面的说明文字留出间距（维护者要求） */
-  margin-bottom: 12px;
-}
-
-.about-links button {
-  padding: 6px 14px;
-  font-size: 13px;
+/* 操作按钮已并入各条目（见 .kv-row-action）；说明文字与上方条目留出间距。 */
+#about-note {
+  margin-top: 12px;
 }

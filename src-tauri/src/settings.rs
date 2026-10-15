@@ -1,4 +1,5 @@
-//! 壳级设置与持久化（在 app_data_root/config.json）。
+//! 壳级设置与持久化（在 app_data_root）：设置本体是 config.json，
+//! 另有一个 dsh-version.txt 存上次读到的 DSH 版本号（见 save_dsh_version）。
 //!
 //! 为什么单独成模块：不止「启动参数」要持久化——托盘单击打开哪个窗口
 //! 这类壳行为偏好同样要活过重开与卸载，统一存一个 JSON。
@@ -79,6 +80,43 @@ fn store(app: &tauri::AppHandle, config: &ShellConfig) -> Result<(), String> {
 /// 保存整份设置（界面自动保存用）。
 pub fn save(app: &tauri::AppHandle, config: &ShellConfig) -> Result<(), String> {
     store(app, config)
+}
+
+/// DSH 版本号缓存文件（`app_data_root/dsh-version.txt`）。
+///
+/// 为什么不并进 config.json：那份设置由界面整份回写（`save_shell_config`），
+/// 版本号混在里面会被界面提交的旧值覆盖回去，单开一个文件才不会被覆盖。
+fn version_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(crate::app_data_root(app)?.join("dsh-version.txt"))
+}
+
+/// 上次记录到的 DSH 版本号（没记录过/读不出来时返回 None）。
+pub fn load_dsh_version(app: &tauri::AppHandle) -> Option<String> {
+    let path = version_path(app).ok()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let version = text.trim();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
+/// 记录 DSH 版本号：壳重开后先用这个值填界面，不再显示「未知」。
+///
+/// 落盘时机是每次查询成功时。版本号只有一个来源（启动后那次查询），
+/// 停止与退出都不会让已查到的值变化，所以“退出瞬间的值”就是最后一次查到的值；
+/// 实时落盘还能兼顾被强杀、断电这类收不到退出事件的情况。
+pub fn save_dsh_version(app: &tauri::AppHandle, version: &str) -> Result<(), String> {
+    let version = version.trim();
+    if version.is_empty() {
+        return Ok(());
+    }
+    let path = version_path(app)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|err| format!("创建配置目录失败：{err}"))?;
+    }
+    std::fs::write(&path, version).map_err(|err| format!("写入 DSH 版本号失败：{err}"))
 }
 
 /// 只更新启动配置、保留壳偏好（托盘单击目标等）；启动流程使用。

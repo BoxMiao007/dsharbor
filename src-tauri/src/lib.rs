@@ -171,6 +171,10 @@ fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig) {
                     *slot = Some(version.clone());
                 }
             }
+            // 记盘：壳完全退出再打开时用这个值先填界面，不会回到「未知」。
+            if let Err(err) = settings::save_dsh_version(&app, &version) {
+                eprintln!("[dsharbor] 记录 DSH 版本号失败：{err}");
+            }
             eprintln!("[dsharbor] 当前 DSH 版本：{version}");
         }
         Err(err) => eprintln!("[dsharbor] 查询 DSH 版本失败：{err}"),
@@ -447,12 +451,14 @@ fn open_external(target: String) -> Result<(), String> {
     launch_default_browser(url)
 }
 
-/// 在系统文件管理器里打开壳配置目录 / DSH 日志目录（「关于」卡片）。
+/// 在系统文件管理器里打开壳配置目录 / DSH 日志目录 / 桥接插件备份目录。
+/// 备份目录入口在「桥接插件」卡片（安装/卸载的备份都落在那里）。
 #[tauri::command]
 fn open_shell_dir(app: tauri::AppHandle, kind: String) -> Result<String, String> {
     let dir = match kind.as_str() {
         "config" => app_data_root(&app)?,
         "logs" => std::path::PathBuf::from(plugin::host_dsh_home()?).join("logs"),
+        "backups" => plugin::backups_root(&app)?,
         other => return Err(format!("不认识的目录：{other}")),
     };
     // 目录可能还不存在（重装后首次启动、DSH 还没写过日志）：先建出来，否则资源管理器报错。
@@ -723,6 +729,13 @@ pub fn run() {
         }))
         .manage(AppState::default())
         .setup(|app| {
+            // 上次记录到的 DSH 版本号：壳重开后界面立刻沿用这个值，
+            // 不再等（也不是）本次启动的查询——查询规则不变，见 query_dsh_version_async。
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut slot) = state.dsh_version.lock() {
+                    *slot = settings::load_dsh_version(app.handle());
+                }
+            }
             // 托盘：轻量模式的入口。这里失败会直接终止启动——
             // 没有托盘的轻量态意味着窗口关掉后应用再也回不来。
             tray::setup(app.handle())?;

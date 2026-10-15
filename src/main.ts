@@ -184,10 +184,13 @@ class Picker {
   }
 
   private open(): void {
-    this.activeIndex = this.choices.findIndex((choice) => choice.value === this.selected);
+    // 打开时先不放蓝底：蓝色只属于「正要选中的那一项」，鼠标点开时不该有任何一行被标上。
+    // 当前值靠行首的 ✓ 认，长列表滚到它那里去。
+    this.activeIndex = -1;
     this.renderOptions();
     this.list.classList.remove("hidden");
     this.button.setAttribute("aria-expanded", "true");
+    this.list.querySelector<HTMLElement>('.picker-option[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }
 
   private close(): void {
@@ -219,6 +222,10 @@ class Picker {
       event.preventDefault();
       if (!this.isOpen()) {
         this.open();
+        // 键盘打开是有意要移动光标，这时才把蓝底落在当前值上。
+        this.activeIndex = Math.max(0, this.choices.findIndex((choice) => choice.value === this.selected));
+        this.renderOptions();
+        this.list.querySelector<HTMLElement>(".picker-option.active")?.scrollIntoView({ block: "nearest" });
         return;
       }
       const step = event.key === "ArrowDown" ? 1 : -1;
@@ -279,18 +286,18 @@ async function main(): Promise<void> {
         <span class="status-meta">端口：<b id="status-port">—</b></span>
       </div>
       <p id="status-error" class="error hidden"></p>
-      <div class="actions">
-        <button id="btn-start" class="primary">启动 DSH</button>
-        <button id="btn-restart">重启 DSH</button>
-        <button id="btn-stop">停止</button>
-      </div>
-      <div class="status-row login-row">
-        <p id="login-note" class="hint hidden"></p>
-        <span class="actions">
+      <div class="actions-row">
+        <div class="actions">
+          <button id="btn-start" class="primary">启动 DSH</button>
+          <button id="btn-restart">重启 DSH</button>
+          <button id="btn-stop">停止</button>
+        </div>
+        <div class="actions">
           <button id="btn-open-app" disabled>当前程序打开</button>
           <button id="btn-open-browser" disabled>浏览器打开</button>
-        </span>
+        </div>
       </div>
+      <p id="login-note" class="hint login-note hidden"></p>
       <div class="fields tray-fields">
         <label>托盘单击打开</label>
         <div class="picker" id="tray-picker"></div>
@@ -379,7 +386,9 @@ async function main(): Promise<void> {
         <button id="btn-bridge-install" class="primary">安装桥接插件</button>
         <button id="btn-bridge-uninstall">卸载</button>
         <button id="btn-bridge-restore">恢复最近备份</button>
+        <button id="btn-bridge-backups">打开备份目录</button>
       </div>
+      <p id="bridge-note" class="hint hidden"></p>
       <p id="bridge-error" class="error hidden"></p>
       <details class="log-box">
         <summary><span class="chev">▸</span>操作输出<button type="button" class="log-copy" id="btn-copy-bridge-output">复制</button></summary>
@@ -394,16 +403,10 @@ async function main(): Promise<void> {
         <div class="kv-row"><span class="kv-key">壳版本</span><span class="kv-value" id="about-shell">—</span></div>
         <div class="kv-row"><span class="kv-key">DSH 版本</span><span class="kv-value" id="about-dsh">未知</span></div>
         <div class="kv-row"><span class="kv-key">开源许可证</span><span class="kv-value" id="about-license">—</span></div>
-        <div class="kv-row"><span class="kv-key">项目仓库</span><span class="kv-value" id="about-repo">—</span></div>
-        <div class="kv-row"><span class="kv-key">DSH 官网</span><span class="kv-value" id="about-site">—</span></div>
-        <div class="kv-row"><span class="kv-key">配置目录</span><span class="kv-value" id="about-config-dir">—</span></div>
-        <div class="kv-row"><span class="kv-key">日志目录</span><span class="kv-value" id="about-logs-dir">—</span></div>
-      </div>
-      <div class="actions about-links">
-        <button id="btn-about-repo">打开 GitHub 仓库</button>
-        <button id="btn-about-site">打开 DSH 官网</button>
-        <button id="btn-about-config">打开配置目录</button>
-        <button id="btn-about-logs">打开日志目录</button>
+        <div class="kv-row kv-row-action"><span class="kv-key">项目仓库</span><span class="kv-value" id="about-repo">—</span><button id="btn-about-repo" class="kv-action">打开 GitHub 仓库</button></div>
+        <div class="kv-row kv-row-action"><span class="kv-key">DSH 官网</span><span class="kv-value" id="about-site">—</span><button id="btn-about-site" class="kv-action">打开 DSH 官网</button></div>
+        <div class="kv-row kv-row-action"><span class="kv-key">配置目录</span><span class="kv-value" id="about-config-dir">—</span><button id="btn-about-config" class="kv-action">打开配置目录</button></div>
+        <div class="kv-row kv-row-action"><span class="kv-key">日志目录</span><span class="kv-value" id="about-logs-dir">—</span><button id="btn-about-logs" class="kv-action">打开日志目录</button></div>
       </div>
       <p id="about-note" class="hint hidden"></p>
       <p class="hint">DSH 版本在每次成功启动后自动读取；配置目录放壳设置与桥接备份，日志目录放 DSH 的启动日志（WSL 模式下日志在发行版内的 <code>~/.dsh/logs</code>）。</p>
@@ -459,10 +462,12 @@ async function main(): Promise<void> {
   const bridgeStatus = $<HTMLElement>("bridge-status");
   const bridgeBackup = $<HTMLElement>("bridge-backup");
   const bridgeError = $<HTMLParagraphElement>("bridge-error");
+  const bridgeNote = $<HTMLParagraphElement>("bridge-note");
   const bridgeOutput = $<HTMLPreElement>("bridge-output");
   const btnBridgeInstall = $<HTMLButtonElement>("btn-bridge-install");
   const btnBridgeUninstall = $<HTMLButtonElement>("btn-bridge-uninstall");
   const btnBridgeRestore = $<HTMLButtonElement>("btn-bridge-restore");
+  const btnBridgeBackups = $<HTMLButtonElement>("btn-bridge-backups");
   const aboutDsh = $<HTMLElement>("about-dsh");
   const aboutNote = $<HTMLParagraphElement>("about-note");
   const btnAboutRepo = $<HTMLButtonElement>("btn-about-repo");
@@ -910,6 +915,21 @@ async function main(): Promise<void> {
         bridgeBusy = false;
         updateBridgeButtons();
         await refreshBridgeState();
+      }
+    })();
+  });
+
+  /** 「桥接插件」卡片：在资源管理器里打开备份目录（安装/卸载的备份都落在这里）。 */
+  btnBridgeBackups.addEventListener("click", () => {
+    void (async () => {
+      bridgeNote.classList.add("hidden");
+      try {
+        const path = await invoke<string>("open_shell_dir", { kind: "backups" });
+        bridgeNote.textContent = `已在资源管理器中打开备份目录：${path}`;
+        bridgeNote.classList.remove("hidden");
+      } catch (err) {
+        bridgeNote.textContent = `打开备份目录失败：${err}`;
+        bridgeNote.classList.remove("hidden");
       }
     })();
   });

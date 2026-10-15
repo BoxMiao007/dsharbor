@@ -308,7 +308,9 @@ fn find_bridge_tgz(app: &tauri::AppHandle) -> Result<String, String> {
         .to_string())
 }
 
-fn backups_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+/// 备份目录（`app_data_root/backups`）：安装/卸载前的回滚备份都放这里，
+/// 也是界面「打开备份目录」按钮的目标目录（见 `open_shell_dir`）。
+pub(crate) fn backups_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(crate::app_data_root(app)?.join("backups"))
 }
 
