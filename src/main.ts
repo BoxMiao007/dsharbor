@@ -288,9 +288,8 @@ async function main(): Promise<void> {
       <p id="status-error" class="error hidden"></p>
       <div class="actions-row">
         <div class="actions">
-          <button id="btn-start" class="primary">启动 DSH</button>
+          <button id="btn-toggle" class="primary">启动 DSH</button>
           <button id="btn-restart">重启 DSH</button>
-          <button id="btn-stop">停止</button>
         </div>
         <div class="actions">
           <button id="btn-open-app" disabled>当前程序打开</button>
@@ -429,8 +428,7 @@ async function main(): Promise<void> {
   const portEl = $<HTMLElement>("status-port");
   const errorEl = $<HTMLParagraphElement>("status-error");
   const logEl = $<HTMLPreElement>("log");
-  const btnStart = $<HTMLButtonElement>("btn-start");
-  const btnStop = $<HTMLButtonElement>("btn-stop");
+  const btnToggle = $<HTMLButtonElement>("btn-toggle");
   const btnRestart = $<HTMLButtonElement>("btn-restart");
   const extraInput = $<HTMLInputElement>("extra-args");
   const binaryPath = $<HTMLInputElement>("binary-path");
@@ -712,7 +710,46 @@ async function main(): Promise<void> {
     return status.state === "running" && !status.loginReady && !status.loginError;
   }
 
+  /**
+   * 输出块（「最近输出」「操作输出」）的文本更新。
+   *
+   * 状态每秒轮询一次，每次都把同一个字符串重新赋给 `textContent`；换掉文本节点本身就会清掉选区，
+   * 表现就是「拖选几段、一松手就没了」。所以：文本没变就不动 DOM，用户正在这块里框选（选区未折叠）
+   * 也先不动。轮询每 1 秒重跑一次，等用户点别处解除选区后自然会补上。
+   */
+  function setOutputText(el: HTMLElement, text: string): void {
+    if (el.textContent === text || hasSelectionWithin(el)) {
+      return;
+    }
+    el.textContent = text;
+  }
+
+  /** 选区（含折叠判定）是否落在这个元素里：跨块拖选时 anchor 与 focus 任一端在内就算。 */
+  function hasSelectionWithin(el: HTMLElement): boolean {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      return false;
+    }
+    return [selection.anchorNode, selection.focusNode].some((node) => node !== null && el.contains(node));
+  }
+
+  /**
+   * 操作输出的结果文案（安装 / 卸载 / 回滚 / 打开备份目录的反馈）必须落地，不能被选区挡住，
+   * 所以写之前先放下用户在这块里的选区；每秒轮询的「最近输出」走 setOutputText，不动选区。
+   */
+  function setBridgeOutput(text: string): void {
+    const selection = window.getSelection();
+    if (selection && hasSelectionWithin(bridgeOutput)) {
+      selection.removeAllRanges();
+    }
+    bridgeOutput.textContent = text;
+  }
+
+  /** 最近一次渲染的状态：「启动 / 停止」合并成一个按钮，靠它决定该发哪条命令。 */
+  let currentStatus: SessionStatus | null = null;
+
   function render(status: SessionStatus): void {
+    currentStatus = status;
     const starting = isStarting(status);
     badge.className = `badge ${starting ? "badge-starting" : status.state === "running" ? "badge-running" : status.state === "failed" ? "badge-failed" : "badge-stopped"}`;
     statusText.textContent = starting ? "启动中" : status.state === "running" ? "运行中" : status.state === "failed" ? "启动失败" : "已停止";
@@ -730,10 +767,12 @@ async function main(): Promise<void> {
       errorEl.textContent = "";
       errorEl.classList.add("hidden");
     }
-    logEl.textContent = status.logTail.length > 0 ? status.logTail.join("\n") : "（暂无输出）";
+    setOutputText(logEl, status.logTail.length > 0 ? status.logTail.join("\n") : "（暂无输出）");
     const running = status.state === "running";
-    btnStart.disabled = running;
-    btnStop.disabled = !running && status.state !== "failed";
+    // 「启动 DSH」与「停止」是同一个按钮（维护者要求）：按状态换文案与语义。
+    // 后端只在子进程还活着时给 Running，Failed 必然是进程已退出，所以按 running 二分就够。
+    btnToggle.textContent = running ? "停止" : "启动 DSH";
+    btnToggle.classList.toggle("primary", !running);
     // 「重启 DSH」常驻（与托盘菜单同款入口）：运行中可一键重启，停止时等价于启动。
 
     // 登录链接徽章：桥接就绪 > 日志兜底就绪 > 等待中 > 获取失败。
@@ -792,21 +831,22 @@ async function main(): Promise<void> {
     await refresh();
   }
 
-  btnStart.addEventListener("click", () => void startOrRestart("start_dsh"));
+  // 「启动 DSH / 停止」同一个按钮：运行中（含「启动中」）点击是停止，否则是启动（失败后也是重新启动）。
+  btnToggle.addEventListener("click", () => {
+    void (currentStatus?.state === "running" ? stopDsh() : startOrRestart("start_dsh"));
+  });
   btnRestart.addEventListener("click", () => void startOrRestart("restart_dsh"));
 
-  btnStop.addEventListener("click", () => {
-    void (async () => {
-      localError = null;
-      expandLog();
-      try {
-        await invoke("stop_dsh");
-      } catch (err) {
-        localError = String(err);
-      }
-      await refresh();
-    })();
-  });
+  async function stopDsh(): Promise<void> {
+    localError = null;
+    expandLog();
+    try {
+      await invoke("stop_dsh");
+    } catch (err) {
+      localError = String(err);
+    }
+    await refresh();
+  }
 
   // 「当前程序打开」：每次点击都重新取当前登录链接（token 是一次性铸造的）。
   btnOpenApp.addEventListener("click", () => {
@@ -867,10 +907,10 @@ async function main(): Promise<void> {
       // 桥接操作会产生 pnpm/命令的终端输出：自动展开卡片与「操作输出」（维护者要求）。
       expandCard("bridge");
       expandBridgeOutput();
-      bridgeOutput.textContent = "执行中…（首次可能较慢，pnpm 需要解析依赖）";
+      setBridgeOutput("执行中…（首次可能较慢，pnpm 需要解析依赖）");
       try {
         const outcome = await invoke<BridgeOutcome>(name, { config: collectConfig() });
-        bridgeOutput.textContent = outcome.message;
+        setBridgeOutput(outcome.message);
         if (!outcome.ok) {
           bridgeError.textContent = "命令返回非成功状态，请看下方输出与备份目录。";
           bridgeError.classList.remove("hidden");
@@ -906,7 +946,7 @@ async function main(): Promise<void> {
           config: collectConfig(),
           backupDir: backup,
         });
-        bridgeOutput.textContent = message;
+        setBridgeOutput(message);
         bridgeError.classList.add("hidden");
       } catch (err) {
         bridgeError.textContent = String(err);
