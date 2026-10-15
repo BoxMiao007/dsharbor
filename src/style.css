@@ -62,6 +62,22 @@ body {
   user-select: none;
 }
 
+/* 内容滚到标题栏底下时把它糊掉：::before 只负责模糊，叠一层遮罩把模糊从条顶到条底
+   渐隐到 0，所以不会在 34px 处留一条硬边。不加底色（压暗会让顶部的雾光变脏）。
+   z-index: -1 让它待在品牌区/按钮之下；标题栏自身是 z-index 50 的堆叠上下文，
+   所以这层模糊仍然盖在页面内容之上。 */
+.titlebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.62) 58%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.62) 58%, transparent 100%);
+}
+
 .titlebar-brand {
   display: flex;
   align-items: center;
@@ -596,7 +612,8 @@ input[type="text"]:focus,
 }
 
 /* 视口滚动条直接藏掉（不再占宽），改成自绘的滚动指示条（.scroll-track / .scroll-thumb）：
-   滚动时右边缘浮出一条细胶囊，停手约 1 秒淡出，不拦事件。 */
+   平时看不见，滚动时或指针落在右缘这条细带上时浮出，按住胶囊可以上下拖，
+   停手约 1 秒淡出。胶囊本身只有透明度变化，不加轨道底色、不随悬停变粗。 */
 html {
   scrollbar-width: none;
 }
@@ -612,7 +629,7 @@ html::-webkit-scrollbar {
   right: 3px;
   bottom: 4px;
   width: 5px;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 60;
 }
 
@@ -623,9 +640,16 @@ html::-webkit-scrollbar {
   background: rgba(190, 214, 244, 0.42);
   opacity: 0;
   transition: opacity 0.25s ease;
+  cursor: grab;
 }
 
-.scroll-thumb.visible {
+.scroll-thumb:active {
+  cursor: grabbing;
+}
+
+.scroll-track:hover .scroll-thumb,
+.scroll-thumb.visible,
+.scroll-thumb.dragging {
   opacity: 1;
 }
 

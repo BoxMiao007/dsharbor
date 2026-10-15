@@ -1102,17 +1102,54 @@ async function main(): Promise<void> {
   };
 
   let scrollIdleTimer = 0;
+  let dragState: { pointerId: number; startY: number; startScrollTop: number; scale: number } | null = null;
+  const showScrollThumb = (): void => {
+    scrollThumb.classList.add("visible");
+    window.clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = window.setTimeout(() => scrollThumb.classList.remove("visible"), 900);
+  };
   window.addEventListener(
     "scroll",
     () => {
       updateScrollThumb();
-      scrollThumb.classList.add("visible");
-      window.clearTimeout(scrollIdleTimer);
-      scrollIdleTimer = window.setTimeout(() => scrollThumb.classList.remove("visible"), 900);
+      // 拖动期间不跑这个计时器，否则按住不动 0.9 秒胶囊会在手里淡掉
+      if (!dragState) showScrollThumb();
     },
     { passive: true },
   );
   window.addEventListener("resize", updateScrollThumb);
+
+  // 按住胶囊上下拖 = 直接改滚动位置。轨道在右侧那条细带上收指针事件（悬停显示），
+  // 指针一旦离开就松手；位移按「胶囊能走的距离 ↔ 内容还能滚的距离」等比换算。
+  scrollThumb.addEventListener("pointerdown", (event) => {
+    const doc = document.documentElement;
+    const travel = scrollTrack.clientHeight - scrollThumb.offsetHeight;
+    const scrollable = doc.scrollHeight - doc.clientHeight;
+    if (travel <= 0 || scrollable <= 1) return;
+    event.preventDefault();
+    dragState = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startScrollTop: doc.scrollTop,
+      scale: scrollable / travel,
+    };
+    scrollThumb.setPointerCapture(event.pointerId);
+    scrollThumb.classList.add("dragging");
+  });
+  scrollThumb.addEventListener("pointermove", (event) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+    document.documentElement.scrollTop = dragState.startScrollTop + (event.clientY - dragState.startY) * dragState.scale;
+  });
+  const endScrollDrag = (event: PointerEvent): void => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+    dragState = null;
+    scrollThumb.classList.remove("dragging");
+    if (scrollThumb.hasPointerCapture(event.pointerId)) scrollThumb.releasePointerCapture(event.pointerId);
+    showScrollThumb();
+  };
+  scrollThumb.addEventListener("pointerup", endScrollDrag);
+  scrollThumb.addEventListener("pointercancel", endScrollDrag);
+
   updateScrollThumb();
 
   /** 首启/重开壳时把已保存的设置填回界面（后端缺省时返回默认值）。 */
