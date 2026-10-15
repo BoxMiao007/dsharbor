@@ -185,3 +185,9 @@
 | 日期 | 决策 | 为什么 | 放弃了什么 |
 |------|------|--------|------------|
 | 2026-10-15 | 「启动方式」「桥接插件」的折叠状态记进界面本地存储（`localStorage` 键 `dsharbor.ui.cardCollapsed`，形如 `{"modes":true,"bridge":false}`）：界面启动时读一次并按记录恢复，**只有用户点标题时才落盘**；桥接安装 / 卸载 / 回滚引起的临时展开只改内存不落盘；读写都包在 `try/catch` 里（存储被禁用或内容被改坏时当成「都没折叠」） | 维护者要求「折叠状态要记录，现在重启就没有了」。放 `localStorage` 而不写 `config.json`：`config.json` 是壳的整份设置文件（界面每次都整份回写），折叠只是界面偏好，丢了不影响任何功能，不值得为它去动 Rust 侧的数据结构和 serde 默认值 | 写进 `config.json`（要给 `ShellConfig` 加字段、两侧都改，只为记住两个布尔值）；用 `sessionStorage`（窗口一重建就丢，等于没做）；把「最近输出 / 操作输出」的展开状态也一起持久化（它们是按需自动展开的，记下来反而会把自动行为顶掉）；把桥接操作的临时展开也算作用户选择存下来（会让卡片被操作「锁」在展开态） |
+
+## 2026-10-15 release 编译参数改成「构建速度优先」（维护者要求多核构建）
+
+| 日期 | 决策 | 为什么 | 放弃了什么 |
+|------|------|--------|------------|
+| 2026-10-15 | `[profile.release]` 由 `lto = true`（fat LTO）+ `codegen-units = 1` 改成 `lto = "thin"` + `codegen-units = 16`（`strip = true` 保留）；壳版本 0.3.3 | 维护者要「多核构建、提高构建速度」。原来的组合正好是最慢的：fat LTO 的收尾合并基本单核跑，`codegen-units = 1` 又把每个 crate 的代码生成压成一个单元。实测（AMD Ryzen 7 4800H，WSL 16 核，`cargo xwin build --release --target x86_64-pc-windows-msvc`）：`touch src-tauri/src/lib.rs` 后重编壳 + LTO + 链接，旧参数 **180.2 秒 / 峰值 1.07 GB**，新参数 **60.1 秒 / 峰值 1.50 GB**（3.0×）；改成新参数后整个依赖图全量重编也只要 195.7 秒，比旧参数下一次单 crate 重链还快 | `lto = false` + `codegen-units` 默认（构建还能再快一点，但 exe 会更大、运行稍慢）；保留 fat LTO / `codegen-units = 1`（就是维护者这次要修的问题）；顺手加 `panic = "abort"`（能再小几十 KB，但改了 panic 语义，不是这次要的）；cargo 的多核本来就默认吃满全部核心（`-j` 默认 = CPU 数），所以没有额外写 `jobs` |

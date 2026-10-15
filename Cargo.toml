@@ -5,7 +5,7 @@ resolver = "2"
 members = ["crates/dsharbor-core", "src-tauri"]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 rust-version = "1.77.2"
 license = "MIT"
@@ -16,7 +16,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [profile.release]
-# 安装包体积优先（轻量壳目标之一）：LTO + strip
-lto = true
-codegen-units = 1
+# 构建速度优先：fat LTO + codegen-units = 1 会把收尾编译串成单核
+# （实测重编壳 + LTO + 链接要 3 分钟），换 thin LTO + 每 crate 16 个
+# codegen 单元，让多核用起来；strip 只影响产物体积，保留。
+lto = "thin"
+codegen-units = 16
 strip = true

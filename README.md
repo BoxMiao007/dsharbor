@@ -43,7 +43,7 @@
 
 > 安装包未做代码签名，首次运行 Windows 可能提示 SmartScreen，选「仍要运行」即可。需要 Win10/11（自带 WebView2 运行时）。
 
-1. **安装**：双击 `DSHarbor_0.3.2_x64-setup.exe` 按向导完成（静默安装：命令后加 `/S`）。装到当前用户目录，不需要管理员权限。
+1. **安装**：双击 `DSHarbor_0.3.3_x64-setup.exe` 按向导完成（静默安装：命令后加 `/S`）。装到当前用户目录，不需要管理员权限。
 2. **启动**：打开 DSHarbor → 选启动方式（默认「官方 npx 命令」）→ 点「启动 DSH」。首次用 npx 会自动下载 DSH，稍慢。
 3. **省内存**：直接关闭窗口即可——界面内存立刻释放，DSH 继续运行；单击托盘图标随时回来（打开哪个窗口可在界面里配置）。
 4. **卸载**：只删安装目录；DSH 数据（`%USERPROFILE%\.dsh`）与壳配置、桥接备份（`%APPDATA%\DSHarbor`）都会保留。
@@ -77,6 +77,8 @@ cargo xwin clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -
 pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 # 产物：target/x86_64-pc-windows-msvc/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe
 ```
+
+别把 `cargo xwin build --release`（或 `cargo build`）单独编出来的 `target/.../release/dsharbor.exe` 直接拷去运行或替换安装目录：那是不带 tauri `custom-protocol` 的**开发版**，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server，脱离 dev server 只会看到「localhost 拒绝连接」的错误页。能独立运行的产物只有上面这条命令出的安装包（或它装出来的安装目录里的 exe）。
 
 ### 仓库结构
 
