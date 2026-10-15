@@ -73,6 +73,8 @@ pub struct SessionStatus {
     pub login_channel: Option<LoginChannel>,
     /// 取链接失败原因（超时等）。
     pub login_error: Option<String>,
+    /// 最近一次成功启动的 DSH 版本号（由外壳在启动后异步查询并注入）。
+    pub dsh_version: Option<String>,
 }
 
 impl SessionStatus {
@@ -86,6 +88,7 @@ impl SessionStatus {
             login_ready: false,
             login_channel: None,
             login_error: None,
+            dsh_version: None,
         }
     }
 }
@@ -252,6 +255,7 @@ impl SessionHandle {
                 login_ready,
                 login_channel,
                 login_error,
+                dsh_version: None,
             },
             Ok(Some(exit)) => {
                 if self.stop_requested {
@@ -264,6 +268,7 @@ impl SessionHandle {
                         login_ready,
                         login_channel,
                         login_error,
+                        dsh_version: None,
                     };
                 }
                 let status_text = exit
@@ -285,6 +290,7 @@ impl SessionHandle {
                     login_ready,
                     login_channel,
                     login_error,
+                    dsh_version: None,
                 }
             }
             Err(err) => SessionStatus {
@@ -296,6 +302,7 @@ impl SessionHandle {
                 login_ready,
                 login_channel,
                 login_error,
+                dsh_version: None,
             },
         }
     }

@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# 仓库地址：界面「关于」卡片的「打开 GitHub 仓库」按它打开（单一来源）。
+repository.workspace = true
 
 # 桌面壳同时产出可执行文件与（给移动端/Rust 侧复用的）库。
 # 库名带 _lib 后缀是 Tauri 模板惯例，避免与二进制同名冲突。

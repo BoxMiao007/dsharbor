@@ -19,13 +19,31 @@ use launcher::{SessionHandle, SessionStatus};
 use serde::Serialize;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// 前端启动时查询的应用信息（欢迎页展示 + 链路自检）。
+/// DSH 官网页（「关于」卡片的「打开 DSH 官网」按钮；也作为背景视觉的取色依据）。
+const DSH_SITE_URL: &str = "https://www.deepseek.com/harness/";
+
+/// 查询 DSH 版本号时追加的启动器层旗标（排在 app 参数之前，`dsh web --version` 只打印版本后退出）。
+const VERSION_ARG: &str = "--version";
+
+/// 版本查询的超时：正常几百毫秒内出结果；npx 冷缓存要下载时给足时间，超时就放弃。
+const VERSION_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 前端启动时查询的应用信息（欢迎页展示 + 「关于」卡片）。
 #[derive(Serialize)]
 struct AppInfo {
     name: &'static str,
     version: &'static str,
     /// 核心库版本，与外壳版本分开返回，便于以后独立升级核心逻辑。
     core_version: &'static str,
+    /// 项目仓库地址（「关于」卡片展示与一键打开）。
+    repository: &'static str,
+    /// DSH 官网地址。
+    site_url: &'static str,
+    license: &'static str,
+    /// 壳配置目录（`%APPDATA%\DSHarbor`）。
+    config_dir: String,
+    /// DSH 日志目录（`%USERPROFILE%\.dsh\logs`）。
+    logs_dir: String,
 }
 
 /// 应用级共享状态：同一时间最多一个 DSH 会话。
@@ -38,14 +56,33 @@ struct AppState {
     last_config: Mutex<Option<LaunchConfig>>,
     /// 后台发起（托盘「重启 DSH」）的启动失败信息，供状态轮询展示。
     spawn_error: Mutex<Option<String>>,
+    /// 最近一次成功启动的 DSH 版本号；随状态轮询回给界面（取不到时保持 None）。
+    dsh_version: Mutex<Option<String>>,
 }
 
 #[tauri::command]
-fn app_info() -> AppInfo {
+fn app_info(app: tauri::AppHandle) -> AppInfo {
+    // 目录取不到（环境变量缺失等）时把原因显示在卡片里，而不是让整条命令失败。
+    let config_dir = app_data_root(&app)
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_else(|err| format!("（未知：{err}）"));
+    let logs_dir = plugin::host_dsh_home()
+        .map(|home| {
+            std::path::PathBuf::from(home)
+                .join("logs")
+                .display()
+                .to_string()
+        })
+        .unwrap_or_else(|err| format!("（未知：{err}）"));
     AppInfo {
         name: dsharbor_core::APP_NAME,
         version: env!("CARGO_PKG_VERSION"),
         core_version: dsharbor_core::version(),
+        repository: env!("CARGO_PKG_REPOSITORY"),
+        site_url: DSH_SITE_URL,
+        license: env!("CARGO_PKG_LICENSE"),
+        config_dir,
+        logs_dir,
     }
 }
 
@@ -59,7 +96,7 @@ fn start_session(
     // 先过校验并持久化（保留托盘单击等壳偏好）：非法输入在这里报错——不写配置、不启动进程。
     settings::save_launch(app, config)?;
     let launcher_args = profile::port_overlay_args(app, config)?;
-    spawn_session(state, config, &launcher_args)?;
+    spawn_session(app, state, config, &launcher_args)?;
     remember_config(state, config);
     Ok(())
 }
@@ -89,6 +126,7 @@ fn restart_dsh(
 
 /// 拉起 DSH 并把新会话放进共享状态（启动命令与托盘「重启 DSH」共用）。
 fn spawn_session(
+    app: &tauri::AppHandle,
     state: &AppState,
     config: &LaunchConfig,
     launcher_args: &[String],
@@ -115,7 +153,74 @@ fn spawn_session(
     if let Ok(mut slot) = state.spawn_error.lock() {
         *slot = result.as_ref().err().cloned();
     }
+    if result.is_ok() {
+        // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
+        query_dsh_version_async(app, config);
+    }
     result
+}
+
+/// 启动成功后异步查询 DSH 版本号（失败只记日志：界面显示「DSH 版本未知」即可）。
+fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig) {
+    let app = app.clone();
+    let config = config.clone();
+    std::thread::spawn(move || match query_dsh_version(&config) {
+        Ok(version) => {
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut slot) = state.dsh_version.lock() {
+                    *slot = Some(version.clone());
+                }
+            }
+            eprintln!("[dsharbor] 当前 DSH 版本：{version}");
+        }
+        Err(err) => eprintln!("[dsharbor] 查询 DSH 版本失败：{err}"),
+    });
+}
+
+/// 按当前启动方式跑一次 `<启动方式> … --version` 取版本号。
+///
+/// 复用启动器的同一条通路（同样的启动方式、同样的 PATH 注入），所以四种启动方式都能查；
+/// 该命令只打印版本号后退出（实测 `dsh web --version` 不落盘、不起服务）。
+fn query_dsh_version(config: &LaunchConfig) -> Result<String, String> {
+    let plan = dsharbor_core::launch::build_launch_plan(config, &[], &[VERSION_ARG.to_string()])?;
+    let mut command = launcher::command_for_plan(&plan);
+    launcher::apply_no_window(&mut command);
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("启动版本查询进程失败：{err}"))?;
+
+    // 逐行读 stdout（复用启动器的编码嗅探）：交给核心库辨认版本号——
+    // WSL 模式下 `bash -lc` 可能先吐出 MOTD / 启动脚本文本。
+    let (sender, receiver) = std::sync::mpsc::channel::<String>();
+    if let Some(stdout) = child.stdout.take() {
+        launcher::spawn_line_reader(stdout, move |line| {
+            let _ = sender.send(line);
+        });
+    }
+    let deadline = std::time::Instant::now() + VERSION_QUERY_TIMEOUT;
+    let mut output = String::new();
+    while let Ok(line) =
+        receiver.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+    {
+        output.push_str(&line);
+        output.push('\n');
+    }
+    // 读完或超时：查询进程不该留活口（npx 可能还在下载）。
+    if child
+        .try_wait()
+        .map(|state| state.is_none())
+        .unwrap_or(false)
+    {
+        let _ = launcher::kill_tree(child.id());
+    }
+    let _ = child.wait();
+
+    dsharbor_core::launch::parse_version_output(&output)
+        .ok_or_else(|| "命令输出里没有版本号".to_string())
 }
 
 /// 记住最近一次成功的启动配置。
@@ -181,7 +286,7 @@ fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
 /// 查询会话状态（前端每秒轮询一次）。
 #[tauri::command]
 fn dsh_status(state: tauri::State<'_, AppState>) -> SessionStatus {
-    match state.session.lock() {
+    let mut status = match state.session.lock() {
         Ok(mut guard) => match guard.as_mut() {
             Some(session) => session.status(),
             None => {
@@ -202,8 +307,14 @@ fn dsh_status(state: tauri::State<'_, AppState>) -> SessionStatus {
             login_ready: false,
             login_channel: None,
             login_error: None,
+            dsh_version: None,
         },
+    };
+    // 版本号由启动后的后台线程回写：不随会话结束清掉，停止后仍显示上次读到的版本。
+    if let Ok(slot) = state.dsh_version.lock() {
+        status.dsh_version = slot.clone();
     }
+    status
 }
 
 /// 枚举 WSL 发行版（配置界面的下拉框）。
@@ -325,6 +436,53 @@ fn launch_default_browser(url: &str) -> Result<(), String> {
     }
 }
 
+/// 打开「关于」卡片里的外部链接（地址固定在壳里，界面只能传这两个键）。
+#[tauri::command]
+fn open_external(target: String) -> Result<(), String> {
+    let url = match target.as_str() {
+        "repo" => env!("CARGO_PKG_REPOSITORY"),
+        "site" => DSH_SITE_URL,
+        other => return Err(format!("不认识的打开目标：{other}")),
+    };
+    launch_default_browser(url)
+}
+
+/// 在系统文件管理器里打开壳配置目录 / DSH 日志目录（「关于」卡片）。
+#[tauri::command]
+fn open_shell_dir(app: tauri::AppHandle, kind: String) -> Result<String, String> {
+    let dir = match kind.as_str() {
+        "config" => app_data_root(&app)?,
+        "logs" => std::path::PathBuf::from(plugin::host_dsh_home()?).join("logs"),
+        other => return Err(format!("不认识的目录：{other}")),
+    };
+    // 目录可能还不存在（重装后首次启动、DSH 还没写过日志）：先建出来，否则资源管理器报错。
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| format!("创建目录失败（{}）：{err}", dir.display()))?;
+    open_in_file_manager(&dir)?;
+    Ok(dir.display().to_string())
+}
+
+/// 用系统文件管理器打开一个目录（Windows 走 explorer，开发机走 xdg-open）。
+fn open_in_file_manager(dir: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // explorer 即使成功也可能返回非 0 退出码，所以只拉起、不等结果。
+        std::process::Command::new("explorer")
+            .arg(dir)
+            .spawn()
+            .map_err(|err| format!("打开目录失败：{err}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|err| format!("打开目录失败：{err}"))?;
+        Ok(())
+    }
+}
+
 /// 安装/卸载桥接插件时要求会话已停止（pnpm 需要独占 profile 目录）。
 fn ensure_session_stopped(state: &tauri::State<'_, AppState>) -> Result<(), String> {
     let mut guard = state
@@ -426,7 +584,7 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                     .and_then(|slot| slot.clone())
                     .unwrap_or_else(|| settings::load(app).launch);
                 let launcher_args = profile::port_overlay_args(app, &config).unwrap_or_default();
-                if let Err(err) = spawn_session(&state, &config, &launcher_args) {
+                if let Err(err) = spawn_session(app, &state, &config, &launcher_args) {
                     eprintln!("重启 DSH 失败：{err}");
                 }
             }
@@ -606,7 +764,9 @@ pub fn run() {
             lifecycle_action,
             load_shell_config,
             save_shell_config,
-            profile_port_hint
+            profile_port_hint,
+            open_external,
+            open_shell_dir
         ])
         .build(tauri::generate_context!())
         .expect("构建 DSHarbor 外壳失败")

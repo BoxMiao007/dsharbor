@@ -337,6 +337,34 @@ pub fn build_spawn_plan_with_launcher_args(
     })
 }
 
+/// 从命令输出里辨认 DSH 版本号（`dsh <…> web --version` 的输出）。
+///
+/// 取最后一行「整行就是版本号」的内容，而不是第一行：WSL 模式下经 `bash -lc`
+/// 启动，登录脚本 / MOTD 可能先往 stdout 打字，启动日志也可能混进来。
+pub fn parse_version_output(output: &str) -> Option<String> {
+    output
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| looks_like_version(line))
+        .map(str::to_string)
+}
+
+/// 版本号形态：首字符是数字或 `v`，整行只含版本号允许的字符（`0.2.0-rc.2`、`v0.2.0`）。
+fn looks_like_version(line: &str) -> bool {
+    if line.is_empty() || line.len() > 64 {
+        return false;
+    }
+    let first = line.chars().next().unwrap_or(' ');
+    if !(first.is_ascii_digit() || first == 'v') {
+        return false;
+    }
+    line.contains(|c: char| c.is_ascii_digit())
+        && line
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '_'))
+}
+
 /// 插件管理操作（桥接插件的安装/卸载；经官方 `dsh plugin` 子命令）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginOp {
@@ -991,5 +1019,32 @@ mod tests {
         assert_eq!(extract_configured_port(&args(&["--port=3082"])), Some(3082));
         assert_eq!(extract_configured_port(&args(&["--no-open"])), None);
         assert_eq!(extract_configured_port(&args(&["--port", "abc"])), None);
+    }
+
+    #[test]
+    fn parses_dsh_version_output() {
+        assert_eq!(
+            parse_version_output("0.2.0-rc.2"),
+            Some("0.2.0-rc.2".to_string())
+        );
+        // 行尾可能带回车（Windows 侧的 cmd / wsl.exe 输出）。
+        assert_eq!(
+            parse_version_output("v0.2.0\r\n"),
+            Some("v0.2.0".to_string())
+        );
+        // 取最后一行：WSL 的登录脚本噪声排在版本号前面。
+        assert_eq!(
+            parse_version_output("Welcome to Ubuntu 24.04.1 LTS\n0.2.0-rc.2\n"),
+            Some("0.2.0-rc.2".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_output_without_version() {
+        assert_eq!(parse_version_output(""), None);
+        assert_eq!(parse_version_output("Welcome to Ubuntu 24.04.1 LTS"), None);
+        assert_eq!(parse_version_output("启动失败：找不到命令 dsh"), None);
+        // 超长行不当版本号（防御乱码/日志刷屏）。
+        assert_eq!(parse_version_output(&"1".repeat(65)), None);
     }
 }

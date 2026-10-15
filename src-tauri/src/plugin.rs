@@ -35,6 +35,8 @@ const BACKUP_FILES: [&str; 4] = [
 ];
 /// 安装/卸载命令的超时（首次可能触发 pnpm 解析依赖，给足时间）。
 const PLUGIN_OP_TIMEOUT: Duration = Duration::from_secs(240);
+/// 备份保留份数上限（维护者要求 5 份）：超出后自动删掉最旧的，避免无限累积。
+const BACKUP_KEEP: usize = 5;
 
 /// 插件操作的目标环境。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +90,8 @@ pub struct BridgeState {
 // 目标环境访问（宿主直连 / WSL 内经 wsl.exe）
 // ---------------------------------------------------------------------------
 
-fn host_dsh_home() -> Result<String, String> {
+/// DSH 主目录（宿主直连时用）。「关于」卡片要打开它的 logs 子目录，所以对外可见。
+pub(crate) fn host_dsh_home() -> Result<String, String> {
     if let Ok(custom) = std::env::var("DSH_HOME") {
         if !custom.trim().is_empty() {
             return Ok(custom);
@@ -309,8 +312,48 @@ fn backups_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(crate::app_data_root(app)?.join("backups"))
 }
 
-/// 备份 profile 目录里会被 pnpm 改写的文件（含内容哈希清单），返回备份目录。
-fn backup_profile(app: &tauri::AppHandle, target: &Target) -> Result<String, String> {
+/// 备份目录名列表，按名字升序（目录名是 `backup-<unix 秒>`，字典序即时间序）。
+fn backup_dir_names(root: &std::path::Path) -> std::io::Result<Vec<String>> {
+    let mut names: Vec<String> = std::fs::read_dir(root)?
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+/// 按上限清理最旧的备份，返回被删掉的备份名。
+/// 清理失败只记日志：备份本身已经写成，不该因为删不掉旧目录让安装/卸载失败。
+fn prune_backups(app: &tauri::AppHandle) -> Vec<String> {
+    let Ok(root) = backups_root(app) else {
+        return Vec::new();
+    };
+    let Ok(names) = backup_dir_names(&root) else {
+        return Vec::new();
+    };
+    if names.len() <= BACKUP_KEEP {
+        return Vec::new();
+    }
+    let mut removed = Vec::new();
+    for name in &names[..names.len() - BACKUP_KEEP] {
+        let path = root.join(name);
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => removed.push(name.clone()),
+            Err(err) => eprintln!("清理旧备份失败（{}）：{err}", path.display()),
+        }
+    }
+    removed
+}
+
+/// 一次备份的结果：新备份目录 + 因超出上限被清理掉的旧备份名。
+struct BackupResult {
+    dir: String,
+    pruned: Vec<String>,
+}
+
+/// 备份 profile 目录里会被 pnpm 改写的文件（含内容哈希清单），返回备份结果。
+fn backup_profile(app: &tauri::AppHandle, target: &Target) -> Result<BackupResult, String> {
     let dir = profile_dir(target)?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -336,19 +379,30 @@ fn backup_profile(app: &tauri::AppHandle, target: &Target) -> Result<String, Str
     }
     std::fs::write(backup_dir.join("manifest.txt"), &manifest)
         .map_err(|err| format!("写入备份清单失败：{err}"))?;
-    Ok(backup_dir.to_string_lossy().to_string())
+    let pruned = prune_backups(app);
+    Ok(BackupResult {
+        dir: backup_dir.to_string_lossy().to_string(),
+        pruned,
+    })
+}
+
+/// 按上限清理旧备份的说明（拼进安装/卸载输出；没清理就为空）。
+fn prune_note(pruned: &[String]) -> String {
+    if pruned.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n旧备份清理：删除了 {} 份（只保留最近 {BACKUP_KEEP} 份）：{}",
+        pruned.len(),
+        pruned.join("、")
+    )
 }
 
 fn latest_backup(app: &tauri::AppHandle) -> Option<String> {
     let root = backups_root(app).ok()?;
-    let entries = std::fs::read_dir(&root).ok()?;
-    let mut dirs: Vec<String> = entries
-        .flatten()
-        .filter(|entry| entry.path().is_dir())
-        .map(|entry| entry.file_name().to_string_lossy().to_string())
-        .collect();
-    dirs.sort();
-    dirs.pop()
+    let names = backup_dir_names(&root).ok()?;
+    names
+        .last()
         .map(|name| root.join(name).to_string_lossy().to_string())
 }
 
@@ -446,7 +500,10 @@ pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOu
     }
 
     let tgz = find_bridge_tgz(app)?;
-    let backup_dir = backup_profile(app, &target)?;
+    let BackupResult {
+        dir: backup_dir,
+        pruned,
+    } = backup_profile(app, &target)?;
     // 先暂存到无空格路径：pnpm 无法解析含空格的 `file:` 规格（见 stage_bridge_tgz）。
     let package_ref = stage_bridge_tgz(app, &target, &tgz)?;
 
@@ -469,9 +526,10 @@ pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOu
          退出码：{code}\n\
          校验：{verify}\n\
          输出：\n{}\n\
-         备份目录：{backup_dir}",
+         备份目录：{backup_dir}{}",
         target.label(),
-        tail_chars(&output, 4000)
+        tail_chars(&output, 4000),
+        prune_note(&pruned)
     );
     Ok(BridgeOutcome {
         ok,
@@ -492,7 +550,10 @@ pub fn uninstall(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<Bridge
         });
     }
 
-    let backup_dir = backup_profile(app, &target)?;
+    let BackupResult {
+        dir: backup_dir,
+        pruned,
+    } = backup_profile(app, &target)?;
     let op = PluginOp::Uninstall {
         name: "dsharbor-bridge".to_string(),
     };
@@ -510,9 +571,10 @@ pub fn uninstall(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<Bridge
          退出码：{code}\n\
          校验：{verify}\n\
          输出：\n{}\n\
-         备份目录：{backup_dir}",
+         备份目录：{backup_dir}{}",
         target.label(),
-        tail_chars(&output, 4000)
+        tail_chars(&output, 4000),
+        prune_note(&pruned)
     );
     Ok(BridgeOutcome {
         ok,
