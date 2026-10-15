@@ -40,6 +40,12 @@ v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见�
 - 提交粒度:一个独立功能、一处缺陷修复或一次重构各提交一次;提交前验证门必须全部通过。
 - 密钥、凭据等敏感内容一律不提交;新增构建产物或本地环境文件类型时,同步补充 `.gitignore`。
 
+## 发布(用户明确说发版时才做)
+
+- tag `vX.Y.Z`(注释 tag)+ `gh release create vX.Y.Z <安装包> --title "DSHarbor vX.Y.Z" --notes-file <说明>`;资产只放安装包(不单独放裸 exe——程序需要同目录的 `resources/`)。
+- **发布说明只写使用者能感知的变化**:正文从分类节开始,只出现有内容的节——`## 新增` / `## 修复` / `## 变更` / `## 已知问题`(没有就不出现);条目说人话、用界面上的原文(如「启动 DSH」「桥接插件」「轻量模式」),不逐条带日期(Release 页面自带发布日期)。写的是「用户能感觉到什么」,不是「改了多少东西」。
+- **不写**:构建或编译参数、重构、依赖升级、体积变化与性能数字、内部工具(预览台脚本、CI)、版本号元信息、安装包名/大小/SHA-256(GitHub 资产区自带文件名与大小)。
+
 ## 知识沉淀(保证任何新会话都能接手)
 
 - 全新环境的依赖安装命令(已在 WSL2 实测):`sudo apt-get install -y clang lld llvm nsis`、`rustup target add x86_64-pc-windows-msvc`、`cargo install --locked cargo-xwin`、`pnpm install`;步骤变化时同步更新 README。
