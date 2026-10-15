@@ -89,14 +89,25 @@ body {
 /* 三个窗口按钮：与 Windows 一致地铺满整条高度、无圆角，悬停给浅底，
    关闭按钮悬停变红（系统那两个按钮的惯例）。 */
 .win-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 46px;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: #cfe0f5;
-  font-size: 13px;
-  line-height: 1;
+}
+
+/* 图标是内联 SVG（10px 见方、1.2px 描边）：描边色跟着按钮的 color 走，
+   悬停换底色时不用再动图标。路径坐标落在半像素上，线条才不糊。 */
+.win-btn svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
 }
 
 .win-btn:hover {
@@ -584,15 +595,47 @@ input[type="text"]:focus,
   white-space: nowrap;
 }
 
-/* 滚动条：细、圆角、低对比 */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+/* 视口滚动条直接藏掉（不再占宽），改成自绘的滚动指示条（.scroll-track / .scroll-thumb）：
+   滚动时右边缘浮出一条细胶囊，停手约 1 秒淡出，不拦事件。 */
+html {
+  scrollbar-width: none;
 }
 
+html::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.scroll-track {
+  position: fixed;
+  top: 40px;
+  right: 3px;
+  bottom: 4px;
+  width: 5px;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.scroll-thumb {
+  width: 100%;
+  height: 0;
+  border-radius: 999px;
+  background: rgba(190, 214, 244, 0.42);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.scroll-thumb.visible {
+  opacity: 1;
+}
+
+/* 内部滚动条（日志框、操作输出框）：细窄半透明。平时几乎看不见（轨道全透 + 极低透明度的
+   滑块），指上去或拖拽的时候才浮出来。不用 scrollbar-width / scrollbar-color——
+   Chromium 一旦认了那两个标准属性就会整段忽略 ::-webkit-scrollbar，
+   也没法做「悬停才明显」这层反馈。 */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -600,16 +643,24 @@ input[type="text"]:focus,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: 999px;
+  background: rgba(170, 197, 233, 0.14);
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.5);
-  border: 2px solid transparent;
+  background: rgba(190, 214, 244, 0.42);
   background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: rgba(206, 226, 250, 0.55);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* 展开开关（最近输出 / 操作输出）：整行可点、带旋转箭头指示 */

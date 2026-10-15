@@ -3,6 +3,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import logoUrl from "./assets/logo.png";
 import "./style.css";
 
+/** 标题栏三个窗口图标：10px 见方的细线 SVG，形状统一收在 9px 见方内、
+    描边 1.2px（见 .win-btn svg），描边色跟 currentColor——改用矢量后
+    不再依赖字体里的 – □ ✕ 字形（那三个字形粗细大小都不一致）。
+    最大化与还原是两个图标，按窗口状态切换。 */
+const ICON_MINIMIZE = `<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0.5 5h9" /></svg>`;
+const ICON_MAXIMIZE = `<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.6" y="0.6" width="8.8" height="8.8" rx="1.4" /></svg>`;
+const ICON_RESTORE = `<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.6" y="2.6" width="6.8" height="6.8" rx="1.3" /><path d="M3 2.6V1.6h5.4a1 1 0 0 1 1 1v5.4H8.4" /></svg>`;
+const ICON_CLOSE = `<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1 9 9M9 1 1 9" /></svg>`;
+
 /** 与 Rust 侧 `app_info` 命令的返回结构一一对应。 */
 interface AppInfo {
   name: string;
@@ -279,9 +288,9 @@ async function main(): Promise<void> {
         <img class="titlebar-logo" src="${logoUrl}" alt="" draggable="false" />DSHarbor
       </span>
       <div class="titlebar-buttons">
-        <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">–</button>
-        <button id="win-max" class="win-btn" type="button" title="最大化 / 还原" aria-label="最大化 / 还原">□</button>
-        <button id="win-close" class="win-btn win-close" type="button" title="关闭（轻量模式）" aria-label="关闭">✕</button>
+        <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">${ICON_MINIMIZE}</button>
+        <button id="win-max" class="win-btn" type="button" title="最大化" aria-label="最大化">${ICON_MAXIMIZE}</button>
+        <button id="win-close" class="win-btn win-close" type="button" title="关闭（轻量模式）" aria-label="关闭">${ICON_CLOSE}</button>
       </div>
     </div>
 
@@ -819,6 +828,8 @@ async function main(): Promise<void> {
     }
     btnOpenApp.disabled = !status.loginReady;
     btnOpenBrowser.disabled = !status.loginReady;
+    // 日志会不断长个儿，顺带把滚动指示条的几何刷新一下（这里只算不显示）。
+    updateScrollThumb();
   }
 
   async function refresh(): Promise<void> {
@@ -1044,6 +1055,65 @@ async function main(): Promise<void> {
     // 普通浏览器里没有 Tauri 窗口环境（预览用），按钮保留但点了没反应。
     console.error("无法获取当前窗口:", err);
   }
+
+  // 最大化后按钮应该显示「还原」（两个叠放的方框）。窗口尺寸一变就同步一次：
+  // 最大化 / 还原 / 贴靠 / 拖边缩放都会改视图尺寸，所以监 window.resize 就够，
+  // 不必再走 Tauri 的窗口事件通道。
+  const syncMaximizeIcon = (): void => {
+    try {
+      void getCurrentWindow()
+        .isMaximized()
+        .then((maximized) => {
+          btnWinMax.innerHTML = maximized ? ICON_RESTORE : ICON_MAXIMIZE;
+          const label = maximized ? "还原" : "最大化";
+          btnWinMax.title = label;
+          btnWinMax.setAttribute("aria-label", label);
+        });
+    } catch (err) {
+      console.error("读取窗口最大化状态失败:", err);
+    }
+  };
+  syncMaximizeIcon();
+  window.addEventListener("resize", syncMaximizeIcon);
+
+  // 自绘滚动指示条：视口的原生滚动条已在 style.css 里藏起来，滚动时右边缘浮出
+  // 一条细胶囊，停手约 1 秒后淡出。只做视觉，不拦事件（pointer-events: none），
+  // 滚轮 / 键盘 / 触控板照旧；轨道从标题栏下面开始，不会压在窗口按钮上。
+  const scrollTrack = document.createElement("div");
+  scrollTrack.className = "scroll-track";
+  const scrollThumb = document.createElement("div");
+  scrollThumb.className = "scroll-thumb";
+  scrollTrack.appendChild(scrollThumb);
+  document.body.appendChild(scrollTrack);
+
+  const updateScrollThumb = (): void => {
+    const doc = document.documentElement;
+    const viewport = doc.clientHeight;
+    const total = doc.scrollHeight;
+    const trackHeight = scrollTrack.clientHeight;
+    if (total <= viewport + 1 || trackHeight <= 0) {
+      scrollThumb.style.height = "0px";
+      return;
+    }
+    const height = Math.max(28, (viewport / total) * trackHeight);
+    const top = (doc.scrollTop / (total - viewport)) * (trackHeight - height);
+    scrollThumb.style.height = `${height}px`;
+    scrollThumb.style.transform = `translateY(${top}px)`;
+  };
+
+  let scrollIdleTimer = 0;
+  window.addEventListener(
+    "scroll",
+    () => {
+      updateScrollThumb();
+      scrollThumb.classList.add("visible");
+      window.clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = window.setTimeout(() => scrollThumb.classList.remove("visible"), 900);
+    },
+    { passive: true },
+  );
+  window.addEventListener("resize", updateScrollThumb);
+  updateScrollThumb();
 
   /** 首启/重开壳时把已保存的设置填回界面（后端缺省时返回默认值）。 */
   async function loadSavedConfig(): Promise<void> {
