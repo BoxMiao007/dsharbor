@@ -352,7 +352,7 @@ button.primary:hover:not(:disabled) {
   background: #4a7cf0;
 }
 
-/* 「停止 / 重启 DSH」的悬停效果：渐变色平滑淡入填满按钮，文字随之变色。
+/* 「停止 / 重启 DSH」的悬停效果：纯色平滑淡入填满按钮，文字随之变色。
    只在「停止」形态生效（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。
    填充走 ::before 覆盖层：平时透明（不占视觉），悬停淡入到不透明。 */
 #btn-toggle:not(.swap),
@@ -375,13 +375,13 @@ button.primary:hover:not(:disabled) {
   transition: opacity 0.6s;
 }
 
-/* 红：以 #ff0000 为底调出的渐变；黄：以 #f5ae51 为底调出的渐变。 */
+/* 纯色填充，不做色渐变；「渐变」只体现在悬停淡入的过程上。 */
 #btn-toggle:not(.swap)::before {
-  background: linear-gradient(135deg, #ff3333, #cc0000);
+  background: #ff0000;
 }
 
 #btn-restart::before {
-  background: linear-gradient(135deg, #f8bd6b, #e0942c);
+  background: #f5ae51;
 }
 
 #btn-toggle:not(.swap):hover::before,
@@ -390,15 +390,15 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 悬停文字色：红底白字；黄色 #f5ae51 偏亮，白字对比度不足（约 1.9:1），改用深字保证可读。
-   边框色跟着填充走，免得渐变填满后还留一圈原来的浅灰描边。 */
+   边框色跟着填充走，免得填满后还留一圈原来的浅灰描边。 */
 #btn-toggle:not(.swap):hover {
   color: #fff;
-  border-color: #cc0000;
+  border-color: #ff0000;
 }
 
 #btn-restart:hover {
   color: #1b2536;
-  border-color: #e0942c;
+  border-color: #f5ae51;
 }
 
 @media (prefers-reduced-motion: reduce) {
