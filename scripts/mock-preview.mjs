@@ -120,6 +120,7 @@ window.__mockUnimplemented = [];
     "plugin:window|start_dragging": () => null,
     "plugin:window|is_maximized": () => false,
     "plugin:window|is_decorated": () => false,
+    "plugin:window|set_decorations": () => null,
   };
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },

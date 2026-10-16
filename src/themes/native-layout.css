@@ -1,0 +1,210 @@
+/* ==========================================================================
+   主题「系统原生」的排版层：候选 I（design/ui-candidates/i-native.html）的结构
+   整层搬到正式界面上。它和 themes/native-dark.css 合起来才是候选 I 的完整样子：
+     native-dark.css    换外观（颜色、圆角、控件形状），排版照旧
+     本文件              换排版（hero 页头、折叠分组、字段行、系统标题栏、系统滚动条）
+
+   为什么分两层：主题 2「原生暗色」要保持原版排版，只借 I 的外观；主题 3「系统原生」
+   两样都借。合成一个文件的话，主题 2 会被排版一起带上。
+
+   数值逐条抄自候选 I，改的时候对着改：
+     .wrap  宽 min(880px, 94vw)                i-native.html:38–42
+     .hero  padding 16px 18px / 圆角 8px / logo 40px / 间距 14px
+                                               i-native.html:44–60
+     .exp   圆角 8px、margin-top 10px、头 14px 16px、正文 2px 16px 16px
+                                               common.css:605–628 ＋ i-native.html:64–100
+     .field 标签固定 128px、行高 40px、间距 12px
+                                               common.css:419–429
+
+   排序：src/style.css → themes/native-dark.css → 本文件。
+   ========================================================================== */
+
+/* ---- 1. 窗口与容器：通栏 880px 宽、顶部不再给自绘标题栏留位 ----------------- */
+
+:root {
+  /* I 的分组是 8px 圆角（native-dark.css 沿用了原版的 14px）。 */
+  --j-r-card: 8px;
+}
+
+body {
+  /* 原版是 flex 居中；I 是通栏居中，靠自己那层 .wrap 收宽度。 */
+  display: block;
+  padding: 18px 16px 40px;
+}
+
+#app {
+  width: min(880px, 94vw);
+  margin: 0 auto;
+  /* 分组之间的间距交给各自卡片上的 margin-top（I 的 .exp 就是这么排的）。 */
+  gap: 0;
+}
+
+/* 主题 3 换回系统标题栏（窗口层 setDecorations(true)），自绘那条不能再出现。 */
+.titlebar {
+  display: none;
+}
+
+/* ---- 2. 页头：候选 I 的 hero（logo + 标题 + 说明 + 状态徽章 + 停止/重启） --- */
+
+.head.hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  margin-bottom: 0;
+  text-align: left;
+  border: 1px solid var(--j-line-soft);
+  border-radius: 8px;
+  background: var(--j-panel);
+}
+
+.head.hero .hero-logo {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+}
+
+.head.hero .hero-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.head.hero h1 {
+  font-size: 20px;
+  letter-spacing: 0;
+  margin-bottom: 2px;
+}
+
+.head.hero .tagline {
+  font-size: 13px;
+}
+
+.head.hero .light-hint {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+/* 状态徽章（含 PID / 端口）在 I 里跟在说明下面，不再单占一行。 */
+.head.hero .status-row {
+  margin: 10px 0 0;
+  gap: 8px;
+}
+
+.head.hero .actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+/* ---- 3. 折叠分组：卡片改成 I 的 Expander 形状 ------------------------------ */
+
+.card {
+  margin-top: 10px;
+  padding: 0;
+  border: 1px solid var(--j-line-soft);
+  border-radius: var(--j-r-card);
+  background: var(--j-panel);
+  /* 折叠头悬停时的底色不要溢出圆角。 */
+  overflow: hidden;
+}
+
+.card .card-head {
+  margin-bottom: 0;
+}
+
+/* 整行可点的折叠头：I 的 .exp > summary。 */
+.card-toggle {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.card-toggle:hover {
+  background: var(--j-panel-2);
+}
+
+.card-toggle .chev {
+  font-size: 10px;
+}
+
+/* 展开后的正文：I 的 .exp .body。折叠时整块被 .card.collapsed 关掉（见 style.css），
+   上边线也就跟着不出现。 */
+.card-body {
+  padding: 2px 16px 16px;
+  border-top: 1px solid var(--j-line-soft);
+}
+
+/* ---- 4. 字段行：I 的 .field（标签 128px + 右侧控件，说明另起一行） ---------- */
+
+/* 原版是竖排（标签在输入框上方），这里换成 I 的两列。:not(.hidden) 是为了不压过
+   .hidden 的 display:none（「指定二进制路径」「WSL」两组靠它隐藏）。 */
+.fields:not(.hidden) {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  padding: 0;
+}
+
+.fields > label {
+  grid-column: 1;
+  color: var(--j-fg-dim);
+  font-size: 13.5px;
+}
+
+.fields > input,
+.fields > .picker,
+.fields > .port-row,
+.fields > .step,
+.fields > .grid-2,
+.fields > .hint {
+  grid-column: 2;
+}
+
+/* 通用设置在原版是「启动方式」卡片里的子面板（带自己的边框和两列排布），
+   在 I 里就是一串普通字段行。 */
+.subcard {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.grid-2 {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+/* ---- 5. 滚动条：主题 3 用系统自带的，自绘胶囊关掉 --------------------------- */
+
+/* 原版为了自绘胶囊把视口滚动条藏了（style.css 的 html + html::-webkit-scrollbar），
+   而且 Chromium 一旦认下 scrollbar-width 就整段忽略 ::-webkit-scrollbar，
+   所以两处都要还原。 */
+html {
+  scrollbar-width: auto;
+}
+
+html::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+html::-webkit-scrollbar-track {
+  background: #272727;
+}
+
+html::-webkit-scrollbar-thumb {
+  border: 3px solid #272727;
+  border-radius: 6px;
+  background: #6a6a6a;
+}
+
+.scroll-track {
+  display: none;
+}

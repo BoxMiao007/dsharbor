@@ -235,3 +235,9 @@
 | 日期 | 决策 | 为什么 | 放弃了什么 |
 |------|------|--------|------------|
 | 2026-10-16 | 壳版本（`Cargo.toml`、`package.json`、`src-tauri/tauri.conf.json`）0.3.4 → 0.3.5，安装包名 `DSHarbor_0.3.5_x64-setup.exe`；发布包用性能优先构建（`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`） | 本轮的轻量模式延迟设置、DSH 窗口链接分流、界面改名都是用户可感知的变化，但窗口结构与数据模型未变；按本仓库先例（0.3.1 标题栏图标与滚动条、0.3.3 折叠状态记忆都含新增却只递增末位），外观与体验增强走补丁级 | 0.4.0（把「新增设置项 + 链接分流」当中位里程碑，与 0.3.1 / 0.3.3 先例不一致） |
+
+## 2026-10-16 界面主题：原版 / 原生暗色 / 系统原生（维护者要求）
+
+| 日期 | 决策 | 为什么 | 放弃了什么 |
+|------|------|--------|------------|
+| 2026-10-16 | 界面做成可切换的三套主题，入口放「关于」卡片的「界面主题」，选择记在 `localStorage`（`dsharbor.ui.theme`）：`classic` 原版雾光蓝、`nativeDark` 原版排版 ＋ 候选 I 的外观（`src/themes/native-dark.css`）、`native` 再叠候选 I 的排版（`src/themes/native-layout.css`：hero 页头 + 折叠分组 + 系统标题栏 + 系统滚动条）。主题 CSS 用 `?inline` 读成字符串塞进 `<style id="theme-style">`，切主题只换这一个 `<style>` 并按新主题重建界面（不重载页面）；`native` 用 `setDecorations(true)` 换回系统标题栏，另外两套保持自绘标题栏 | 维护者从候选稿里挑中 I 的外观，要求「做成主题」，并且原版、原版改暗、完全另一套样式三个都要留着（m00349） | 主题入口放标题栏（`native` 没有自绘标题栏，入口会时有时无）；写进 `config.json`（跟窗口/界面走的东西已有 localStorage 先例：折叠状态 `dsharbor.ui.cardCollapsed`）；三套主题样式静态全部 import（规则同时生效、互相打架）；切主题用 `location.reload()`（切换时闪一下，且切换路径无法自动化验证） |
