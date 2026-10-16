@@ -23,7 +23,7 @@ v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见�
    - `node --test plugins/dsharbor-bridge/test/bridge.test.js`(桥接插件测试)
    - `pnpm build`(前端类型检查 + 构建)
    - `pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`(完整 Windows 安装包;改动涉及外壳或打包时必须跑)
-2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。界面改动先用 `node scripts/mock-preview.mjs`(跑完 `pnpm build` 后在普通浏览器里按假数据渲染、量尺寸、截图)出预览与证据,再交给维护者看;它比打包 + 静默安装 + 真机一轮快得多。它的盲区——WebView2 与 Chromium 的渲染差异(例如 `::-webkit-scrollbar` 在预览的 overlay 滚动条下被忽略)、无边框窗口的原生拖动/缩放/贴靠、真 DSH 进程与托盘——只能上真机看。
+2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。界面改动先用 `node scripts/mock-preview.mjs`(跑完 `pnpm build` 后在普通浏览器里按假数据渲染、量尺寸、截图)出预览与证据,再交给维护者看;它比打包 + 静默安装 + 真机一轮快得多。注意 `pnpm build`(验证门里那步也一样)会清空 `dist`,交付预览前必须重跑一次 `node scripts/mock-preview.mjs --no-serve` 重新生成 `dist/mock.html`,否则预览地址返回 404。它的盲区——WebView2 与 Chromium 的渲染差异(例如 `::-webkit-scrollbar` 在预览的 overlay 滚动条下被忽略)、无边框窗口的原生拖动/缩放/贴靠、真 DSH 进程与托盘——只能上真机看。
 3. 交付说明讲给不写代码的人听:做了什么、怎么看到结果(地址/命令/截图)、有什么限制和后续建议;没把握或未完成的部分明说,不藏在细节里。
 4. 构建完成后默认把产物装到本机安装目录(维护者要求,无需再问;运行中的 DSHarbor 会占用文件,先关掉再装):
    - 关掉在跑的实例:`Stop-Process -Name dsharbor -Force`(或托盘里完全退出)
