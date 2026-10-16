@@ -409,7 +409,7 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。
-   改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±1px。
+   改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±0.5px。
    只在停止态生效（render 给按钮加 .swap）；运行态的「停止」是普通按钮。 */
 #btn-toggle.swap .text-window {
   position: relative;
@@ -493,7 +493,7 @@ button.primary:hover:not(:disabled) {
 
 #btn-toggle.swap:hover,
 #btn-toggle.swap:focus-visible {
-  animation: dsharbor-shake 0.3s linear infinite both;
+  animation: dsharbor-shake 0.5s linear infinite both;
 }
 
 @keyframes dsharbor-shake {
@@ -502,19 +502,19 @@ button.primary:hover:not(:disabled) {
   }
 
   20% {
-    transform: translate(-1px, 1px);
+    transform: translate(-0.5px, 0.5px);
   }
 
   40% {
-    transform: translate(-1px, -1px);
+    transform: translate(-0.5px, -0.5px);
   }
 
   60% {
-    transform: translate(1px, 1px);
+    transform: translate(0.5px, 0.5px);
   }
 
   80% {
-    transform: translate(1px, -1px);
+    transform: translate(0.5px, -0.5px);
   }
 
   100% {
