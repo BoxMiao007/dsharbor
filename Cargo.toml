@@ -16,9 +16,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [profile.release]
-# 构建速度优先：fat LTO + codegen-units = 1 会把收尾编译串成单核
-# （实测重编壳 + LTO + 链接要 3 分钟），换 thin LTO + 每 crate 16 个
-# codegen 单元，让多核用起来；strip 只影响产物体积，保留。
+# 默认「速度优先」，供本地测试用：fat LTO + codegen-units = 1 会把收尾
+# 编译串成单核（实测重编壳 + LTO + 链接要 3 分钟），换 thin LTO + 每
+# crate 16 个 codegen 单元，让多核用起来；strip 只影响产物体积，保留。
+# 发布 GitHub 的安装包必须用「性能优先」构建，在本 profile 之上用环境
+# 变量覆盖（不改本文件）：CARGO_PROFILE_RELEASE_LTO=true
+# CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1，见 AGENTS.md「发布」一节。
 lto = "thin"
 codegen-units = 16
 strip = true

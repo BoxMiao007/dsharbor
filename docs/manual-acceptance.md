@@ -6,7 +6,7 @@
 
 ## 0. 构建与产物（WSL2 侧）
 
-- 操作：`pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`
+- 操作：发布验收用性能优先构建——`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`（本地快速测试用默认速度优先构建即可，见 README「开发」）。
 - 期望：退出码 0；产物 `target/x86_64-pc-windows-msvc/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe`（2 MiB 量级；打包会连带前端构建与桥接插件 tgz）。
 
 ## 1. 安装
