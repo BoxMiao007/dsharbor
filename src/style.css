@@ -359,7 +359,7 @@ button.primary:hover:not(:disabled) {
 #btn-restart {
   position: relative;
   z-index: 1;
-  transition: color 0.3s, border-color 0.3s;
+  transition: color 0.6s, border-color 0.6s;
 }
 
 #btn-toggle:not(.swap)::before,
@@ -368,8 +368,10 @@ button.primary:hover:not(:disabled) {
   position: absolute;
   inset: 0;
   z-index: -1;
+  /* 跟着按钮圆角裁形，否则填充层的直角会盖出按钮圆角之外。 */
+  border-radius: inherit;
   opacity: 0;
-  transition: opacity 0.3s;
+  transition: opacity 0.6s;
 }
 
 /* 红：以 #ff0000 为底调出的渐变；黄：以 #f5ae51 为底调出的渐变。 */
