@@ -1,471 +1,565 @@
-/* 候选 J｜把候选 I 的「系统原生」（Windows 11 浅色）当成一层主题，套在正式界面上。
- *
- * 和 A–I 的区别：那九套是重新画的布局；这一套的 DOM 结构与布局一个字没动——
- * 页面直接加载正式界面的 `src/style.css`，本文件只在其后覆盖配色、字体、圆角与
- * 控件形状，所以窗口宽度、卡片顺序、间距、字号全部与线上一致。
- * 落地方式也就是把本文件并进 `src/style.css`（不需要改 main.ts）。
- *
- * 覆盖面的取舍：只动「皮肤」，不动「行为」。悬停填色、逐字换字、下拉自绘这些
- * 交互照旧，只把颜色换到 Windows 色板；日志框、键值行、徽章等只改颜色与圆角。
- *
- * 建议窗口：1000 × 700（正式默认尺寸，最小 960 × 520）。 */
+/* ==========================================================================
+   候选 J｜把候选 I 的「系统原生」外观整层搬到正式界面上。
+
+   这一层只做外观，不做排版。两条规矩：
+     · 布局照旧 —— 卡片顺序、内边距、间距、字号、控件位置，全部由 src/style.css 决定，
+       这里一条都不覆盖（唯一例外见文末「端口」那节的说明）。
+     · 外观照抄 —— 颜色、圆角、描边、阴影、控件的形状与悬停反馈，一个数值都没另编，
+       逐条抄自下面两处，改的时候对着改：
+         I 的调色    design/ui-candidates/common.css 第 631–658 行（body.t-wins）
+         I 的控件    design/ui-candidates/common.css 第 249–628 行的基础件
+                     ＋ design/ui-candidates/i-native.html 第 8–202 行的页面局部
+                     （ComboBox 的 5px 圆角与 32px 高、NumberBox 的上下箭头、
+                       单选圆圈、Expander 的折叠头）
+
+   为什么是深色：候选 I 的「系统原生」本来就是 Windows 11 深色设置那一套
+   （窗口底 #202020、面板 #2b2b2b、强调色 #4cc2ff），不是浅色。照搬就得整套照搬。
+
+   加载顺序：src/style.css → 本文件 → cand-bar.css（方案切换条）。
+   不加载 common.css：那是预览台的底座，它的重置与 body 规则会盖掉正式界面的排版。
+   ========================================================================== */
+
+/* ---- 1. 调色与形状：逐条抄自 common.css:631–658 与 common.css:9–14 ---------- */
 
 :root {
-  color-scheme: light;
-  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
-
-  /* Windows 11 浅色色板 */
-  --win-bg: #f3f3f3;
-  --win-panel: #ffffff;
-  --win-panel-2: #fafafa;
-  --win-line: #e5e5e5;
-  --win-line-soft: #f0f0f0;
-  --win-text: #1b1b1b;
-  --win-text-dim: #616161;
-  --win-text-mute: #767676;
-  --win-accent: #005fb8;
-  --win-accent-hover: #1970c9;
-  --win-ok: #0f7b0f;
-  --win-ok-bg: #dff6dd;
-  --win-bad: #c42b1c;
-  --win-bad-bg: #fde7e9;
-
-  /* 页面底部方案切换条（cand-bar.css）的变量：切换条是预览台的一部分，
-     不是界面主题，所以这里给它一套浅色值，免得深色胶囊压在浅色界面上。 */
-  --fg: #1b1b1b;
-  --fg-dim: #616161;
-  --line: #e0e0e0;
-  --panel-solid: rgba(255, 255, 255, 0.94);
-  --panel-hi: #f0f0f0;
-  --accent: #005fb8;
-  --on-accent: #ffffff;
-  --shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  --j-fg: #f3f3f3;
+  --j-fg-dim: #c8c8c8;
+  --j-fg-mute: #9b9b9b;
+  --j-line: rgba(255, 255, 255, 0.09);
+  --j-line-soft: rgba(255, 255, 255, 0.055);
+  --j-panel: #2b2b2b;
+  --j-panel-2: #323232;
+  --j-panel-hi: #3a3a3a;
+  --j-input-bg: #1f1f1f;
+  --j-log-bg: #1b1b1b;
+  --j-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --j-accent: #4cc2ff;
+  --j-on-accent: #001b28;
+  --j-ok: #6ccb5f;
+  --j-warn: #fce100;
+  --j-bad: #ff99a4;
+  /* 形状：卡片 14px / 控件 10px / 胶囊 999px（common.css:9–14），
+     下拉框另按 I 的 ComboBox 取 5px、弹层取 8px（i-native.html:88–94）。 */
+  --j-r-card: 14px;
+  --j-r-ctrl: 10px;
+  --j-r-combo: 5px;
+  --j-r-list: 8px;
+  --j-badge-h: 26px;
 }
 
-/* ---- 底色：换成 Windows 的窗口底，关掉官网雾光渐变 ---- */
+/* ---- 2. 窗口底与标题栏 ---------------------------------------------------- */
 
 body {
-  background-color: var(--win-bg);
-  color: var(--win-text);
+  /* I 的窗口底色（common.css:657）；正式界面的兜底色 #0a1c38 一并交给它。 */
+  background-color: #202020;
+  color: var(--j-fg);
 }
 
+/* 官网那六层雾光渐变在纯色底上只会脏，关掉。
+   正式界面的渐变挂在 body::before 上（src/style.css:39），清掉背景即可。 */
 body::before {
   background: none;
 }
 
-/* ---- 标题栏：换成 Fluent 式的不透明标题栏 + 底部一条细线 ---- */
-
-.titlebar {
-  background: var(--win-bg);
-  border-bottom: 1px solid var(--win-line);
-}
-
-/* 原来那层「内容滚到标题栏底下就糊掉」的毛玻璃不要了：标题栏已经不透，
-   模糊层反而会在顶部留一条灰带。 */
-.titlebar::before {
-  background: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
 .titlebar-brand {
-  color: var(--win-text);
-  letter-spacing: 0;
+  color: var(--j-fg-dim);
 }
 
 .win-btn {
-  color: var(--win-text);
+  color: var(--j-fg-dim);
 }
 
 .win-btn:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--j-panel-hi);
 }
 
+/* 关闭按钮的悬停红：I 标题栏用的 #d63a3f（common.css:244），
+   正式界面的 #c42b1c 是 Windows 10 那一档的老红。 */
 .win-btn.win-close:hover {
-  background: #c42b1c;
-  color: #ffffff;
+  background: #d63a3f;
+  color: #fff;
 }
 
-/* ---- 页面标题 ---- */
-
-.head h1 {
-  color: var(--win-text);
-  font-weight: 600;
-  letter-spacing: 0.5px;
-}
+/* ---- 3. 页头（正式界面独有的标题区） -------------------------------------- */
 
 .tagline {
-  color: var(--win-text-dim);
+  color: var(--j-fg-dim);
 }
 
 .light-hint {
-  color: var(--win-text-mute);
+  color: var(--j-fg-mute);
 }
 
-/* ---- 卡片：白底 + 细描边 + 极轻的投影（WinUI 卡片） ---- */
+/* ---- 4. 卡片：common.css:249–261 ----------------------------------------- */
 
 .card {
-  background: var(--win-panel);
-  border: 1px solid var(--win-line);
-  border-radius: 8px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  background: var(--j-panel);
+  border: 1px solid var(--j-line);
+  border-radius: var(--j-r-card);
 }
 
-.card h2 {
-  color: var(--win-text);
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-/* 可折叠卡片的标题（「启动方式」「桥接插件」）：WinUI 的 Expander 表头悬停给一层极浅的灰 */
+.card h2,
 .card-toggle {
-  color: var(--win-text);
-  font-weight: 600;
-  letter-spacing: 0;
-  border-radius: 4px;
+  color: var(--j-fg);
 }
 
-.card-toggle:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.card-toggle:focus-visible {
-  outline: 2px solid var(--win-accent);
-  outline-offset: 1px;
-  box-shadow: none;
-}
-
-.card-toggle:focus-visible:not(:disabled) {
-  background: rgba(0, 0, 0, 0.04);
+.card-toggle:hover {
+  color: var(--j-fg);
 }
 
 .card-toggle .chev {
-  color: var(--win-text-dim);
+  color: var(--j-fg-mute);
 }
 
-/* ---- 状态徽章：方块药丸 + 状态点，配色走 Windows 的成功 / 错误 / 中性色 ---- */
+.card-toggle:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--j-accent) 45%, transparent);
+}
+
+/* ---- 5. 徽章：common.css:349–388 ----------------------------------------- */
+
+/* 正式界面把徽章的高度、横向内边距、字号收在 :root 变量里（src/style.css:4–10），
+   覆盖这三个变量即全局生效，连日志标题行右侧的「复制」胶囊一起换。
+   数值取 I 的 .badge：高 26px、内边距 10px、字号 12.5px。 */
+:root {
+  --badge-height: var(--j-badge-h);
+  --badge-padding-x: 10px;
+  --badge-font-size: 12.5px;
+}
 
 .badge {
-  border-radius: 4px;
-  font-weight: 400;
+  gap: 6px;
+  border-radius: 999px;
+  background: var(--j-panel-2);
+  border: 1px solid var(--j-line);
+  color: var(--j-fg-dim);
 }
 
+/* 语义色：I 用 color-mix 做 14% 底 + 38% 描边（common.css:382–388）。
+   正式界面的徽章类名是「按状态」命名的，逐个对上 I 的 ok / info / bad / warn。 */
 .badge-running {
-  background: var(--win-ok-bg);
-  color: var(--win-ok);
-  border: 1px solid #c9e8c6;
+  color: var(--j-ok);
+  border-color: color-mix(in srgb, var(--j-ok) 38%, transparent);
+  background: color-mix(in srgb, var(--j-ok) 14%, transparent);
 }
 
 .badge-starting {
-  background: #eaf2fb;
-  color: var(--win-accent);
-  border: 1px solid #d3e5f7;
-}
-
-.badge-stopped,
-.badge-version {
-  background: #f3f3f3;
-  color: var(--win-text-dim);
-  border: 1px solid #e0e0e0;
+  color: var(--j-accent);
+  border-color: color-mix(in srgb, var(--j-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--j-accent) 14%, transparent);
 }
 
 .badge-failed {
-  background: var(--win-bad-bg);
-  color: var(--win-bad);
-  border: 1px solid #f7d5d8;
+  color: var(--j-bad);
+  border-color: color-mix(in srgb, var(--j-bad) 38%, transparent);
+  background: color-mix(in srgb, var(--j-bad) 14%, transparent);
 }
 
-/* 状态点：运行中 / 启动中 / 失败三种状态各带一个同色小圆点，颜色一眼可辨。
-   「已停止」「DSH 版本」是中性与版本信息，不带点。 */
-.badge-running::before,
-.badge-starting::before,
-.badge-failed::before {
-  content: "";
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
+/* 版本徽章：I 用的是 badge info（即强调色那一档，i-native.html:218）；
+   正式界面原本把它做成中性灰，这里跟着 I 走。 */
+.badge-version {
+  color: var(--j-accent);
+  border-color: color-mix(in srgb, var(--j-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--j-accent) 14%, transparent);
 }
 
+/* 「已停止」＝ I 的无色徽章（--panel-2 底 + --line 描边 + --fg-dim 字）。 */
+.badge-stopped {
+  color: var(--j-fg-dim);
+  border-color: var(--j-line);
+  background: var(--j-panel-2);
+}
+
+/* 启动中的转圈：I 里没有这个元素（它没有活动进程状态），
+   换成 I 的强调色，免得深色底上还留着正式界面的天蓝 #93c5fd。 */
 .spinner {
-  border-color: rgba(0, 95, 184, 0.25);
-  border-top-color: var(--win-accent);
+  border-color: color-mix(in srgb, var(--j-accent) 30%, transparent);
+  border-top-color: var(--j-accent);
+}
+
+/* 徽章里的感叹号气泡：I 里也没有，套用它浮层的做法（见下面下拉弹层那节）。 */
+.info-dot::after {
+  border: 1px solid var(--j-line);
+  border-radius: var(--j-r-list);
+  background: var(--j-panel);
+  box-shadow: var(--j-shadow);
+  color: var(--j-fg-dim);
 }
 
 .status-meta {
-  color: var(--win-text-dim);
+  color: var(--j-fg-mute);
 }
 
 .status-meta b {
-  color: var(--win-text);
+  color: var(--j-fg);
 }
 
-/* ---- 按钮：Fluent 的方形浅灰按钮 + 强调色主按钮 ---- */
+/* ---- 6. 按钮：common.css:271–323 ----------------------------------------- */
 
+/* I 的按钮比正式界面矮而窄（34px / 横向 14px），这是控件形状的一部分，
+   跟颜色和圆角一样照搬；正式界面的 padding 8px 22px 在 src/style.css:339 被覆盖。 */
 button {
-  border-radius: 4px;
-  border: 1px solid #d0d0d0;
-  background: #fdfdfd;
-  color: var(--win-text);
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--j-line);
+  border-radius: var(--j-r-ctrl);
+  background: var(--j-panel-2);
+  color: var(--j-fg);
+  font-size: 13.5px;
 }
 
 button:hover:not(:disabled) {
-  background: #f5f5f5;
-}
-
-/* 禁用态：Windows 是灰字实底，不用半透明 */
-button:disabled {
-  opacity: 1;
-  background: #f5f5f5;
-  border-color: #e5e5e5;
-  color: #b1b1b1;
+  background: var(--j-panel-hi);
 }
 
 button.primary {
-  background: var(--win-accent);
-  border-color: var(--win-accent);
-  color: #ffffff;
+  background: var(--j-accent);
+  border-color: transparent;
+  color: var(--j-on-accent);
+  font-weight: 600;
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--win-accent-hover);
-  border-color: var(--win-accent-hover);
+  background: var(--j-accent);
+  /* I 的主按钮悬停只提亮一点点（common.css:299 filter: brightness(1.08)） */
+  filter: brightness(1.08);
 }
 
-button:focus-visible {
-  outline: 2px solid var(--win-accent);
-  outline-offset: 1px;
+/* 卡片标题行也是个 button，但它不是按钮：高度交回原来那套（不加这行会被上面的 34px 顶高）。 */
+.card-toggle {
+  height: auto;
 }
 
-/* 「停止 DSH」悬停填红：沿用原行为，只把红换成 Windows 的关闭红；
-   「重启 DSH」的琥珀色和它的深色文字保持原样（那组已经能读）。 */
+/* 「停止 DSH」悬停填红、「重启 DSH」填黄：这两个是正式界面自己的悬停行为，
+   留着，只把颜色换成 I 调色板里的红与黄。 */
 #btn-toggle:not(.swap)::before {
-  background: var(--win-bad);
+  background: #d63a3f;
 }
 
 #btn-toggle:not(.swap):hover {
-  color: #ffffff;
-  border-color: var(--win-bad);
+  color: #fff;
+  border-color: #d63a3f;
 }
 
-/* 日志块右上角的「复制」：由胶囊改成 Windows 的小按钮 */
-.log-copy {
-  border-radius: 4px;
-  color: var(--win-text-dim);
+#btn-restart::before {
+  background: var(--j-warn);
 }
 
-.log-copy:hover:not(:disabled) {
-  color: var(--win-text);
+#btn-restart:hover {
+  color: var(--j-on-accent);
+  border-color: var(--j-warn);
 }
 
-/* ---- 输入框与自绘下拉框：WinUI 的「浅描边 + 深底线」样式 ---- */
+/* 条目内的小按钮（关于卡片、桥接卡片）与日志标题行的「复制」：
+   都归到 I 的小按钮形状（common.css:309–314，高 28px、圆角 8px、字号 12.5px）。 */
+.log-copy,
+.kv-action {
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--j-fg-dim);
+  background: var(--j-panel-2);
+  border: 1px solid var(--j-line);
+}
 
-input[type="text"],
+.log-copy:hover:not(:disabled),
+.kv-action:hover:not(:disabled) {
+  color: var(--j-fg);
+  background: var(--j-panel-hi);
+}
+
+/* ---- 7. 输入框与下拉框：common.css:432–524 ＋ i-native.html:88–94 -------- */
+
+/* I 把输入框和下拉框分开处理：输入框是 10px 圆角的 TextBox，
+   下拉框是 5px 圆角、底线略亮的 ComboBox——正式界面原来共用一条规则
+   （src/style.css:661），这里按 I 拆开。 */
+input[type="text"] {
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--j-line);
+  border-radius: var(--j-r-ctrl);
+  background: var(--j-input-bg);
+  color: var(--j-fg);
+}
+
 .picker-btn {
-  border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-bottom-color: rgba(0, 0, 0, 0.45);
-  background: #ffffff;
-  color: var(--win-text);
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--j-line);
+  /* ComboBox 的辨识度就在这条亮一档的底边（i-native.html:90）。 */
+  border-bottom-color: rgba(255, 255, 255, 0.22);
+  border-radius: var(--j-r-combo);
+  background: var(--j-input-bg);
+  color: var(--j-fg);
 }
 
-input[type="text"]:hover,
 .picker-btn:hover {
-  background: #fbfbfb;
-  border-color: rgba(0, 0, 0, 0.06);
-  border-bottom-color: rgba(0, 0, 0, 0.55);
+  border-color: var(--j-line);
+  border-bottom-color: rgba(255, 255, 255, 0.22);
 }
 
-/* 聚焦：只用一条 2px 的强调色底线，不加外发光（WinUI 的做法） */
 input[type="text"]:focus,
 .picker-btn:focus-visible {
   outline: none;
-  border-color: rgba(0, 0, 0, 0.06);
-  border-bottom-color: var(--win-accent);
-  box-shadow: inset 0 -1px 0 0 var(--win-accent);
+  border-color: var(--j-accent);
 }
 
 input::placeholder {
-  color: var(--win-text-mute);
-}
-
-.picker-btn[aria-expanded="true"] {
-  border-color: rgba(0, 0, 0, 0.06);
-  border-bottom-color: var(--win-accent);
-  box-shadow: inset 0 -1px 0 0 var(--win-accent);
+  color: var(--j-fg-mute);
 }
 
 .picker-chev {
-  color: var(--win-text-dim);
+  font-size: 10px;
+  color: var(--j-fg-mute);
 }
 
-/* 下拉弹层：白底、细描边、投影（Windows 的浮出层） */
 .picker-list {
-  border-radius: 6px;
-  border: 1px solid var(--win-line);
-  background: #ffffff;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+  border: 1px solid var(--j-line);
+  border-radius: var(--j-r-list);
+  background: var(--j-panel-2);
+  box-shadow: var(--j-shadow);
 }
 
 .picker-option {
-  border-radius: 4px;
-  color: var(--win-text);
+  height: 32px;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--j-fg-dim);
 }
 
+/* 正式界面的「当前值蓝底 / 指针蓝底」（src/style.css:784–797）留着，
+   蓝换成 I 的强调色 30% 混（common.css:520–523）。 */
 .picker-option:hover,
-.picker-option.active {
-  background: #f5f5f5;
-  color: var(--win-text);
-}
-
-/* 当前值那一行：浅灰底（Windows 的下拉框就是这么标当前项的，不用蓝底） */
+.picker-option.active,
 .picker-list:not(:hover):not(:has(.picker-option.active))
   .picker-option[aria-selected="true"] {
-  background: #f0f0f0;
-  color: var(--win-text);
+  background: color-mix(in srgb, var(--j-accent) 30%, transparent);
+  color: var(--j-fg);
 }
 
 .picker-option .tick {
-  color: var(--win-accent);
+  color: var(--j-accent);
 }
 
-/* ---- 启动方式单选行 ---- */
+/* ---- 8. 启动方式单选行：common.css:526–561 ＋ i-native.html:104–140 ------- */
 
 .mode {
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .mode:hover {
-  background: #f5f5f5;
+  background: var(--j-panel-2);
 }
 
+/* I 用的是 Windows 的 RadioButton：20px 圆圈、描边跟字色、选中时圆心 10px 强调色。
+   正式界面原来只给了 accent-color（原生圆点），照搬 I 就得自己画。 */
 .mode input {
-  accent-color: var(--win-accent);
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--j-fg-mute);
+  border-radius: 50%;
+  background: var(--j-input-bg);
+  cursor: pointer;
+}
+
+.mode input:checked {
+  border-color: var(--j-accent);
+}
+
+.mode input:checked::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--j-accent);
 }
 
 .mode b {
-  color: var(--win-text);
+  color: var(--j-fg);
 }
 
 .mode small {
-  color: var(--win-text-dim);
+  color: var(--j-fg-mute);
 }
 
 .fields label {
-  color: var(--win-text-dim);
+  color: var(--j-fg-dim);
 }
 
-.subcard {
-  border: 1px solid var(--win-line);
-  border-radius: 6px;
-  background: var(--win-panel-2);
+/* ---- 9. 端口：I 的 NumberBox（common.css:823–859 ＋ i-native.html:150–172） -
+
+   正式界面这里是「一个文本框 + 右侧一枚徽章」，没有上下箭头。I 的 NumberBox 带箭头，
+   照搬形状就需要在 DOM 里加一个 .step.num 包裹层与两个按钮——这是本文件唯一
+   碰排版的地方，改动只是把原来的输入框包一层（宽度仍由 .port-row 的 flex 决定，
+   位置与行高不变）。加出来的结构在 j-native-theme.html 的页脚脚本里，
+   与 i-native.html:150–172 的标记一致。 */
+
+.port-row .step.num {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  height: 32px;
+  border: 1px solid var(--j-line);
+  border-bottom-color: rgba(255, 255, 255, 0.22);
+  border-radius: var(--j-r-combo);
+  background: var(--j-input-bg);
 }
 
-.subcard-title {
-  color: var(--win-text);
-  letter-spacing: 0;
+.port-row .step.num input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--j-fg);
+  font-size: 13px;
 }
 
-/* ---- 键值行（桥接插件 / 关于） ---- */
-
-.kv {
-  border: 1px solid var(--win-line);
-  border-radius: 6px;
+.port-row .step.num input:focus {
+  border: 0;
 }
 
-.kv-row {
-  border-top: 1px solid var(--win-line-soft);
-  color: var(--win-text);
+.port-row .step.num .spins {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  border-left: 1px solid var(--j-line-soft);
 }
 
-.kv-key {
-  color: var(--win-text-dim);
+/* 箭头按钮：16px 高 × 26px 宽，9px 字号，无边框（i-native.html:178–190）。 */
+.port-row .step.num button {
+  width: 26px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--j-fg-dim);
+  font-size: 9px;
+  line-height: 1;
 }
 
-.kv-value {
-  color: var(--win-text);
+.port-row .step.num button:hover:not(:disabled) {
+  background: var(--j-panel-hi);
+  color: var(--j-fg);
 }
 
-/* ---- 日志折叠块 ---- */
+/* ---- 10. 折叠分组与日志：common.css:605–628 ＋ i-native.html:64–100 ------ */
 
+/* I 的日志块没有外框：标题行 + 一块独立的 pre（.log-head + .log）。
+   正式界面把两者装在一个带描边和底色的 details 里，这里把外层框去掉，
+   只留 pre 自己的描边与底色。 */
 .log-box {
-  border: 1px solid var(--win-line);
-  border-radius: 4px;
-  background: var(--win-panel-2);
-  color: var(--win-text-dim);
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 .log-box summary {
-  color: var(--win-text);
+  color: var(--j-fg-mute);
 }
 
 .log-box summary:hover {
-  color: var(--win-accent);
+  color: var(--j-fg);
 }
 
 .log-box .chev {
-  color: var(--win-text-dim);
+  color: var(--j-fg-mute);
 }
 
 .log-box pre {
-  border: 1px solid var(--win-line);
-  border-radius: 4px;
-  background: #ffffff;
-  color: var(--win-text);
-  font-family: "Cascadia Mono", Consolas, "Cascadia Code", monospace;
+  padding: 10px 12px;
+  border: 1px solid var(--j-line-soft);
+  border-radius: 10px;
+  background: var(--j-log-bg);
+  color: var(--j-fg-dim);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
 }
 
-/* ---- 提示、错误、行内代码 ---- */
+/* 通用设置分组（附加参数 / 端口）：I 的可展开分组是 8px 圆角的面板（.exp）。 */
+.subcard {
+  border: 1px solid var(--j-line-soft);
+  border-radius: 8px;
+  background: var(--j-panel);
+}
+
+.subcard-title {
+  color: var(--j-fg);
+}
+
+/* ---- 11. 键值行：common.css:390–416 -------------------------------------- */
+
+/* I 的键值行是一组只用细线分隔的行，外面没有框；
+   正式界面套了一层带描边圆角的外框（src/style.css:976），照搬 I 就去掉。 */
+.kv {
+  border: 0;
+  border-radius: 0;
+}
+
+.kv-row {
+  border-top: 1px solid var(--j-line-soft);
+}
+
+.kv-key {
+  color: var(--j-fg-mute);
+}
+
+.kv-value {
+  color: var(--j-fg-dim);
+}
+
+/* ---- 12. 提示、错误、行内代码 --------------------------------------------- */
 
 .hint {
-  color: var(--win-text-dim);
-}
-
-.hint code,
-.mode small code {
-  border-radius: 3px;
-  background: #f0f0f0;
-  color: var(--win-text);
+  color: var(--j-fg-mute);
 }
 
 .error {
-  border: 1px solid #f7d5d8;
-  border-radius: 4px;
-  background: var(--win-bad-bg);
-  color: var(--win-bad);
+  color: var(--j-bad);
+  border: 1px solid color-mix(in srgb, var(--j-bad) 38%, transparent);
+  background: color-mix(in srgb, var(--j-bad) 14%, transparent);
+  border-radius: 8px;
 }
 
-/* 徽章里感叹号的悬空气泡：Windows 的浅色提示框 */
-.info-dot::after {
-  border: 1px solid #8a8a8a;
-  border-radius: 4px;
-  background: #f9f9f9;
-  color: var(--win-text);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.16);
+/* 行内代码（common.css:563–569）：等宽 12px、1px/5px 内边距、6px 圆角、面板底色。 */
+code,
+.hint code,
+.mode small code {
+  background: var(--j-panel-2);
+  border-radius: 6px;
 }
 
-/* ---- 滚动指示条：浅色主题上的深色胶囊 ---- */
+/* ---- 13. 滚动条 ----------------------------------------------------------- */
 
+/* I 用的是系统滚动条（深色主题下就是半透明灰），没有自绘指示条。
+   正式界面为了不占宽把视口滚动条藏了、改成自绘的 .scroll-thumb（src/style.css:823），
+   这个行为留着，只把颜色从冷蓝换成中性灰，跟 I 的系统滚动条观感一致。 */
 .scroll-thumb {
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(155, 155, 155, 0.45);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(155, 155, 155, 0.18);
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(200, 200, 200, 0.42);
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:active {
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(230, 230, 230, 0.55);
   background-clip: content-box;
 }

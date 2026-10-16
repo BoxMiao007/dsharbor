@@ -267,6 +267,29 @@
         });
       });
 
+      // 端口：候选 I 的数字框（NumberBox）带上下箭头，而正式界面这里是纯文本输入。
+      // 为了「控件形状照搬 I」，这里把 #port 包进 .step.num（结构照抄 i-native.html:150–172），
+      // 宽度仍由 .port-row 的 flex 分配，位置与行高不变。留空时以跟随配置的 3080 为基数。
+      const port = document.getElementById("port");
+      if (port) {
+        const step = document.createElement("div");
+        step.className = "step num";
+        port.replaceWith(step);
+        const spins = document.createElement("span");
+        spins.className = "spins";
+        spins.innerHTML =
+          '<button type="button" data-delta="1" aria-label="加">▲</button><button type="button" data-delta="-1" aria-label="减">▼</button>';
+        step.append(port, spins);
+        spins.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const typed = parseInt(port.value, 10);
+            const from = Number.isFinite(typed) ? typed : 3080;
+            const next = Math.min(65535, Math.max(1024, from + Number(btn.dataset.delta)));
+            port.value = String(next);
+          });
+        });
+      }
+
       // 正式界面把视口滚动条藏掉、改成自绘的悬浮指示条（在 main.ts 里），
       // 这里补一份同款，否则静态稿会完全没有滚动提示。
       const track = document.createElement("div");

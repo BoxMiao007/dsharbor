@@ -196,13 +196,13 @@
       <div class="grid">
         <a class="item" href="./j-native-theme.html" target="_blank" rel="noreferrer">
           <div class="top"><span class="letter">J</span><span><h3>原界面 + 系统原生主题</h3><span class="sub">布局一格没动，只换配色与控件形状</span></span></div>
-          <div class="ctl">做法：页面直接用<b>正式的 src/style.css</b>，再叠一层 <b>native-theme.css</b> 覆盖颜色、圆角、边框、字体和控件形状</div>
-          <pre class="sketch">标题栏 / 卡片位置 / 字段顺序 / 文案
-        ↓ 全部照旧，只变外观
-白底卡片 · 细线分组 · 系统蓝高亮
-按钮方一点 · 徽章变胶囊 · 下拉弹层
-listbox 化 · 滚动条变系统细条</pre>
-          <p>没有任何结构改动，所以改动量最小、也最容易反悔；代价是这套皮比较"系统设置"，和现在的雾光蓝是两种气质。窗口按正式默认尺寸看。</p>
+          <div class="ctl">做法：正式界面的 <b>src/style.css</b> 照旧管排版，再叠一层 <b>native-theme.css</b>，把候选 I 的配色与控件形状逐条搬过来</div>
+          <pre class="sketch">排版 100% 现状：标题栏 / 卡片位置 / 字段顺序 / 字号
+        ↓ 只换外观，数值全部抄自候选 I
+窗口底 #202020 · 面板 #2b2b2b · 强调 #4cc2ff
+单选变系统圆圈 · 下拉变 ComboBox（亮底线）
+端口带上下箭头 · 日志去外框 · 徽章 26px 胶囊</pre>
+          <p>外观一个数值没另调，布局一格没动，所以最容易反悔；代价是这套皮是深色系统设置风，跟现在的雾光蓝是两种气质。窗口按正式默认尺寸看。</p>
           <div class="meta"><span class="badge">1000 × 700</span><span class="badge ok">改动最小</span></div>
         </a>
       </div>
