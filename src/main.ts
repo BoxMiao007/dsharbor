@@ -808,6 +808,43 @@ async function main(): Promise<void> {
   /** 最近一次渲染的状态：「启动 / 停止」合并成一个按钮，靠它决定该发哪条命令。 */
   let currentStatus: SessionStatus | null = null;
 
+  /** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
+  const TOGGLE_TEXT_REST = "启动 DSH";
+  const TOGGLE_TEXT_HOVER = "开始运行";
+  /** 上次渲染的按钮形态：render 每秒跑一次，只在跨状态时重建 DOM，免得打断悬停动画。 */
+  let toggleMode: "swap" | "plain" | null = null;
+
+  /** 逐字拆成 span；空格用 nbsp，否则在 inline-block 里会被折叠成 0 宽。 */
+  function charsToSpans(text: string): string {
+    return Array.from(text)
+      .map((ch) => `<span>${ch === " " ? "&nbsp;" : ch}</span>`)
+      .join("");
+  }
+
+  /**
+   * 渲染「启动 / 停止」按钮：停止态用两组文字做逐字切换（样式在 style.css 的 #btn-toggle.swap），
+   * 运行态是普通纯文本按钮。两种形态只在切换时重建一次。
+   */
+  function renderToggleButton(stopped: boolean): void {
+    const mode = stopped ? "swap" : "plain";
+    if (mode === toggleMode) return;
+    toggleMode = mode;
+    if (!stopped) {
+      btnToggle.classList.remove("swap");
+      btnToggle.removeAttribute("aria-label");
+      btnToggle.textContent = "停止";
+      return;
+    }
+    // 逐字 span 会被读屏逐字念出来，故对读屏隐藏画面、用 aria-label 给整体名字。
+    btnToggle.classList.add("swap");
+    btnToggle.setAttribute("aria-label", TOGGLE_TEXT_REST);
+    btnToggle.innerHTML =
+      `<span class="text-window" aria-hidden="true">` +
+      `<span class="span-mother">${charsToSpans(TOGGLE_TEXT_REST)}</span>` +
+      `<span class="span-mother2">${charsToSpans(TOGGLE_TEXT_HOVER)}</span>` +
+      `</span>`;
+  }
+
   function render(status: SessionStatus): void {
     currentStatus = status;
     const starting = isStarting(status);
@@ -831,7 +868,7 @@ async function main(): Promise<void> {
     const running = status.state === "running";
     // 「启动 DSH」与「停止」是同一个按钮（维护者要求）：按状态换文案与语义。
     // 后端只在子进程还活着时给 Running，Failed 必然是进程已退出，所以按 running 二分就够。
-    btnToggle.textContent = running ? "停止" : "启动 DSH";
+    renderToggleButton(!running);
     btnToggle.classList.toggle("primary", !running);
     // 「重启 DSH」常驻（与托盘菜单同款入口）：运行中可一键重启，停止时等价于启动。
 

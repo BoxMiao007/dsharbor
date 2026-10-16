@@ -352,6 +352,133 @@ button.primary:hover:not(:disabled) {
   background: #4a7cf0;
 }
 
+/* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。
+   改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±1px。
+   只在停止态生效（render 给按钮加 .swap）；运行态的「停止」是普通按钮。 */
+#btn-toggle.swap .text-window {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  /* 窗口高度 = 一行文字高；行内文字上移 1.3em 后完全落在窗外，切字过程不露破绽。 */
+  height: 1.2em;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+#btn-toggle.swap .span-mother,
+#btn-toggle.swap .span-mother2 {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* 第一组参与布局（决定窗口宽度）；第二组绝对定位盖在同一窗口上。 */
+#btn-toggle.swap .span-mother {
+  position: relative;
+}
+
+#btn-toggle.swap .span-mother2 {
+  position: absolute;
+  inset: 0;
+}
+
+#btn-toggle.swap .span-mother span {
+  display: inline-block;
+  transform: translateY(0);
+}
+
+/* 第二组默认藏在窗口上方，悬停时逐字下滑进入。 */
+#btn-toggle.swap .span-mother2 span {
+  display: inline-block;
+  transform: translateY(-1.3em);
+}
+
+#btn-toggle.swap:hover .span-mother span,
+#btn-toggle.swap:focus-visible .span-mother span {
+  transform: translateY(1.3em);
+}
+
+#btn-toggle.swap:hover .span-mother2 span,
+#btn-toggle.swap:focus-visible .span-mother2 span {
+  transform: translateY(0);
+}
+
+/* 逐字递增延时，文字像波浪一样错开（沿用原效果的 0.2~0.7s）。 */
+#btn-toggle.swap .span-mother span:nth-child(1),
+#btn-toggle.swap .span-mother2 span:nth-child(1) {
+  transition: transform 0.2s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(2),
+#btn-toggle.swap .span-mother2 span:nth-child(2) {
+  transition: transform 0.3s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(3),
+#btn-toggle.swap .span-mother2 span:nth-child(3) {
+  transition: transform 0.4s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(4),
+#btn-toggle.swap .span-mother2 span:nth-child(4) {
+  transition: transform 0.5s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(5),
+#btn-toggle.swap .span-mother2 span:nth-child(5) {
+  transition: transform 0.6s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(6),
+#btn-toggle.swap .span-mother2 span:nth-child(6) {
+  transition: transform 0.7s;
+}
+
+#btn-toggle.swap:hover,
+#btn-toggle.swap:focus-visible {
+  animation: dsharbor-shake 0.3s linear infinite both;
+}
+
+@keyframes dsharbor-shake {
+  0% {
+    transform: translate(0);
+  }
+
+  20% {
+    transform: translate(-1px, 1px);
+  }
+
+  40% {
+    transform: translate(-1px, -1px);
+  }
+
+  60% {
+    transform: translate(1px, 1px);
+  }
+
+  80% {
+    transform: translate(1px, -1px);
+  }
+
+  100% {
+    transform: translate(0);
+  }
+}
+
+/* 减少动态效果：关掉抖动、过渡压到最短（沿用原效果的降级）。 */
+@media (prefers-reduced-motion: reduce) {
+  #btn-toggle.swap:hover,
+  #btn-toggle.swap:focus-visible {
+    animation: none;
+  }
+
+  #btn-toggle.swap .span-mother span,
+  #btn-toggle.swap .span-mother2 span {
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .error {
   margin: 10px 0 4px;
   padding: 10px 12px;
