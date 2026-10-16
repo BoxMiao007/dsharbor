@@ -177,13 +177,31 @@ body::before {
   border-top-color: var(--j-accent);
 }
 
-/* 徽章里的感叹号气泡：I 里也没有，套用它浮层的做法（见下面下拉弹层那节）。 */
+/* 徽章里的感叹号气泡：I 里也没有，套用它浮层的做法（见下面下拉弹层那节）。
+   登录徽章那个 ⓘ 是维护者看过的观感，仍走这一条，别动。 */
 .info-dot::after {
   border: 1px solid var(--j-line);
   border-radius: var(--j-r-list);
   background: var(--j-panel);
   box-shadow: var(--j-shadow);
   color: var(--j-fg-dim);
+}
+
+/* 标签里的 ⓘ（附加参数 / 端口 / 托盘单击 / 轻量模式 / 界面主题）装的是 60–120 字长句
+   （src/main.ts 的 data-tip），气泡比徽章里那个提一档：
+     · 底色 --j-panel-hi #3a3a3a —— 比 --j-panel (#2b2b2b) 亮一档；同组的 --j-input-bg
+       #1f1f1f 比 --j-panel 更暗，用它就沉到卡片底色下面了，不能用。
+     · 描边压到 --j-line-soft：--j-line 那档框线配长句会抢眼，气泡与卡片的分界改由
+       --j-shadow 负责（上面那条已给）。
+     · 宽度上限 320px（原 300px）：一行多放两三个字，长句少一行。
+   圆角 8px（--j-r-list）、文字色 --j-fg-dim、行高 1.6 已分别由上面那条统一规则与
+   src/style.css 的 .info-dot::after（line-height: 1.6）给出，这里不重复声明。 */
+.fields label .info-dot::after,
+.setting-label .info-dot::after,
+.theme-field-label .info-dot::after {
+  max-width: 320px;
+  border-color: var(--j-line-soft);
+  background: var(--j-panel-hi);
 }
 
 .status-meta {
@@ -398,12 +416,23 @@ input::placeholder {
 
    原版这里是「一个文本框 + 右侧一枚徽章」，没有上下箭头。I 的 NumberBox 带箭头，
    照搬形状就需要在 DOM 里加一个 .step.num 包裹层与两个按钮——这是本文件唯一
-   碰排版的地方，改动只是把原来的输入框包一层（宽度仍由 .port-row 的 flex 决定，
-   位置与行高不变）。这层结构由 main.ts 的模板在「原生」类的主题下生成。 */
+   碰排版的地方，改动只是把原来的输入框包一层并把宽度钉到 260px（位置与行高不变）。
+   这层结构由 main.ts 的模板在「原生」类的主题下生成。 */
 
 .port-row .step.num {
   display: flex;
-  flex: 1;
+  /* 端口框不再撑满整行（维护者要求）：和自绘下拉框一样固定 260px、左边缘对齐。
+     但要可缩（flex-basis 260px、收缩允许）：主题三是整列 386px，260px 放得下；
+     「原生暗色」沿用原版排版，「通用设置」列只有约 289px，260px + 12px 间距 + 徽章
+     那一行放不下——不缩就会把所在网格列顶宽、整行溢出卡片。原版的固定宽度写在
+     src/style.css 的 `input[type="text"]` 与 `.port-row input` 上，两者特指度都低于
+     这里的 `.port-row .step.num`，不在这层把 flex 收掉的话包裹层仍会拉满整行、
+     里面的宽度规则等于没生效。整框 260px = 文本框 + 26px 箭头列（见下面 input 那条）。
+     min-width: 0 也要给：`width: 260px` 加 flex 项的 min-width: auto 会把最小宽度顶到
+     260px，光有 flex-shrink 也缩不下去，窄列里又要溢出。 */
+  flex: 0 1 260px;
+  min-width: 0;
+  width: 260px;
   align-items: stretch;
   height: 32px;
   border: 1px solid var(--j-line);
@@ -413,6 +442,8 @@ input::placeholder {
 }
 
 .port-row .step.num input {
+  /* flex: 1 压过 src/style.css 里 .port-row input 的 flex: none（特指度更高），
+     文本框吃满包裹层剩下的宽度；那条的 width: 260px 与 flex-basis 0 冲突，不参与计算。 */
   flex: 1;
   min-width: 0;
   height: 32px;
@@ -485,6 +516,16 @@ input::placeholder {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
   line-height: 1.65;
+}
+
+/* 收起后紧跟折叠标题的摘要徽章（#modes-summary / #bridge-summary）：
+   它落在 .card-toggle 里，会继承那个按钮的 letter-spacing: 1px（src/style.css 的
+   .card-toggle，原版给 16px 标题加的字距），字距跟着标题一起撑开。
+   I 的徽章没有字距（common.css:352–362 的 .badge），展开态下同一枚徽章在 hero 状态行里
+   是 normal，两处不一致，这里把它收回 normal。字号 12.5px 与高 26px 已由本文件的
+   --badge-font-size / --badge-height 覆盖，够了。 */
+.card-summary {
+  letter-spacing: normal;
 }
 
 /* 通用设置分组（附加参数 / 端口）：I 的可展开分组是 8px 圆角的面板（.exp）。 */

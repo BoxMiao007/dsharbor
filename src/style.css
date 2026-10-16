@@ -237,7 +237,11 @@ body::before {
   }
 }
 
-/* ---- 徽章里的感叹号圆圈 + 悬停气泡 ---- */
+/* ---- 感叹号圆圈（ⓘ）+ 悬停气泡 ----
+   原来只出现在徽章里，现在 <label> 与 .setting-label 的文字后面也会有（13 / 13.5px 字号）。
+   尺寸 14px 与 line-height: 1 保持不变；纵向不用补 vertical-align: 行内 flex 的基线取第一个
+   flex 项（那个「!」）的基线，圆顶落在基线上方约 9px、圆底在下方约 5px，中文墨迹大致是
+   上方约 10px / 下方约 2.5px，两者相差在 2px 以内，看上去就是贴在文字右边。 */
 
 .info-dot {
   position: relative;
@@ -288,6 +292,19 @@ body::before {
 
 .info-dot:focus-visible {
   outline: none;
+}
+
+/* 标签里的 ⓘ 现在贴着卡片左缘（原生主题下 .fields > label 只有 128px 宽），
+   气泡再按 50% 居中就会向左撑出窗口：最窄窗口 960px 时，卡片左留白约 40px +
+   卡片内边距约 18px，圆点中心离窗口左缘只有几十像素，300px 宽的气泡一半就落到窗外。
+   这些位置的圆点改成气泡左边缘对齐圆点左边缘、只向右展开：
+   若圆点最靠左也只到 x≈60px，60 + 300 = 360px < 960px，不会越过窗口右缘。
+   徽章里（状态行、桥接状态等位于卡片中部）仍用居中，保持原有观感。 */
+.fields label .info-dot::after,
+.setting-label .info-dot::after,
+.theme-field-label .info-dot::after {
+  left: 0;
+  transform: none;
 }
 
 .badge-stopped {
@@ -665,7 +682,6 @@ button.primary:hover:not(:disabled) {
    所以下拉框改成自绘：见下方 .picker） */
 input[type="text"],
 .picker-btn {
-  width: 100%;
   padding: 8px 10px;
   /* 圆角取官网输入控件的取值（--ds-radius-input: 10px）；下拉框与输入框一起改，
      否则「通过 WSL 启动」那组上下相邻的下拉框和输入框圆角会不一致。 */
@@ -684,16 +700,44 @@ input[type="text"]:focus,
   border-color: #5f8fd8;
 }
 
+/* 短输入框固定 260px、左对齐（原来撑满整行）。260px 取自 .picker 里的最长选项
+   「官方 npx 命令（首次较慢）」这类 13px 文字 + 内边距 + 箭头后的余量
+   （候选 I 的 design/ui-candidates/i-native.html:100 用 min-width: 232px，这里放宽到 260px）。 */
+input[type="text"] {
+  width: 260px;
+}
+
+/* 两个例外：内容天然很长、必须撑满整行。用 id 选择器，特指度高于元素选择器与 .picker，
+   不受声明顺序影响。
+   #binary-path「指定程序路径」：可能是 D:\tools\dsh.cmd 这样的长路径，260px 看不全；
+   #wsl-inner「发行版内命令」：默认值就是一条完整命令行，260px 同样看不全。 */
+#binary-path,
+#wsl-inner {
+  width: 100%;
+}
+
 /* 端口行：输入框 + 覆盖状态徽章并排 */
 .port-row {
   display: flex;
   gap: 12px;
   align-items: center;
+  /* 原版（主题 1）的「通用设置」在两列网格里，列宽只有约 289px
+     （680px 卡片 - 48px 卡片内边距 - 2px 边框 - 32px 子面板内边距 - 2px 边框 - 18px 列间距，
+     再除以 2），而「260px 输入框 + 12px 间距 + 约 106px 徽章」约 378px。放不下时让输入框
+     收窄（flex-basis 260px、可缩到 0），而不是把徽章挤到第二行 —— 徽章标的是当前生效端口，
+     和输入框同行才读得通。主题三的「通用设置」是整列宽（386px），260px 放得下，不会缩。 */
+  flex-wrap: nowrap;
 }
 
+
+/* 输入框不再拉伸：端口框和「附加参数」一样固定 260px。 */
+/* 端口框：放得下时固定 260px（和「附加参数」对齐），放不下时收窄。 */
 .port-row input {
-  flex: 1;
+  flex: 0 1 260px;
+  width: 260px;
+  min-width: 0;
 }
+
 
 .port-row .badge {
   flex: none;
@@ -719,7 +763,9 @@ input[type="text"]:focus,
 
 .picker {
   position: relative;
-  width: 100%;
+  /* 自绘下拉框与短输入框同为 260px（原来是撑满整行）；按钮仍撑满这 260px，
+     弹层跟着这个宽度（.picker-list 用 left/right: 0）。 */
+  width: 260px;
 }
 
 .picker-btn {
@@ -727,6 +773,8 @@ input[type="text"]:focus,
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  /* 按钮撑满 .picker 那 260px，点击热区与弹层宽度都跟着它。 */
+  width: 100%;
   text-align: left;
   cursor: pointer;
 }
@@ -962,7 +1010,10 @@ html::-webkit-scrollbar {
 
 .grid-2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, 1fr) 而不是 1fr：1fr 的最小值是 min-content，端口行里的输入框会把轨道顶宽
+     （「260px 输入框 + 12px 间距 + 徽章」约 378px > 列的 289px），整行就溢出到卡片外。
+     给轨道一个 0 的最小值，列宽只由容器决定，输入框再跟着收窄（见 .port-row input）。 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px 18px;
 }
 
@@ -1096,10 +1147,11 @@ html::-webkit-scrollbar {
   transform: rotate(90deg);
 }
 
-/* 收起后显示的摘要徽章（展开时不显示） */
+/* 收起后显示的摘要徽章（展开时不显示）：紧跟折叠标题文字，不再推到最右侧。
+   与标题之间那 8px 由 .card-toggle 的 gap 给出（徽章是它里面的 flex 项，
+   标题文字是匿名 flex 项），这里不用再补外边距。 */
 .card-summary {
   display: none;
-  margin-left: auto;
 }
 
 .card.collapsed .card-summary {
@@ -1115,6 +1167,27 @@ html::-webkit-scrollbar {
 }
 
 /* ---- 「关于」卡片 ---- */
+
+/* 「界面主题」字段：标签在上、控件在下（三套主题共用）。
+   配色写死基础层的中性蓝灰，不用主题 2/3 的 --j-* 变量——那是主题层的事，
+   只加载 style.css 的「原版」主题取不到那些变量。 */
+.theme-fields {
+  margin-top: 12px;
+}
+
+.theme-field {
+  display: flex;
+  flex-direction: column;
+  /* 左对齐：下拉框固定 260px，不跟着容器拉伸（拉伸也不会生效，
+     这里只是把「左对齐」写成显式规则，并挡住将来换掉固定宽度的情况）。 */
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.theme-field-label {
+  font-size: 13px;
+  color: #9fb2d8;
+}
 
 /* 操作按钮已并入各条目（见 .kv-row-action）；说明文字与上方条目留出间距。 */
 #about-note {

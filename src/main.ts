@@ -387,14 +387,19 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <span class="status-meta">端口：<b id="status-port">—</b></span>
     </div>
   `;
-  const sessionActions = `
-    <div class="actions">
+  // hero 卡片右下角的四颗按钮（主题三专用）：原版排版的两行按钮见 sessionActionsRow。
+  const heroActions = `
+    <div class="hero-actions actions">
       <button id="btn-toggle" class="primary">启动 DSH</button>
       <button id="btn-restart">重启 DSH</button>
+      <button id="btn-open-app" disabled>应用内打开</button>
+      <button id="btn-open-browser" disabled>浏览器打开</button>
     </div>
   `;
-  const sessionRest = `
-    <p id="status-error" class="error hidden"></p>
+  // 会话区共用件：hero 卡片（主题三）与原版「DSH 会话」卡片用同一份标记，id 不变，绑定代码共用。
+  const statusErrorBlock = `<p id="status-error" class="error hidden"></p>`;
+  const loginNoteBlock = `<p id="login-note" class="hint login-note hidden"></p>`;
+  const sessionActionsRow = `
     <div class="actions-row">
       <div class="actions">
         <button id="btn-toggle" class="primary">启动 DSH</button>
@@ -405,31 +410,15 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         <button id="btn-open-browser" disabled>浏览器打开</button>
       </div>
     </div>
-    <p id="login-note" class="hint login-note hidden"></p>
-    <div class="fields tray-fields">
-      <label>托盘单击打开</label>
-      <div class="picker" id="tray-picker"></div>
-      <p class="hint">单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 应用内打开 / 打开启动界面」随时可用。</p>
-    </div>
-    <div class="fields tray-fields">
-      <label>关闭窗口后进入轻量模式</label>
-      <div class="picker" id="light-delay-picker"></div>
-      <p class="hint">关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。</p>
-    </div>
+  `;
+  const logBlock = `
     <details class="log-box">
       <summary><span class="chev">▸</span>最近输出<button type="button" class="log-copy" id="btn-copy-log">复制</button></summary>
       <pre id="log">（暂无输出）</pre>
     </details>
   `;
-  const sessionRestNoActions = `
-    <p id="status-error" class="error hidden"></p>
-    <div class="actions-row">
-      <div class="actions">
-        <button id="btn-open-app" disabled>应用内打开</button>
-        <button id="btn-open-browser" disabled>浏览器打开</button>
-      </div>
-    </div>
-    <p id="login-note" class="hint login-note hidden"></p>
+  // 原版排版把两条托盘设置留在会话卡片里，说明直接写在控件下方。
+  const trayFields = `
     <div class="fields tray-fields">
       <label>托盘单击打开</label>
       <div class="picker" id="tray-picker"></div>
@@ -440,10 +429,6 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <div class="picker" id="light-delay-picker"></div>
       <p class="hint">关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。</p>
     </div>
-    <details class="log-box">
-      <summary><span class="chev">▸</span>最近输出<button type="button" class="log-copy" id="btn-copy-log">复制</button></summary>
-      <pre id="log">（暂无输出）</pre>
-    </details>
   `;
   const modesSummary = `
     <span id="modes-summary" class="badge badge-stopped card-summary">官方 npx 命令</span>
@@ -452,7 +437,6 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <span id="bridge-summary" class="badge badge-stopped card-summary">读取中…</span>
   `;
   const modesBody = `
-    <div class="card-body">
     <label class="mode">
       <input type="radio" name="mode" value="npx" checked />
       <span>
@@ -489,29 +473,27 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <input id="wsl-inner" type="text" value="${WSL_DEFAULT_INNER}" />
     </div>
   `;
+  // 端口控件：原生两主题用候选 I 的 NumberBox（带上下箭头），原版是纯文本框（id 一样，绑定代码共用）。
+  const portControl = nativeLook
+    ? `<div class="step num"><input id="port" type="text" inputmode="numeric" placeholder="例如 3099" /><span class="spins"><button type="button" class="spin" data-step="1" tabindex="-1" aria-label="端口加一">▲</button><button type="button" class="spin" data-step="-1" tabindex="-1" aria-label="端口减一">▼</button></span></div>`
+    : `<input id="port" type="text" inputmode="numeric" placeholder="例如 3099" />`;
+  // 通用设置：原版是「启动方式」卡片里的子面板，主题三由 native-layout.css 覆盖成两列并排的底色框。
+  // 两处说明都进 ⓘ 气泡（维护者要求），端口那条由 renderPortHint() 动态改写 data-tip。
   const commonBody = `
     <div class="subcard">
-      <p class="subcard-title">当前启动方式的通用设置（对上面选中的方式生效）</p>
       <div class="grid-2">
         <div class="fields">
-          <label for="extra-args">附加参数（可选，按空格分隔）</label>
+          <label for="extra-args">附加参数 <span class="info-dot" role="img" tabindex="0" aria-label="附加参数说明" data-tip="追加到该启动方式的命令末尾（WSL 模式下追加到发行版内部命令）。仅允许字母数字与 - _ . / : = @ + 和空格；壳始终自动追加 --no-open（不自动弹浏览器），需要时用上面的「浏览器打开」。">!</span></label>
           <input id="extra-args" type="text" placeholder="例如 --port 3081 --no-open" />
-          <p class="hint">追加到该启动方式的命令末尾（WSL 模式下追加到发行版内部命令）。仅允许字母数字与 <code>- _ . / : = @ +</code> 和空格；壳始终自动追加 <code>--no-open</code>（不自动弹浏览器），需要时用上面的「浏览器打开」。</p>
         </div>
         <div class="fields">
-          <label for="port">端口（可选，留空 = 跟随 DSH 配置）</label>
-          <div class="port-row">
-            <input id="port" type="text" inputmode="numeric" placeholder="例如 3099" />
-            <span id="port-badge" class="badge badge-stopped">跟随 DSH 配置</span>
-          </div>
-          <p class="hint" id="port-hint">正在读取 DSH 配置…</p>
+          <label for="port">端口 <span id="port-info" class="info-dot" role="img" tabindex="0" aria-label="端口说明" data-tip="正在读取 DSH 配置…">!</span></label>
+          <div class="port-row">${portControl}<span id="port-badge" class="badge badge-stopped">跟随 DSH 配置</span></div>
         </div>
       </div>
-      <p class="hint">四种启动方式共用这两个字段，WSL 模式同样生效（壳注入的端口覆盖层会经 /mnt 路径送进发行版）。配置改完自动保存，重开壳后保留。</p>
     </div>
   `;
   const bridgeBody = `
-    <div class="card-body">
     <p class="hint">安装后壳经 DSH 内部插件接口直接取带 token 的登录链接，不依赖日志格式；未安装时自动降级为日志解析（可用但较脆）。安装/卸载前请先停止 DSH。每次安装或卸载都会自动备份 profile 文件，只保留最近 5 份，超出后删掉最旧的。</p>
     <div class="kv">
       <div class="kv-row"><span class="kv-key">目标环境</span><span class="kv-value" id="bridge-target">—</span></div>
@@ -546,57 +528,78 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <p id="about-note" class="hint hidden"></p>
     <p class="hint">DSH 版本在每次成功启动后自动读取；配置目录放壳设置与桥接备份，日志目录放 DSH 的启动日志（WSL 模式下日志在发行版内的 <code>~/.dsh/logs</code>）。</p>
   `;
-
-  // 端口：I 的 NumberBox 带上下箭头，原版是纯文本框（id 一样，绑定代码共用）。
-  const portField = nativeLook
-    ? `<div class="port-row"><div class="step num"><input id="port" type="text" inputmode="numeric" placeholder="例如 3099" /><span class="spins"><button type="button" class="spin" data-step="1" tabindex="-1" aria-label="端口加一">▲</button><button type="button" class="spin" data-step="-1" tabindex="-1" aria-label="端口减一">▼</button></span></div><span id="port-badge" class="badge badge-stopped">跟随 DSH 配置</span></div>`
-    : `<div class="port-row"><input id="port" type="text" inputmode="numeric" placeholder="例如 3099" /><span id="port-badge" class="badge badge-stopped">跟随 DSH 配置</span></div>`;
-  const commonBodyFinal = commonBody.replace(
-    /<div class="port-row">[\s\S]*?<\/div>\n\s*<p class="hint" id="port-hint">/,
-    `${portField}\n<p class="hint" id="port-hint">`,
-  );
+  // 主题三把两条托盘设置搬到「关于」里并排（维护者要求），说明改到 ⓘ 气泡里。
+  const aboutSettingsRow = `
+    <div class="settings-row">
+      <div class="setting-col">
+        <span class="setting-label">托盘单击打开 <span class="info-dot" role="img" tabindex="0" aria-label="托盘单击说明" data-tip="单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 应用内打开 / 打开启动界面」随时可用。">!</span></span>
+        <div class="picker" id="tray-picker"></div>
+      </div>
+      <div class="setting-col">
+        <span class="setting-label">关闭窗口后进入轻量模式 <span class="info-dot" role="img" tabindex="0" aria-label="轻量模式说明" data-tip="关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。">!</span></span>
+        <div class="picker" id="light-delay-picker"></div>
+      </div>
+    </div>
+  `;
 
   // 主题入口放在「关于」里：主题 3 用系统标题栏，放标题栏会多出一套入口，
   // 而「关于」在三个主题里都在。
   const themeFields = `
     <div class="theme-fields">
       <div class="theme-field">
-        <span class="theme-field-label">界面主题</span>
+        <span class="theme-field-label">界面主题 <span class="info-dot" role="img" tabindex="0" aria-label="界面主题说明" data-tip="换主题按新排版重建界面，字段内容不变；选择记在本机，下次启动沿用。">!</span></span>
         <div class="picker" id="theme-picker"></div>
       </div>
-      <p class="hint">换主题按新排版重建界面，字段内容不变；选择记在本机，下次启动沿用。</p>
     </div>`;
 
   const titleAndTagline = `${h1Line}
   ${tagline}
   ${lightHint}`;
-  // 页头：原生排版换成候选 I 的 hero（logo 在左、状态徽章与操作按钮在右）。
+  // 页头：原生排版换成候选 I 的 hero（logo 在左）；动作按钮与最近输出在 hero 卡片更下方。
   const header = nativeLayout
     ? `<header class="head hero">
   <img class="hero-logo" src="${logoUrl}" alt="" draggable="false" />
   <div class="hero-text">${titleAndTagline}
   ${badges}
   </div>
-  ${sessionActions}
 </header>`
     : `<header class="head">${titleAndTagline}</header>`;
 
-  // 状态徽章在原版跟着「DSH 会话」卡片，原生排版跟着 hero 走。
-  const sessionBody = nativeLayout ? sessionRestNoActions : `${badges}\n${sessionRest}`;
-  const sessionSection = cardSection(nativeLayout ? foldHead("session", "DSH 会话") : plainHead("DSH 会话"), sessionBody);
-  const modesSection = cardSection(foldHead("modes", "启动方式", modesSummary), nativeLayout ? modesBody : `${modesBody}\n${commonBodyFinal}`);
-  const commonSection = nativeLayout ? cardSection(foldHead("common", "通用设置"), commonBodyFinal) : "";
+  // 主题三：状态、提示、四颗动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
+  // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色维持四张卡片的老样子。
+  const heroSection = nativeLayout
+    ? `<section class="card hero-card">
+  ${header}
+  ${statusErrorBlock}
+  ${loginNoteBlock}
+  ${heroActions}
+  <div class="hero-log">${logBlock}</div>
+</section>`
+    : "";
+  const sessionSection = nativeLayout
+    ? ""
+    : cardSection(
+        plainHead("DSH 会话"),
+        `${badges}
+  ${statusErrorBlock}
+  ${sessionActionsRow}
+  ${loginNoteBlock}
+  ${trayFields}
+  ${logBlock}`,
+      );
+  const modesSection = cardSection(foldHead("modes", "启动方式", modesSummary), `${modesBody}
+  ${commonBody}`);
   const bridgeSection = cardSection(foldHead("bridge", "桥接插件（登录链接的可靠通道）", bridgeSummary), bridgeBody);
   const aboutSection = cardSection(
     nativeLayout ? foldHead("about", "关于") : plainHead("关于"),
-    `${aboutKv}${themeFields}${aboutTail}`,
+    `${aboutKv}${nativeLayout ? aboutSettingsRow : ""}${themeFields}<div class="about-tail">${aboutTail}</div>`,
   );
 
   return `${titlebar}
-  ${header}
+  ${nativeLayout ? "" : header}
+  ${heroSection}
   ${sessionSection}
   ${modesSection}
-  ${commonSection}
   ${bridgeSection}
   ${aboutSection}`;
 }
@@ -677,7 +680,7 @@ async function main(): Promise<void> {
     const innerInput = $<HTMLInputElement>("wsl-inner");
     const portInput = $<HTMLInputElement>("port");
     const portBadge = $<HTMLSpanElement>("port-badge");
-    const portHintEl = $<HTMLParagraphElement>("port-hint");
+    const portInfoEl = $<HTMLSpanElement>("port-info");
     const loginBadge = $<HTMLSpanElement>("login-badge");
     const loginText = $<HTMLElement>("login-text");
     const loginInfo = $<HTMLElement>("login-info");
@@ -872,6 +875,11 @@ async function main(): Promise<void> {
       return null;
     }
 
+    /** 端口说明写进标签后的 ⓘ 气泡：动态状态 + 原来那行小字里「四个方式共用这两个字段」的固定说明。 */
+    function setPortTip(text: string): void {
+      portInfoEl.dataset.tip = `${text}四种启动方式共用这两个字段，WSL 模式同样生效（壳注入的端口覆盖层会经 /mnt 路径送进发行版）。配置改完自动保存，重开壳后保留。`;
+    }
+
     function renderPortHint(): void {
       const raw = portInput.value.trim();
       if (raw !== "") {
@@ -882,14 +890,14 @@ async function main(): Promise<void> {
         portBadge.textContent = "跟随 DSH 配置";
       }
       if (!portHint) {
-        portHintEl.textContent = "正在读取 DSH 配置…";
+        setPortTip("正在读取 DSH 配置…");
         return;
       }
       if (portHint.source === "managed" && portHint.port !== null) {
         const host = portHint.host ? `host ${portHint.host}，` : "";
-        portHintEl.textContent = `当前生效值：${portHint.port}（来自 DSH 配置的 webserver 块，${host}留空时不动它；自定义端口会保留 host）`;
+        setPortTip(`当前生效值：${portHint.port}（来自 DSH 配置的 webserver 块，${host}留空时不动它；自定义端口会保留 host）。`);
       } else {
-        portHintEl.textContent = "未读到 DSH 端口配置（默认 3080）；留空则完全不干预。";
+        setPortTip("未读到 DSH 端口配置（默认 3080）；留空则完全不干预。");
       }
     }
 
