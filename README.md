@@ -89,6 +89,7 @@ pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 | `src-tauri/` | Tauri 2 外壳（启动器、登录链接、轻量模式、托盘、桥接插件管理） |
 | `src/` | 前端界面（Vite 8 + TypeScript 7，无 UI 框架） |
 | `assets/` | 图标源：`icon-source.png`（主用）、`icon-source.svg`（备用）、`logo.png` |
+| `design/ui-candidates/` | 界面候选静态稿（`node scripts/ui-candidates.mjs` 起预览台逐个点开挑选） |
 | `docs/decisions.md` | 重大技术决策记录（每条含决策、原因、放弃了什么） |
 | `docs/manual-acceptance.md` | 发布前 Windows 手动验收手册 |
 | `GLOSSARY.md` | 项目与 DSH 生态术语表 |

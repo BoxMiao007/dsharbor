@@ -1,0 +1,667 @@
+/* 界面候选预览台的共用底座（由 scripts/ui-candidates.mjs 起静态服务）。
+   这里只放所有候选共用的东西：重置、四种配色主题、按钮 / 徽章 / 卡片 / 键值行 /
+   输入框 / 自绘下拉框 / 日志框等基础件，以及页面底部的方案切换条。
+   每个候选独有的布局写在各自页面的 <style> 里——某个候选被否掉，删掉那一个文件即可。
+
+   五个候选共用同一份假数据（运行中 + 桥接就绪 + npx 启动），这样横向比较的只有
+   布局与风格本身，不会因为数据不同而误判。 */
+
+:root {
+  --r-card: 14px;
+  --r-ctrl: 10px;
+  --r-pill: 999px;
+  --badge-h: 26px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+img {
+  display: block;
+}
+
+/* ---- 配色主题 -------------------------------------------------------------
+   颜色值取自正式界面（src/style.css），改主题就是换下面这几个变量。 */
+
+/* 雾光蓝：正式界面现用的那套深蓝底。 */
+body.t-mist {
+  --fg: #eef2fa;
+  --fg-dim: #b6c6dc;
+  --fg-mute: #8296ae;
+  --line: rgba(255, 255, 255, 0.14);
+  --line-soft: rgba(255, 255, 255, 0.08);
+  --panel: rgba(255, 255, 255, 0.07);
+  --panel-2: rgba(255, 255, 255, 0.04);
+  --panel-hi: rgba(255, 255, 255, 0.1);
+  --panel-solid: rgba(50, 80, 118, 0.62);
+  --input-bg: rgba(9, 21, 38, 0.42);
+  --log-bg: rgba(6, 14, 26, 0.5);
+  --shadow: 0 18px 40px rgba(2, 8, 18, 0.5);
+  --accent: #6f9fe0;
+  --on-accent: #0a1728;
+  --ok: #63d6a4;
+  --warn: #f5ae51;
+  --bad: #ff8080;
+  color: var(--fg);
+  background-color: #0a1c38;
+}
+
+/* 与正式界面同一套雾光（多层 radial-gradient + 底色渐变，2026-10-15 按官网实拍拟合）。 */
+body.t-mist::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(68% 84% at 46% 38%, rgba(118, 152, 196, 0.3) 0%, rgba(118, 152, 196, 0.09) 48%, rgba(118, 152, 196, 0) 78%),
+    radial-gradient(72% 62% at 88% 42%, rgba(54, 92, 144, 0.3) 0%, rgba(54, 92, 144, 0) 70%),
+    radial-gradient(64% 44% at 26% 2%, rgba(92, 128, 172, 0.3) 0%, rgba(92, 128, 172, 0) 64%),
+    radial-gradient(75% 65% at 0% 62%, rgba(3, 10, 20, 0.92) 0%, rgba(3, 10, 20, 0) 72%),
+    radial-gradient(120% 50% at 40% 108%, rgba(3, 11, 21, 0.88) 0%, rgba(3, 11, 21, 0) 70%),
+    linear-gradient(150deg, #102b4e 0%, #214569 38%, #112a4c 68%, #0a1c38 100%);
+}
+
+/* 深空：偏中性蓝的深底，给仪表盘用（比雾光更「应用」、更少装饰）。 */
+body.t-deep {
+  --fg: #e9eefb;
+  --fg-dim: #9fb0cc;
+  --fg-mute: #6d7f9c;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --panel: rgba(255, 255, 255, 0.05);
+  --panel-2: rgba(255, 255, 255, 0.03);
+  --panel-hi: rgba(255, 255, 255, 0.09);
+  --panel-solid: rgba(19, 29, 48, 0.94);
+  --input-bg: rgba(255, 255, 255, 0.045);
+  --log-bg: rgba(4, 10, 20, 0.55);
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  --accent: #5b8cff;
+  --on-accent: #061024;
+  --ok: #4ad2a0;
+  --warn: #f2b04f;
+  --bad: #ff7676;
+  color: var(--fg);
+  background:
+    radial-gradient(90% 60% at 8% -12%, rgba(52, 96, 190, 0.34) 0%, rgba(52, 96, 190, 0) 70%),
+    radial-gradient(70% 50% at 102% -4%, rgba(40, 82, 160, 0.28) 0%, rgba(40, 82, 160, 0) 70%),
+    #0b1220;
+  background-attachment: fixed;
+}
+
+/* 终端黑：中性近黑，密度优先，等宽字体。 */
+body.t-term {
+  --fg: #d9e2ec;
+  --fg-dim: #93a1af;
+  --fg-mute: #69757f;
+  --line: rgba(255, 255, 255, 0.13);
+  --line-soft: rgba(255, 255, 255, 0.07);
+  --panel: transparent;
+  --panel-2: rgba(255, 255, 255, 0.03);
+  --panel-hi: rgba(255, 255, 255, 0.07);
+  --panel-solid: #12161b;
+  --input-bg: rgba(255, 255, 255, 0.03);
+  --log-bg: #070a0d;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+  --accent: #7fd1a6;
+  --on-accent: #08140e;
+  --ok: #7fd1a6;
+  --warn: #e0b866;
+  --bad: #e07b7b;
+  color: var(--fg);
+  background: #0a0c0f;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Microsoft YaHei", monospace;
+  font-size: 13px;
+}
+
+/* 浅色：Windows 11 设置那种亮底白卡。 */
+body.t-light {
+  color-scheme: light;
+  --fg: #1b2430;
+  --fg-dim: #556270;
+  --fg-mute: #8592a5;
+  --line: rgba(15, 25, 40, 0.12);
+  --line-soft: rgba(15, 25, 40, 0.07);
+  --panel: #ffffff;
+  --panel-2: #f4f7fb;
+  --panel-hi: #eaeff7;
+  --panel-solid: #ffffff;
+  --input-bg: #ffffff;
+  --log-bg: #f6f8fb;
+  --shadow: 0 12px 28px rgba(15, 25, 40, 0.16);
+  --accent: #2a68d4;
+  --on-accent: #ffffff;
+  --ok: #127a51;
+  --warn: #8a5a06;
+  --bad: #b8232c;
+  color: var(--fg);
+  background: #eef1f6;
+}
+
+/* ---- 通用小件 ---- */
+
+.spacer {
+  margin-left: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+
+.sec-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--fg-mute);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* 候选标签：固定在右上，提示「正在看哪一套，建议多大窗口」，不挡内容。 */
+.cand-tag {
+  position: fixed;
+  top: 40px;
+  right: 16px;
+  z-index: 150;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--fg-mute);
+  pointer-events: none;
+}
+
+/* ---- 假窗口标题栏 ----
+   正式界面是 decorations: false 的自绘标题栏，这里用同样的高度与位置示意
+   （候选之间可以有不同的标题栏做法，样式在各页面里覆盖）。 */
+.winbar {
+  height: 34px;
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 14px;
+  user-select: none;
+}
+
+.winbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+
+.winbar-brand img {
+  width: 20px;
+  height: 20px;
+}
+
+.winbar-btns {
+  display: flex;
+  align-self: stretch;
+}
+
+.winbar-btns span {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.winbar-btns span:hover {
+  background: var(--panel-hi);
+  color: var(--fg);
+}
+
+.winbar-btns span.close:hover {
+  background: #d63a3f;
+  color: #fff;
+}
+
+/* ---- 卡片 ---- */
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 15px 17px;
+}
+
+.card > h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 12px;
+}
+
+h1 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* ---- 按钮 ---- */
+
+.btn {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctrl);
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn:hover {
+  background: var(--panel-hi);
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn.primary:hover {
+  filter: brightness(1.08);
+}
+
+.btn.danger:hover {
+  background: rgba(214, 58, 63, 0.16);
+  border-color: rgba(214, 58, 63, 0.5);
+  color: #ffb0b0;
+}
+
+.btn.sm {
+  height: 28px;
+  padding: 0 11px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+
+.btn.ghost {
+  background: transparent;
+}
+
+.btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 文字式按钮（终端风用）：`[ 停止 ]` 那种。 */
+.tbtn {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  padding: 1px 2px;
+}
+
+.tbtn:hover {
+  text-decoration: underline;
+}
+
+.tbtn.warn {
+  color: var(--warn);
+}
+
+.tbtn.bad {
+  color: var(--bad);
+}
+
+/* ---- 徽章 ---- */
+
+.badge {
+  height: var(--badge-h);
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+
+.badge.ok {
+  --tone: var(--ok);
+}
+
+.badge.warn {
+  --tone: var(--warn);
+}
+
+.badge.bad {
+  --tone: var(--bad);
+}
+
+.badge.info {
+  --tone: var(--accent);
+}
+
+.badge.ok,
+.badge.warn,
+.badge.bad,
+.badge.info {
+  color: var(--tone);
+  border-color: color-mix(in srgb, var(--tone) 38%, transparent);
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+}
+
+/* ---- 键值行 ---- */
+
+.kv-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 13.5px;
+}
+
+.kv-row:first-child {
+  border-top: 0;
+}
+
+.kv-key {
+  flex: 0 0 96px;
+  color: var(--fg-mute);
+}
+
+.kv-val {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+}
+
+/* ---- 表单控件 ---- */
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+}
+
+.field > label {
+  flex: 0 0 128px;
+  color: var(--fg-dim);
+  font-size: 13.5px;
+}
+
+.input {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctrl);
+  background: var(--input-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.input::placeholder {
+  color: var(--fg-mute);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 自绘下拉框（正式界面里的 Picker 就是这个做法）。 */
+.picker {
+  position: relative;
+  min-width: 176px;
+}
+
+.picker-btn {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctrl);
+  background: var(--input-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.picker-chev {
+  font-size: 10px;
+  color: var(--fg-mute);
+}
+
+.picker-list {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  padding: 6px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  backdrop-filter: blur(12px) saturate(1.1);
+}
+
+.picker-option {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.picker-option::before {
+  content: "✓";
+  width: 12px;
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.picker-option[aria-selected="true"]::before {
+  visibility: visible;
+}
+
+.picker-option:hover {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--fg);
+}
+
+/* 单选行（启动方式）：整行可点，选中行给淡底。 */
+.opt {
+  display: flex;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.opt:hover {
+  background: var(--panel-2);
+}
+
+.opt:has(input:checked) {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.opt input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+.opt b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.opt small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+
+.opt code,
+code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+/* 开关（本版界面还没有，候选里用来示意「即时进入轻量模式」这类二选一）。 */
+.sw {
+  width: 40px;
+  height: 22px;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-hi);
+  display: flex;
+  align-items: center;
+}
+
+.sw::after {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  transition: margin-left 0.15s;
+}
+
+.sw.on {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  border-color: transparent;
+  justify-content: flex-end;
+}
+
+.sw.on::after {
+  background: #fff;
+}
+
+/* ---- 日志框 ---- */
+
+.log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--fg-mute);
+}
+
+.log {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--log-bg);
+  color: var(--fg-dim);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+}
+
+/* ---- 页面底部的方案切换条 ---- */
+
+.cand-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  font-size: 12.5px;
+}
+
+.cand-bar a {
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  color: var(--fg-dim);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.cand-bar a:hover {
+  background: var(--panel-hi);
+  color: var(--fg);
+}
+
+.cand-bar a.cur {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}

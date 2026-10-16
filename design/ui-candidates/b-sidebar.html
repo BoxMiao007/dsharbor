@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>候选 B｜侧栏导航 · DSHarbor 界面候选</title>
+    <link rel="stylesheet" href="./common.css" />
+    <style>
+      /* 候选 B：左侧导航栏 + 一次只显示一页。
+         好处是每页都能摊开写，滚轮不再翻过五张卡片；
+         代价是「看日志」和「改设置」要多点一下，且要更宽的窗口。
+         适合窗口：1120 × 700（最小宽度建议 1040）。 */
+      body {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .sb {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 208px minmax(0, 1fr);
+        gap: 0;
+      }
+
+      .rail {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 6px 12px 16px;
+        border-right: 1px solid var(--line-soft);
+      }
+
+      .rail .sec-label {
+        margin: 6px 0 4px 10px;
+      }
+
+      .rail-btn {
+        height: 36px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--fg-dim);
+        font: inherit;
+        font-size: 13.5px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .rail-btn:hover {
+        background: var(--panel-2);
+        color: var(--fg);
+      }
+
+      .rail-btn.cur {
+        background: color-mix(in srgb, var(--accent) 22%, transparent);
+        color: var(--fg);
+        font-weight: 600;
+        box-shadow: inset 2px 0 0 var(--accent);
+      }
+
+      .rail-foot {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-top: 12px;
+      }
+
+      .pane {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* 状态条常驻：无论切到哪一页，都能看到状态并直接停 / 重启 */
+      .pane-head {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 20px 14px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .pane-body {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 16px 20px 60px;
+        scrollbar-width: thin;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .metric {
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        background: var(--panel);
+      }
+
+      .metric .sec-label {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .metric b {
+        font-size: 17px;
+      }
+
+      .card + .card {
+        margin-top: 14px;
+      }
+    </style>
+  </head>
+  <body class="t-mist">
+    <div class="winbar">
+      <span class="winbar-brand"><img src="../../src/assets/logo.png" alt="" />DSHarbor</span>
+      <div class="winbar-btns"><span>—</span><span>▢</span><span class="close">✕</span></div>
+    </div>
+
+    <p class="cand-tag">候选 B｜侧栏导航 · 建议 1120 × 700</p>
+
+    <div class="sb">
+      <aside class="rail">
+        <p class="sec-label">启动界面</p>
+        <button class="rail-btn cur" data-nav="overview">概览</button>
+        <button class="rail-btn" data-nav="modes">启动方式</button>
+        <button class="rail-btn" data-nav="bridge">桥接插件</button>
+        <button class="rail-btn" data-nav="logs">日志</button>
+        <button class="rail-btn" data-nav="about">关于</button>
+        <div class="rail-foot">
+          <button class="btn sm">应用内打开</button>
+          <button class="btn sm">浏览器打开</button>
+        </div>
+      </aside>
+
+      <main class="pane">
+        <div class="pane-head">
+          <span class="badge ok">桥接就绪</span>
+          <span class="badge ok">运行中</span>
+          <span class="badge info">✦ DSH v0.2.0-rc.2</span>
+          <span class="hint mono">PID 20704 · 端口 3099</span>
+          <span class="spacer"></span>
+          <button class="btn danger">停止</button>
+          <button class="btn">重启 DSH</button>
+        </div>
+
+        <div class="pane-body">
+          <!-- 概览 -->
+          <section data-pane="overview">
+            <div class="metrics">
+              <div class="metric"><span class="sec-label">进程</span><b class="mono">20704</b></div>
+              <div class="metric"><span class="sec-label">端口</span><b class="mono">3099</b></div>
+              <div class="metric"><span class="sec-label">启动方式</span><b>官方 npx 命令</b></div>
+            </div>
+
+            <section class="card">
+              <h2>常用设置</h2>
+              <div class="field">
+                <label>托盘单击打开</label>
+                <div class="picker">
+                  <button class="picker-btn" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="picker-label">启动界面（默认）</span><span class="picker-chev">▾</span></button>
+                  <ul class="picker-list hidden" role="listbox">
+                    <li class="picker-option" role="option" aria-selected="true">启动界面（默认）</li>
+                    <li class="picker-option" role="option" aria-selected="false">应用内窗口</li>
+                  </ul>
+                </div>
+                <span class="hint">单击托盘图标打开哪一个</span>
+              </div>
+              <div class="field">
+                <label>关闭后进入轻量模式</label>
+                <div class="picker">
+                  <button class="picker-btn" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="picker-label">立即</span><span class="picker-chev">▾</span></button>
+                  <ul class="picker-list hidden" role="listbox">
+                    <li class="picker-option" role="option" aria-selected="true">立即</li>
+                    <li class="picker-option" role="option" aria-selected="false">5 秒</li>
+                    <li class="picker-option" role="option" aria-selected="false">15 秒</li>
+                    <li class="picker-option" role="option" aria-selected="false">30 秒</li>
+                    <li class="picker-option" role="option" aria-selected="false">1 分钟</li>
+                    <li class="picker-option" role="option" aria-selected="false">5 分钟</li>
+                  </ul>
+                </div>
+                <span class="hint">关窗后多久释放界面内存（DSH 与托盘常驻）</span>
+              </div>
+            </section>
+
+            <section class="card">
+              <h2>最近输出</h2>
+              <pre class="log">[12:04:11] 启动：npx --yes @deepseek-ai/dsh web --no-open --port 3099
+[12:04:12] dsh web: http://127.0.0.1:3099/?token=… (LAN: http://192.168.1.9:3099/?token=…)
+[12:04:13] 桥接通道就绪：GET /dsharbor-bridge/url 200</pre>
+              <p class="hint" style="margin-top: 8px">完整日志在左栏「日志」页。</p>
+            </section>
+          </section>
+
+          <!-- 启动方式 -->
+          <section data-pane="modes" class="hidden">
+            <section class="card">
+              <h2>选择启动方式</h2>
+              <label class="opt"><input type="radio" name="mode" value="npx" checked /><span><b>官方 npx 命令</b><small>未全局安装 DSH 时用；首次启动会自动下载（较慢）<br />执行 <code>npx --yes @deepseek-ai/dsh web --no-open</code></small></span></label>
+              <label class="opt"><input type="radio" name="mode" value="system" /><span><b>系统全局命令</b><small>已执行过 <code>npm install -g @deepseek-ai/dsh</code></small></span></label>
+              <label class="opt"><input type="radio" name="mode" value="binary" /><span><b>指定程序路径</b><small>最可靠：直接启动 dsh.exe / dsh.cmd 的完整路径</small></span></label>
+              <div class="field hidden" data-reveal="mode=binary"><label>程序路径</label><input class="input mono" value="D:\tools\dsh.cmd" /></div>
+              <label class="opt"><input type="radio" name="mode" value="wsl" /><span><b>通过 WSL 启动</b><small>Windows 壳启动 WSL 发行版里的 DSH</small></span></label>
+              <div class="row hidden" data-reveal="mode=wsl" style="padding: 4px 11px 0">
+                <div class="picker">
+                  <button class="picker-btn" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="picker-label">Ubuntu</span><span class="picker-chev">▾</span></button>
+                  <ul class="picker-list hidden" role="listbox">
+                    <li class="picker-option" role="option" aria-selected="true">Ubuntu</li>
+                    <li class="picker-option" role="option" aria-selected="false">Debian</li>
+                  </ul>
+                </div>
+                <input class="input mono" value="npx --yes @deepseek-ai/dsh web" />
+              </div>
+            </section>
+
+            <section class="card">
+              <h2>通用设置（对上面选中的方式生效）</h2>
+              <div class="field"><label>附加参数</label><input class="input" placeholder="例如 --port 3081 --no-open" /></div>
+              <div class="field">
+                <label>端口</label>
+                <input class="input" placeholder="留空 = 跟随 DSH 配置" />
+                <span class="badge">跟随 DSH 配置</span>
+              </div>
+              <p class="hint">当前生效值：3080（来自 DSH 配置的 webserver 块，host 127.0.0.1）。附加参数只允许字母数字与 <code>- _ . / : = @ +</code> 和空格；壳始终自动追加 <code>--no-open</code>。</p>
+            </section>
+          </section>
+
+          <!-- 桥接插件 -->
+          <section data-pane="bridge" class="hidden">
+            <section class="card">
+              <h2>桥接插件（登录链接的可靠通道）</h2>
+              <p class="hint" style="margin-bottom: 10px">安装后壳经 DSH 内部插件接口直接取带 token 的登录链接，不依赖日志格式；未安装时自动降级为日志解析。安装 / 卸载前请先停止 DSH。每次安装或卸载都会自动备份 profile 文件，只保留最近 5 份。</p>
+              <div class="kv-row"><span class="kv-key">目标环境</span><span class="kv-val">Windows</span></div>
+              <div class="kv-row"><span class="kv-key">安装状态</span><span class="kv-val"><span class="badge ok">已安装</span></span></div>
+              <div class="kv-row"><span class="kv-key">profile</span><span class="kv-val mono">C:\Users\me\.dsh\profiles\web</span></div>
+              <div class="kv-row"><span class="kv-key">最近备份</span><span class="kv-val mono">backup-1760500000（共 2 份）</span></div>
+              <div class="row" style="margin-top: 12px">
+                <button class="btn" disabled>安装桥接插件</button>
+                <button class="btn">卸载</button>
+                <button class="btn">恢复最近备份</button>
+                <button class="btn">打开备份目录</button>
+              </div>
+            </section>
+          </section>
+
+          <!-- 日志 -->
+          <section data-pane="logs" class="hidden">
+            <section class="card">
+              <div class="log-head"><span>最近输出（DSH 启动日志）</span><span class="spacer"></span><button class="btn sm">复制</button></div>
+              <pre class="log" style="height: 240px">[12:04:11] 启动：npx --yes @deepseek-ai/dsh web --no-open --port 3099
+[12:04:12] dsh web: http://127.0.0.1:3099/?token=… (LAN: http://192.168.1.9:3099/?token=…)
+[12:04:13] 桥接通道就绪：GET /dsharbor-bridge/url 200
+[12:04:13] DSH 版本 0.2.0-rc.2
+[12:04:14] webserver 已监听 127.0.0.1:3099</pre>
+            </section>
+            <section class="card">
+              <div class="log-head"><span>操作输出（安装 / 卸载 / 回滚）</span><span class="spacer"></span><button class="btn sm">复制</button></div>
+              <pre class="log" style="height: 140px">[12:05:02] $ dsh plugin add file:dsharbor-bridge-0.3.5.tgz
+[12:05:09] 已备份 4 个文件到 backup-1760500000
+[12:05:11] 完成：桥接插件已安装</pre>
+            </section>
+          </section>
+
+          <!-- 关于 -->
+          <section data-pane="about" class="hidden">
+            <section class="card">
+              <h2>关于 DSHarbor</h2>
+              <p class="hint" style="margin-bottom: 10px">DSH Web 的轻量桌面壳：关掉界面释放内存，DSH 与托盘常驻。</p>
+              <div class="kv-row"><span class="kv-key">壳版本</span><span class="kv-val">0.3.5</span></div>
+              <div class="kv-row"><span class="kv-key">DSH 版本</span><span class="kv-val">0.2.0-rc.2</span></div>
+              <div class="kv-row"><span class="kv-key">开源许可证</span><span class="kv-val">MIT</span></div>
+              <div class="kv-row"><span class="kv-key">项目仓库</span><span class="kv-val mono">github.com/BoxMiao007/dsharbor</span><button class="btn sm">打开</button></div>
+              <div class="kv-row"><span class="kv-key">DSH 官网</span><span class="kv-val mono">deepseek.com/harness</span><button class="btn sm">打开</button></div>
+              <div class="kv-row"><span class="kv-key">配置目录</span><span class="kv-val mono">C:\Users\me\AppData\Roaming\DSHarbor</span><button class="btn sm">打开</button></div>
+              <div class="kv-row"><span class="kv-key">日志目录</span><span class="kv-val mono">C:\Users\me\.dsh\logs</span><button class="btn sm">打开</button></div>
+            </section>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <nav class="cand-bar">
+      <a href="./index.html">挑选页</a>
+      <a href="./a-workbench.html">A 工作台</a>
+      <a href="./b-sidebar.html" class="cur">B 侧栏</a>
+      <a href="./c-dashboard.html">C 仪表盘</a>
+      <a href="./d-light.html">D 浅色</a>
+      <a href="./e-terminal.html">E 终端</a>
+    </nav>
+
+    <script src="./common.js"></script>
+  </body>
+</html>

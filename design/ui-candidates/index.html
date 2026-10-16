@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>DSHarbor 界面候选 · 挑选页</title>
+    <link rel="stylesheet" href="./common.css" />
+    <style>
+      /* 挑选页本身不是候选，只是五套方案的入口 + 各自要看什么。 */
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      .wrap {
+        width: min(1040px, 94vw);
+        margin: 0 auto;
+        padding: 6px 0 40px;
+      }
+
+      h1 {
+        font-size: 22px;
+      }
+
+      .lead {
+        margin: 6px 0 18px;
+        color: var(--fg-dim);
+        font-size: 13.5px;
+        max-width: 78ch;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 14px;
+      }
+
+      .item {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 16px 18px;
+        border-radius: 14px;
+        text-decoration: none;
+        color: inherit;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: 0 1px 2px rgba(15, 25, 40, 0.06);
+        transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+      }
+
+      .item:hover {
+        transform: translateY(-2px);
+        border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+        box-shadow: 0 10px 24px rgba(15, 25, 40, 0.16);
+      }
+
+      .item .top {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .item .letter {
+        width: 30px;
+        height: 30px;
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        background: var(--accent);
+        color: var(--on-accent);
+        font-weight: 700;
+        font-size: 14px;
+      }
+
+      .item h2 {
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      .item .sub {
+        font-size: 12px;
+        color: var(--fg-mute);
+      }
+
+      .item p {
+        font-size: 13px;
+        color: var(--fg-dim);
+        margin: 0;
+      }
+
+      .sketch {
+        margin: 0;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: var(--panel-2);
+        border: 1px solid var(--line-soft);
+        color: var(--fg-mute);
+        font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.4;
+        white-space: pre;
+        overflow: hidden;
+        min-height: 96px;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: auto;
+      }
+
+      .tips {
+        margin-top: 22px;
+        padding: 16px 18px;
+        border-radius: 14px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+      }
+
+      .tips h2 {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .tips ul {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 13px;
+        color: var(--fg-dim);
+      }
+
+      .tips li {
+        margin: 3px 0;
+      }
+    </style>
+  </head>
+  <body class="t-light">
+    <div class="winbar">
+      <span class="winbar-brand"><img src="../../src/assets/logo.png" alt="" />DSHarbor</span>
+      <div class="winbar-btns"><span>—</span><span>▢</span><span class="close">✕</span></div>
+    </div>
+
+    <div class="wrap">
+      <h1>界面候选（5 套）</h1>
+      <p class="lead">
+        五套都是可点的静态稿：假数据完全一样（运行中 · 桥接就绪 · npx 启动），所以横向比的只有布局与风格本身。点开任意一套，窗口大小按卡片上标的调一下再看，最贴近正式窗口时的样子。
+      </p>
+
+      <p class="hint" style="margin: -6px 0 16px">
+        先看基线：<a href="/dist/mock.html" target="_blank" rel="noreferrer" style="color: var(--accent)">当前线上界面</a>（正式界面 + 假数据，用于对照）。若打不开，先在仓库里跑一次 <code>node scripts/mock-preview.mjs --no-serve</code>。
+      </p>
+
+      <div class="grid">
+        <a class="item" href="./a-workbench.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">A</span><span><h2>工作台</h2><span class="sub">两栏卡片 · 沿用现在的雾光蓝</span></span></div>
+          <pre class="sketch">│ logo   DSH Web 控制台  …  [打开] │
+├────────────────┬─────────────────┤
+│ 会话状态        │ 控制             │
+│ 启动方式        │ 桥接插件         │
+├────────────────┴─────────────────┤
+│ 日志  ▸ 最近输出 / 操作输出       │</pre>
+          <p>改动最小的一套：把现在那一条竖排卡片拆成两栏，一屏里能同时看到状态、启动方式和日志。</p>
+          <div class="meta"><span class="badge">1180 × 780</span><span class="badge ok">最省事</span></div>
+        </a>
+
+        <a class="item" href="./b-sidebar.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">B</span><span><h2>侧栏</h2><span class="sub">左侧导航 · 右侧内容</span></span></div>
+          <pre class="sketch">│ logo              │ 会话             │
+│ ▸ 会话  ◂        │ ─────────────── │
+│   启动方式        │ 状态   运行中     │
+│   桥接插件        │ 端口   3099      │
+│   日志            │ 登录链接 已就绪    │
+│   窗口与托盘      │ [应用内打开]      │
+│   关于            │ □ 关闭后释放内存  │</pre>
+          <p>内容多起来也不会变长：插件、设置、日志各占一页，日常用得最多的一屏只放状态与开关。</p>
+          <div class="meta"><span class="badge">1080 × 720</span><span class="badge info">扩展性好</span></div>
+        </a>
+
+        <a class="item" href="./c-dashboard.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">C</span><span><h2>仪表盘</h2><span class="sub">三列磁贴 · 中性深空蓝</span></span></div>
+          <pre class="sketch">│ 会话 控制 常用设置                │
+│ [会话]  [停止]   [下拉]           │
+│ [启动方式 ---- 2列]  [桥接插件]    │
+│ [最近输出 ---- 2列]  [操作输出]    │
+│ [关于 ---------------- 3列]       │</pre>
+          <p>所有信息一次看全、基本不用滚动，适合把窗口开大一点常驻在旁边；小窗口下磁贴会挤。</p>
+          <div class="meta"><span class="badge">1180 × 780</span><span class="badge warn">窗口别开小</span></div>
+        </a>
+
+        <a class="item" href="./d-light.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">D</span><span><h2>浅色设置风</h2><span class="sub">白底 · 可展开分组</span></span></div>
+          <pre class="sketch">│ logo  DSHarbor 0.3.5  …  [停止]  │
+│ ▸ DSH 会话          运行中·3099  › │
+│ ▸ 启动方式          官方 npx 命令 › │
+│ ▾ 日志                          › │
+│    [最近输出日志框]              │
+│ ▸ 关于              0.3.5 · MIT  › │</pre>
+          <p>跟着系统浅色走的一套：分组默认收起，只看标题就知道有没有事，要动手再展开。</p>
+          <div class="meta"><span class="badge">1000 × 740</span><span class="badge info">浅色主题</span></div>
+        </a>
+
+        <a class="item" href="./e-terminal.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">E</span><span><h2>终端风</h2><span class="sub">黑底等宽 · 密度优先</span></span></div>
+          <pre class="sketch">$ dsharbor 0.3.5
+── 会话 ──────────────────
+状态      运行中 (20704) 3099
+登录链接  已就绪 · 桥接插件
+[ 应用内打开 ] [ 浏览器打开 ]
+── 启动方式 ──────────────
+(•) 官方 npx 命令  首次较慢</pre>
+          <p>最省像素、最像开发者工具，参数与命令一目了然；第一次用的人可能觉得字多。</p>
+          <div class="meta"><span class="badge">980 × 740</span><span class="badge">最紧凑</span></div>
+        </a>
+      </div>
+
+      <section class="tips">
+        <h2>挑的时候可以看这几点</h2>
+        <ul>
+          <li><b>窗口大小</b>：你平时会把它开多大？A / C 需要宽一点，D / E 窄一点也好看。</li>
+          <li><b>第一眼</b>：打开界面最想知道的是「DSH 跑起来没有、链接能不能点」，哪一套更快回答这个问题。</li>
+          <li><b>日常动作</b>：复制登录链接、打开界面、停 / 重启、装桥接插件——哪一套里这些最好找。</li>
+          <li><b>深色还是浅色</b>：A 沿用现在的雾光蓝，C 更中性，D 是浅色，E 是纯黑。</li>
+          <li><b>要不要左侧导航</b>：以后再加设置项时，B 和 D 最不容易变乱。</li>
+        </ul>
+      </section>
+
+      <p class="hint" style="margin-top: 14px">
+        这五套都是静态稿，只用来比较布局和风格；选定之后再按它把真实界面重做一遍（真实交互、真实数据都在正式实现里做）。
+      </p>
+    </div>
+  </body>
+</html>
