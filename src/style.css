@@ -493,7 +493,7 @@ button.primary:hover:not(:disabled) {
 
 #btn-toggle.swap:hover,
 #btn-toggle.swap:focus-visible {
-  animation: dsharbor-shake 0.3s linear infinite both;
+  animation: dsharbor-shake 0.2s linear infinite both;
 }
 
 @keyframes dsharbor-shake {
