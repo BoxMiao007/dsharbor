@@ -9,6 +9,7 @@ pub mod bridge;
 pub mod console;
 pub mod launch;
 pub mod lifecycle;
+pub mod links;
 pub mod logparse;
 pub mod overlay;
 pub mod paths;

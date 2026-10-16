@@ -52,6 +52,8 @@ type CardKey = "modes" | "bridge";
 interface ShellConfig {
   launch: LaunchConfig;
   trayClick: TrayClick;
+  /** 关闭窗口后延迟多少秒进入轻量模式；0 = 立即。 */
+  lightDelaySecs: number;
 }
 
 /** 与 Rust 侧 `profile::PortHint` 对应。 */
@@ -300,7 +302,7 @@ async function main(): Promise<void> {
     <header class="head">
       <h1>${info.name}</h1>
       <p class="tagline">DSH Web 的轻量桌面壳</p>
-      <p class="light-hint">关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻；单击托盘图标随时回来（打开哪个窗口可在下面设置）。</p>
+      <p class="light-hint">关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻；单击托盘图标随时回来（关闭后多久进入、打开哪个窗口均可在下面设置）。</p>
     </header>
 
     <section class="card">
@@ -319,7 +321,7 @@ async function main(): Promise<void> {
           <button id="btn-restart">重启 DSH</button>
         </div>
         <div class="actions">
-          <button id="btn-open-app" disabled>当前程序打开</button>
+          <button id="btn-open-app" disabled>应用内打开</button>
           <button id="btn-open-browser" disabled>浏览器打开</button>
         </div>
       </div>
@@ -327,7 +329,12 @@ async function main(): Promise<void> {
       <div class="fields tray-fields">
         <label>托盘单击打开</label>
         <div class="picker" id="tray-picker"></div>
-        <p class="hint">单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 当前程序打开 / 打开启动界面」随时可用。</p>
+        <p class="hint">单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 应用内打开 / 打开启动界面」随时可用。</p>
+      </div>
+      <div class="fields tray-fields">
+        <label>关闭窗口后进入轻量模式</label>
+        <div class="picker" id="light-delay-picker"></div>
+        <p class="hint">关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。</p>
       </div>
       <details class="log-box">
         <summary><span class="chev">▸</span>最近输出<button type="button" class="log-copy" id="btn-copy-log">复制</button></summary>
@@ -472,8 +479,19 @@ async function main(): Promise<void> {
   const trayPicker = new Picker("tray-picker", () => void persistConfigQuiet());
   trayPicker.setChoices([
     { value: "launcher", label: "启动界面（默认）" },
-    { value: "dsh", label: "当前程序打开的窗口" },
+    { value: "dsh", label: "应用内窗口" },
   ]);
+  const lightDelayPicker = new Picker("light-delay-picker", () => void persistConfigQuiet());
+  /** 「关闭窗口后进入轻量模式」的延迟候选，value 为秒数的十进制字符串。 */
+  const LIGHT_DELAY_CHOICES: PickerChoice[] = [
+    { value: "0", label: "立即" },
+    { value: "5", label: "5 秒" },
+    { value: "15", label: "15 秒" },
+    { value: "30", label: "30 秒" },
+    { value: "60", label: "1 分钟" },
+    { value: "300", label: "5 分钟" },
+  ];
+  lightDelayPicker.setChoices(LIGHT_DELAY_CHOICES);
   const distroPicker = new Picker("wsl-distro-picker", () => {
     void persistConfigQuiet();
     void refreshPortHint();
@@ -670,6 +688,7 @@ async function main(): Promise<void> {
       const shell: ShellConfig = {
         launch: collectConfig(),
         trayClick: trayPicker.value as TrayClick,
+        lightDelaySecs: Number(lightDelayPicker.value),
       };
       await invoke("save_shell_config", { config: shell });
       // 配置已回到合法状态：把之前因非法输入显示的错误消掉。
@@ -947,7 +966,7 @@ async function main(): Promise<void> {
     await refresh();
   }
 
-  // 「当前程序打开」：每次点击都重新取当前登录链接（token 是一次性铸造的）。
+  // 「应用内打开」：每次点击都重新取当前登录链接（token 是一次性铸造的）。
   btnOpenApp.addEventListener("click", () => {
     void (async () => {
       localError = null;
@@ -1249,6 +1268,9 @@ async function main(): Promise<void> {
       portInput.value = String(launch.port);
     }
     trayPicker.setValue(saved.trayClick);
+    // 缺字段或值不在候选集合时回落「立即」。
+    const lightDelay = String(saved.lightDelaySecs ?? 0);
+    lightDelayPicker.setValue(LIGHT_DELAY_CHOICES.some((choice) => choice.value === lightDelay) ? lightDelay : "0");
     syncModeFields();
     renderPortHint();
   }

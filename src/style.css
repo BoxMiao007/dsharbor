@@ -20,15 +20,28 @@ body {
   justify-content: center;
   /* 顶部 34px 是给固定定位的自绘标题栏让出的位置（见 .titlebar） */
   padding: 60px 16px 34px;
-  /* 背景：复刻官网 hero 的深蓝雾光。
-     官网那层是 canvas 画的模糊光斑（blur 20px）再叠 radial-gradient，这里用多层
-     radial-gradient + 底色渐变逼近，零额外资源、任意窗口尺寸与 DPI 都不失真。
-     配色不是照着官网截图目测的，是从官网 hero 在 1000×700 视口下的实拍像素逐格取样
-     拟合的（8×6 网格干净区域平均色差 ≈7/255）：中部一块钢蓝雾光
-     （峰值 #4E6682 一带）落在页面中上方，左上与左下、底部压暗（#0A1727、#101C29），
-     右侧留一段中蓝（#24456F ~ #3C597C）。硬编码在 CSS 里，官网改版后需要重新取样。
-     2026-10-15：维护者反馈最亮那块偏亮，看过三档对比图后把第一层峰值定在 0.30
-     （过渡停靠点 0.13 → 0.09，其余五层未动）。峰值不再严格等于官网实拍。 */
+  /* 兜底色：等于雾光渐变的末端色，渐变未覆盖处也保持深蓝。 */
+  background-color: #0a1c38;
+  color: #eef2fa;
+}
+
+/* 背景：复刻官网 hero 的深蓝雾光。
+   官网那层是 canvas 画的模糊光斑（blur 20px）再叠 radial-gradient，这里用多层
+   radial-gradient + 底色渐变逼近，零额外资源、任意窗口尺寸与 DPI 都不失真。
+   配色不是照着官网截图目测的，是从官网 hero 在 1000×700 视口下的实拍像素逐格取样
+   拟合的（8×6 网格干净区域平均色差 ≈7/255）：中部一块钢蓝雾光
+   （峰值 #4E6682 一带）落在页面中上方，左上与左下、底部压暗（#0A1727、#101C29），
+   右侧留一段中蓝（#24456F ~ #3C597C）。硬编码在 CSS 里，官网改版后需要重新取样。
+   2026-10-15：维护者反馈最亮那块偏亮，看过三档对比图后把第一层峰值定在 0.30
+   （过渡停靠点 0.13 → 0.09，其余五层未动）。峰值不再严格等于官网实拍。
+   2026-10-16：挂在 body 上时百分比径向尺寸随 body 盒高缩放，折叠内容后整页渐变重排、
+   屏上同一位置会整片变色；改挂到固定铺满视口的 ::before 上，渐变锁定视口。 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background:
     radial-gradient(68% 84% at 46% 38%, rgba(118, 152, 196, 0.3) 0%, rgba(118, 152, 196, 0.09) 48%, rgba(118, 152, 196, 0) 78%),
     radial-gradient(72% 62% at 88% 42%, rgba(54, 92, 144, 0.3) 0%, rgba(54, 92, 144, 0) 70%),
@@ -36,7 +49,6 @@ body {
     radial-gradient(75% 65% at 0% 62%, rgba(3, 10, 20, 0.92) 0%, rgba(3, 10, 20, 0) 72%),
     radial-gradient(120% 50% at 40% 108%, rgba(3, 11, 21, 0.88) 0%, rgba(3, 11, 21, 0) 70%),
     linear-gradient(150deg, #102b4e 0%, #214569 38%, #112a4c 68%, #0a1c38 100%);
-  color: #eef2fa;
 }
 
 #app {
@@ -162,8 +174,8 @@ body {
 .card {
   padding: 22px 24px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .card h2 {
@@ -1028,13 +1040,14 @@ html::-webkit-scrollbar {
   transform: translateY(-1.5px);
 }
 
-/* ---- 卡片折叠（「DSH 会话」「关于」不折叠；默认展开，收起状态只记内存） ---- */
+/* ---- 卡片折叠（「DSH 会话」「关于」不折叠；默认展开，收起状态经 localStorage 键
+   dsharbor.ui.cardCollapsed 持久化） ---- */
 
 .card-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 负外边距 + 内边距：平时与卡片标题左对齐，鼠标悬停时露出一圈圆角背景（不留直角）。 */
+  /* 负外边距 + 内边距：平时与卡片标题左对齐，同时留出一圈圆角热区（不留直角）。 */
   margin: -4px -10px;
   padding: 4px 10px;
   border: none;
@@ -1047,15 +1060,23 @@ html::-webkit-scrollbar {
   cursor: pointer;
 }
 
+/* 悬停/聚焦只给文字色与箭头反馈，不加底色（用 :not(:disabled) 提特指度，
+   压过通用的 button:hover:not(:disabled) 填充，故不用 !important）。 */
 .card-toggle:hover {
   color: #eef2fa;
-  background: rgba(255, 255, 255, 0.05);
+}
+
+.card-toggle:hover:not(:disabled) {
+  background: none;
 }
 
 .card-toggle:focus-visible {
   outline: none;
-  background: rgba(255, 255, 255, 0.05);
   box-shadow: 0 0 0 2px rgba(79, 130, 240, 0.45);
+}
+
+.card-toggle:focus-visible:not(:disabled) {
+  background: none;
 }
 
 .card-toggle .chev {

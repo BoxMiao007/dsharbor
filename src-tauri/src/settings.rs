@@ -15,9 +15,13 @@ pub enum TrayClick {
     /// 启动界面（主窗口）——默认。
     #[default]
     Launcher,
-    /// 当前程序打开的窗口（壳内的 DSH 界面）。
+    /// 应用内打开的窗口（壳内的 DSH 界面）。
     Dsh,
 }
+
+/// 关闭主窗口后可选的延迟秒数（界面下拉用）。
+/// 0 = 立即销毁（现有行为）；其余为「先隐藏、到点再销毁」的秒数。
+pub const LIGHT_DELAY_CHOICES: [u64; 6] = [0, 5, 15, 30, 60, 300];
 
 /// 壳的全部持久化设置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +30,10 @@ pub struct ShellConfig {
     pub launch: LaunchConfig,
     #[serde(default)]
     pub tray_click: TrayClick,
+    /// 关闭主窗口后进入轻量态的延迟秒数（JSON 键 `lightDelaySecs`）。
+    /// 旧配置没有这个键，取默认 0 = 现有行为。
+    #[serde(default)]
+    pub light_delay_secs: u64,
 }
 
 impl Default for ShellConfig {
@@ -37,7 +45,24 @@ impl Default for ShellConfig {
                 port: None,
             },
             tray_click: TrayClick::Launcher,
+            light_delay_secs: 0,
         }
+    }
+}
+
+impl ShellConfig {
+    /// 关窗后进轻量态的延迟时长。
+    ///
+    /// 不在 `LIGHT_DELAY_CHOICES` 里的值一律按 0（立即）处理：config.json 是用户可手改的
+    /// 文本，若不兜底则一个手滑的巨值会让窗口永远只隐藏不销毁，界面内存一直不释放；
+    /// 按 0 处理等于回到现有行为，最安全。
+    pub fn light_delay(&self) -> std::time::Duration {
+        let secs = if LIGHT_DELAY_CHOICES.contains(&self.light_delay_secs) {
+            self.light_delay_secs
+        } else {
+            0
+        };
+        std::time::Duration::from_secs(secs)
     }
 }
 
@@ -60,6 +85,7 @@ pub fn load(app: &tauri::AppHandle) -> ShellConfig {
         Ok(launch) => ShellConfig {
             launch,
             tray_click: TrayClick::default(),
+            light_delay_secs: 0,
         },
         Err(_) => ShellConfig::default(),
     }

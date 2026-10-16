@@ -20,13 +20,13 @@
 | 托管块 | managed block | 用户 cordis.patch.yml 里由插件生成、标注「托管，勿改」的配置段（如 webserver 的 host/port）。壳只读，从不写。 |
 | 端口覆盖 | port overlay | 壳生成的 launcher 层 patch 文件（以 `--patch` 附加启动命令），把 webserver 端口改为用户自定义值；不改动 DSH 任何配置文件，host 等其余键保留。 |
 | 托管值 | managed value | 端口字段留空（「跟随 DSH 配置」）时的当前生效值；界面显示其来源（读取 profile 的 webserver 块）。 |
-| 轻量模式 | light mode | 关闭主窗口即销毁它的 WebView 释放界面内存；DSH 与托盘常驻。DSH 界面窗口与主窗口相互独立——关一个不连带关另一个。 |
-| 状态机 | `ShellMachine` | 轻量模式状态/事件模型：`Normal/Light/Exiting` × 窗口开/关 → 副作用清单；核心库实现，可全自动测试。 |
-| 托盘菜单 | tray menu | 右键菜单六档：「浏览器打开 / 当前程序打开 / 打开启动界面 / 重启 DSH / 停止 DSH / 完全退出」；「停止 DSH」只停后端（壳与窗口保留）。 |
+| 轻量模式 | light mode | 关闭主窗口后按设置延迟（默认立即）销毁它的 WebView 释放界面内存：延迟期内窗口先隐藏、倒计时到点才真正销毁，期间从托盘点回来仍显示原窗口；DSH 与托盘常驻。DSH 界面窗口与主窗口相互独立——关一个不连带关另一个。 |
+| 状态机 | `ShellMachine` | 轻量模式状态/事件模型：`Normal/PendingLight/Light/Exiting` × 窗口开/关 → 副作用清单；`PendingLight` 表示主窗口已隐藏、倒计时未到（`LightTimeout` 事件到点才真正销毁）；核心库实现，可全自动测试。 |
+| 托盘菜单 | tray menu | 右键菜单六档：「浏览器打开 / 应用内打开 / 打开启动界面 / 重启 DSH / 停止 DSH / 完全退出」；「停止 DSH」只停后端（壳与窗口保留）。 |
 | 启动界面 | launcher window | 壳的主窗口（`main`）：启动/停止 DSH、改配置、看状态与日志；轻量模式下被销毁、可随时重建。 |
-| 当前程序打开 | open in app | 在壳自己的 WebView2 窗口（`dsh-view`）里打开已登录的 DSH 界面；窗口与启动界面相互独立。 |
+| 应用内打开 | open in app | 在壳自己的 WebView2 窗口（`dsh-view`）里打开已登录的 DSH 界面；窗口与启动界面相互独立。 |
 | 浏览器打开 | open in browser | 显式把登录链接交给系统默认浏览器（手动动作；壳的启动流程自动弹出始终禁止）。 |
-| 托盘单击目标 | tray click target | 单击托盘图标默认打开的窗口：启动界面（默认）或程序窗口；随配置存在 `config.json` 的 `trayClick`。 |
+| 托盘单击目标 | tray click target | 单击托盘图标默认打开的窗口：启动界面（默认）或应用内窗口；随配置存在 `config.json` 的 `trayClick`。 |
 | 版本徽章 | version badge | 「DSH 会话」状态行里显示**当前运行的 DSH 版本**的徽章（两个四角星 + `DSH v…`，外观同「已停止」）；版本由壳在每次成功启动后用 `--version` 查询，查到就记进 `%APPDATA%\DSHarbor\dsh-version.txt`，所以壳重开后直接沿用上次的值（不再显示「DSH 版本未知」）。 |
 | 登录徽章 | login badge | 「DSH 会话」状态行**第一个**徽章，显示登录链接的通路与状态：登录等待中 / 桥接就绪（走桥接插件）/ 日志兜底就绪（日志解析）/ 登录获取失败；细节说明在徽章内感叹号图标的悬停气泡，获取失败时登录行显示原因原文。 |
 | 启动中 | starting | 「DSH 会话」状态徽章的一种：DSH 进程已拉起、登录链接尚未就绪（`running` 且未就绪、未报错），带转圈动画；就绪后自动变「运行中」。 |

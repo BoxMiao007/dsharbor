@@ -1,4 +1,4 @@
-//! 系统托盘：菜单「浏览器打开 / 当前程序打开 / 打开启动界面 / 重启 DSH / 停止 DSH / 完全退出」；
+//! 系统托盘：菜单「浏览器打开 / 应用内打开 / 打开启动界面 / 重启 DSH / 停止 DSH / 完全退出」；
 //! 单击托盘图标打开壳设置里配置的默认窗口（启动界面或程序窗口）。
 //!
 //! 托盘只把点击翻译成动作：状态机事件（`ShellEvent`）走 `dispatch_lifecycle`；
@@ -24,7 +24,7 @@ const MENU_QUIT: &str = "tray-quit";
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = tauri::menu::MenuBuilder::new(app)
         .item(&tauri::menu::MenuItemBuilder::with_id(MENU_BROWSER, "浏览器打开").build(app)?)
-        .item(&tauri::menu::MenuItemBuilder::with_id(MENU_DSH, "当前程序打开").build(app)?)
+        .item(&tauri::menu::MenuItemBuilder::with_id(MENU_DSH, "应用内打开").build(app)?)
         .item(&tauri::menu::MenuItemBuilder::with_id(MENU_LAUNCHER, "打开启动界面").build(app)?)
         .separator()
         .item(&tauri::menu::MenuItemBuilder::with_id(MENU_RESTART, "重启 DSH").build(app)?)

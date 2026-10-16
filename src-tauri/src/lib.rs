@@ -15,6 +15,7 @@ use std::sync::Mutex;
 
 use dsharbor_core::launch::LaunchConfig;
 use dsharbor_core::lifecycle::{ShellAction, ShellEvent, ShellMachine, ShellState};
+use dsharbor_core::links::{navigation_decision, NavigationDecision};
 use launcher::{SessionHandle, SessionStatus};
 use serde::Serialize;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -58,6 +59,9 @@ struct AppState {
     spawn_error: Mutex<Option<String>>,
     /// 最近一次成功启动的 DSH 版本号；随状态轮询回给界面（取不到时保持 None）。
     dsh_version: Mutex<Option<String>>,
+    /// 延迟销毁主窗口的世代号：每次重新计时或撤销计时都自增，
+    /// 上一轮的计时线程醒来发现不是最新一代就直接放弃（见 arm_light_destroy）。
+    light_generation: std::sync::atomic::AtomicU64,
 }
 
 #[tauri::command]
@@ -327,7 +331,8 @@ fn list_wsl_distros() -> Result<Vec<String>, String> {
     wsl::list_distros()
 }
 
-/// 打开（或刷新）DSH 界面窗口——界面与托盘的「当前程序打开」。
+/// 打开（或刷新）DSH 界面窗口——界面与托盘的「应用内打开」。
+/// 窗口内的链接策略见 `dsh_navigation_allowed`。
 /// 每次点击都用当前登录链接重新导航：token 是一次性铸造的，
 /// 这样「关掉窗口再打开」也能拿到有效链接（轻量模式复用同一路径）。
 ///
@@ -340,7 +345,7 @@ async fn open_dsh_window(app: tauri::AppHandle) -> Result<(), String> {
     open_dsh_window_inner(&app)
 }
 
-/// 「当前程序打开」的内核：被 async 命令（界面按钮）与托盘入口共用。
+/// 「应用内打开」的内核：被 async 命令（界面按钮）与托盘入口共用。
 fn open_dsh_window_inner(app: &tauri::AppHandle) -> Result<(), String> {
     let url = current_login_url(app)?;
     let parsed = tauri::Url::parse(&url).map_err(|err| format!("登录链接无效：{err}"))?;
@@ -352,11 +357,15 @@ fn open_dsh_window_inner(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
     } else {
         let (width, height) = dsh_window_size(app);
+        // 链接策略要判「哪儿算站内」，用本次登录链接的地址当基准。
+        let internal = parsed.clone();
         WebviewWindowBuilder::new(app, "dsh-view", WebviewUrl::External(parsed))
             .title("DSH")
             .inner_size(width, height)
             .min_inner_size(760.0, 480.0)
             .center()
+            .initialization_script(DSH_LINK_SCRIPT)
+            .on_navigation(move |target| dsh_navigation_allowed(&internal, target))
             .build()
             .map_err(|err| format!("打开 DSH 窗口失败：{err}"))?;
     }
@@ -380,6 +389,58 @@ fn dsh_window_size(app: &tauri::AppHandle) -> (f64, f64) {
         );
     }
     (1120.0, 680.0)
+}
+
+/// 注入 DSH 界面窗口的脚本：把站外链接的「弹新窗口」改成同窗跳转，
+/// 再交给 `dsharbor_core::links::navigation_decision` 判断留在窗口里还是丢给系统浏览器。
+///
+/// 为什么不走 Tauri 命令：DSH 是远端页面，给它开 IPC 权限等于把壳的接口
+/// 暴露出去；这段脚本只碰 DOM，判断全在壳里。
+/// 背景：DSH 前端的 http(s) 链接都带 `target="_blank" rel="noopener noreferrer"`，
+/// WebView2 把弹窗拦掉，用户点了没任何反应。
+const DSH_LINK_SCRIPT: &str = r#"
+(function () {
+  var nativeOpen = window.open;
+  window.open = function (url) {
+    if (typeof url === 'string' && /^https?:/i.test(url)) {
+      window.location.assign(url);
+      return null;
+    }
+    return nativeOpen.apply(window, arguments);
+  };
+  document.addEventListener('click', function (event) {
+    var node = event.target;
+    var link = node && node.closest ? node.closest('a[href]') : null;
+    if (!link) return;
+    var href = link.getAttribute('href') || '';
+    if (!/^https?:/i.test(href)) return;
+    if ((link.getAttribute('target') || '').toLowerCase() === '_blank') {
+      event.preventDefault();
+      window.location.assign(href);
+    }
+  }, true);
+})();
+"#;
+
+/// DSH 界面窗口的导航策略：站内留在窗口里，站外交给系统默认浏览器。
+/// 返回 false 会在 WebView2 里取消这次导航，页面原地不动。
+/// 判定本身在核心库（`dsharbor_core::links`），这里只执行副作用。
+fn dsh_navigation_allowed(internal: &tauri::Url, target: &tauri::Url) -> bool {
+    match navigation_decision(internal, target) {
+        NavigationDecision::Stay => true,
+        NavigationDecision::OpenExternal => {
+            hand_off_to_browser(target);
+            false
+        }
+    }
+}
+
+/// 站外链接交给系统默认浏览器。失败只记日志：导航已被取消、页面没动，
+/// 再弹错误框只会打断用户。
+fn hand_off_to_browser(url: &tauri::Url) {
+    if let Err(err) = launch_default_browser(url.as_str()) {
+        eprintln!("[dsharbor] 外链交给系统浏览器失败：{err}（{url}）");
+    }
 }
 
 /// 「浏览器打开」：把当前登录链接交给系统默认浏览器（界面按钮与托盘菜单共用）。
@@ -551,10 +612,18 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
+    // 关闭请求自带延迟秒数：状态机据此决定「立刻销毁」还是「先隐藏、等倒计时」。
+    let requested_delay = match &event {
+        ShellEvent::WindowCloseRequested { light_delay_secs } => Some(*light_delay_secs),
+        _ => None,
+    };
     let actions = match state.lifecycle.lock() {
         Ok(mut machine) => machine.handle(event),
         Err(_) => return,
     };
+    let hide_only = actions
+        .iter()
+        .any(|action| matches!(action, ShellAction::HideMainWindow));
     for action in actions {
         match action {
             ShellAction::DestroyMainWindow => {
@@ -568,6 +637,17 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                         Err(err) => eprintln!("[dsharbor] 销毁主窗口失败：{err}"),
                     },
                     None => eprintln!("[dsharbor] 销毁主窗口：窗口不存在"),
+                }
+            }
+            ShellAction::HideMainWindow => {
+                // 先隐藏（不是销毁）：窗口、页面、DSH 会话都还在，延迟期内从托盘
+                // 回来是「原窗口直接显示」，不重建、不重新加载。
+                match app.get_webview_window("main") {
+                    Some(window) => match window.hide() {
+                        Ok(()) => eprintln!("[dsharbor] 主窗口已隐藏，等待进入轻量模式"),
+                        Err(err) => eprintln!("[dsharbor] 隐藏主窗口失败：{err}"),
+                    },
+                    None => eprintln!("[dsharbor] 隐藏主窗口：窗口不存在"),
                 }
             }
             ShellAction::CreateWindow => {
@@ -600,6 +680,53 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
             }
         }
     }
+    // 计时与「刚刚做了什么」保持同步：隐藏 → 开始倒计时；显示回来 / 已销毁 → 撤销计时。
+    if hide_only {
+        arm_light_destroy(app, requested_delay.unwrap_or(0));
+    } else {
+        cancel_light_destroy(app);
+    }
+}
+
+/// 延迟进入轻量模式：`delay_secs` 秒后派发 `LightTimeout`（仍走同一条状态机路径）。
+///
+/// 用时器线程 + 世代号，而不是「取消线程」：arm / cancel 都让世代号自增，
+/// 线程醒来发现不是最新一代就直接退出。真正决定不销毁的是状态机——中途从托盘
+/// 回来已把状态推回 `Normal`，到点的 `LightTimeout` 也会被忽略；世代号管的是
+/// 「再次关窗重新计时」时，别让上一轮的计时提前把窗口收掉。
+fn arm_light_destroy(app: &tauri::AppHandle, delay_secs: u64) {
+    use std::sync::atomic::Ordering;
+
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let generation = state.light_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(delay_secs));
+        let current = app
+            .try_state::<AppState>()
+            .map(|state| state.light_generation.load(Ordering::SeqCst))
+            .unwrap_or(0);
+        if current != generation {
+            return;
+        }
+        let app_for_main = app.clone();
+        if let Err(err) = app
+            .run_on_main_thread(move || dispatch_lifecycle(&app_for_main, ShellEvent::LightTimeout))
+        {
+            eprintln!("[dsharbor] 调度轻量模式计时失败：{err}");
+        }
+    });
+}
+
+/// 撤销还挂着的延迟销毁（窗口显示回来了 / 已销毁 / 正在退出）。
+fn cancel_light_destroy(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .light_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// 托盘单击：打开壳设置里配置的默认窗口（启动界面 / 程序窗口）。
@@ -615,12 +742,12 @@ pub(crate) fn tray_left_click(app: &tauri::AppHandle) {
     });
 }
 
-/// 托盘「当前程序打开」：没有登录链接时回退到启动界面，给用户以反馈。
+/// 托盘「应用内打开」：没有登录链接时回退到启动界面，给用户以反馈。
 pub(crate) fn open_dsh_or_launcher(app: &tauri::AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(err) = open_dsh_window_inner(&app) {
-            eprintln!("「当前程序打开」失败，回退启动界面：{err}");
+            eprintln!("「应用内打开」失败，回退启动界面：{err}");
             show_or_create_main(&app);
         }
     });
@@ -710,7 +837,11 @@ async fn lifecycle_action(app: tauri::AppHandle, name: String) -> Result<String,
         // 测试钩子：平台的「窗口关闭请求」无法用脚本合成（合成 WM_CLOSE
         // 在 WebView2 宿主窗口上不可靠），这里直接驱动同一状态机事件，
         // 用来验证主窗口销毁 + 「托盘单击重建」这条链路。
-        "close-main" => ShellEvent::WindowCloseRequested,
+        // 「关闭主窗口」按当前设置走延迟：界面里选「立即」就是旧行为。
+        "close-main" => {
+            let light_delay_secs = settings::load(&app).light_delay().as_secs();
+            ShellEvent::WindowCloseRequested { light_delay_secs }
+        }
         other => return Err(format!("未知的轻量模式动作：{other}")),
     };
     dispatch_lifecycle(&app, event);
@@ -796,10 +927,14 @@ pub fn run() {
                 ..
             } => {
                 if label == "main" {
-                    // 轻量模式：关主窗口 ≠ 退出应用。拦下默认关闭，
-                    // 交给状态机去「销毁窗口、保留 DSH 与托盘」。
+                    // 轻量模式：关主窗口 ≠ 退出应用。拦下默认关闭，交给状态机——
+                    // 设置「立即」就销毁窗口，设了延迟则先隐藏、到点再销毁。
                     api.prevent_close();
-                    dispatch_lifecycle(app_handle, ShellEvent::WindowCloseRequested);
+                    let light_delay_secs = settings::load(app_handle).light_delay().as_secs();
+                    dispatch_lifecycle(
+                        app_handle,
+                        ShellEvent::WindowCloseRequested { light_delay_secs },
+                    );
                 }
             }
             tauri::RunEvent::ExitRequested { code, api, .. } => {
@@ -818,7 +953,9 @@ pub fn run() {
                 if code.is_none() && !exiting {
                     api.prevent_exit();
                 } else if let Some(state) = app_handle.try_state::<AppState>() {
-                    // 真正的退出：兜底确保 DSH 已停（正常路径在 StopDshAndExit 里已停过）。
+                    // 真正的退出：撤销还挂着的延迟销毁，兜底确保 DSH 已停
+                    //（正常路径在 StopDshAndExit 里已停过）。
+                    cancel_light_destroy(app_handle);
                     stop_session(&state);
                 }
             }

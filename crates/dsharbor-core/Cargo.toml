@@ -12,3 +12,5 @@ serde_json = { workspace = true }
 encoding_rs = "0.8"
 # 生成桥接 nonce 的 OS 随机数（无其它传递依赖）。
 getrandom = "0.3"
+# 链接策略要解析并比较地址（与 tauri 依赖同一份 url 2.x）。
+url = "2"
