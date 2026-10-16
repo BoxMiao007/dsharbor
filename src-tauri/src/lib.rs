@@ -512,6 +512,54 @@ fn open_external(target: String) -> Result<(), String> {
     launch_default_browser(url)
 }
 
+/// 给系统标题栏指定颜色（`None` = 交回系统，跟随系统主题与强调色）。
+/// 界面底色是 #202020，而 Windows 的标题栏带透明度（受壁纸色调影响），对不齐；
+/// 主题「系统原生」用它把标题栏钉成和界面一样的色。`DWMWA_CAPTION_COLOR` 是
+/// Windows 11（build 22000）起才有的属性，旧系统上调用会失败——保持系统颜色即可。
+#[tauri::command]
+fn set_caption_color(window: tauri::Window, color: Option<u32>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // dwmapi 是系统库，直接声明省一个依赖。
+        #[link(name = "dwmapi")]
+        extern "system" {
+            fn DwmSetWindowAttribute(
+                hwnd: *mut core::ffi::c_void,
+                attribute: u32,
+                value: *const core::ffi::c_void,
+                size: u32,
+            ) -> i32;
+        }
+        const DWMWA_CAPTION_COLOR: u32 = 35;
+        // 这个值表示「没有自定义颜色」，交给系统主题决定。
+        const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
+
+        let hwnd = window
+            .hwnd()
+            .map_err(|err| format!("拿不到窗口句柄：{err}"))?
+            .0;
+        let value = color.unwrap_or(DWMWA_COLOR_DEFAULT);
+        // SAFETY：hwnd 来自本窗口；value 是栈上的 u32，按属性要求传 4 字节。
+        let result = unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_CAPTION_COLOR,
+                std::ptr::from_ref(&value).cast(),
+                4,
+            )
+        };
+        if result < 0 && color.is_some() {
+            eprintln!("自定义标题栏颜色失败（Windows 版本可能不支持）：0x{result:08X}");
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, color);
+        Ok(())
+    }
+}
+
 /// 在系统文件管理器里打开壳配置目录 / DSH 日志目录 / 桥接插件备份目录。
 /// 备份目录入口在「桥接插件」卡片（安装/卸载的备份都落在那里）。
 #[tauri::command]
@@ -916,6 +964,7 @@ pub fn run() {
             save_shell_config,
             profile_port_hint,
             open_external,
+            set_caption_color,
             open_shell_dir
         ])
         .build(tauri::generate_context!())

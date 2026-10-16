@@ -110,6 +110,8 @@ window.__mockUnimplemented = [];
     open_dsh_window: () => { seen("open_dsh_window"); return null; },
     open_dsh_in_browser: () => { seen("open_dsh_in_browser"); return null; },
     open_external: (a) => { seen("open_external:" + (a && a.target ? a.target : "?")); return null; },
+    // 系统标题栏取色（Windows 专用），预览里没有窗口，直接当成功。
+    set_caption_color: () => null,
     open_shell_dir: (a) => {
       seen("open_shell_dir:" + (a && a.kind ? a.kind : "?"));
       return "C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\DSHarbor\\\\" + (a && a.kind ? a.kind : "");
@@ -121,6 +123,7 @@ window.__mockUnimplemented = [];
     "plugin:window|is_maximized": () => false,
     "plugin:window|is_decorated": () => false,
     "plugin:window|set_decorations": () => null,
+    "plugin:window|set_theme": () => null,
   };
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },

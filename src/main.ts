@@ -1452,7 +1452,7 @@ async function main(): Promise<void> {
     refreshNowHook = refresh;
   }
 
-  /** 换主题：记下来（下次启动沿用）→ 调整窗口边框 → 按主题重建界面。 */
+  /** 换主题：记下来（下次启动沿用）→ 按主题重建界面 → 调整窗口边框与标题栏。 */
   async function switchTheme(next: ThemeId): Promise<void> {
     theme = next;
     try {
@@ -1460,21 +1460,41 @@ async function main(): Promise<void> {
     } catch {
       // 存不下（隐私模式）也不影响这次切换，只是下次启动回到默认。
     }
-    await applyDecorations(next);
+    // 先挂界面再调窗口：标题栏颜色要取新主题的界面底色。
     await mount(next);
+    await applyWindowChrome(next);
+  }
+
+  /** 当前界面底色，换算成 Windows 的 COLORREF（0x00BBGGRR）；解析不出来就返回 null。 */
+  function bodyColorRef(): number | null {
+    const match = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(
+      window.getComputedStyle(document.body).backgroundColor,
+    );
+    if (!match) {
+      return null;
+    }
+    const [red, green, blue] = match.slice(1).map(Number);
+    return ((red & 0xff) << 0) | ((green & 0xff) << 8) | ((blue & 0xff) << 16);
   }
 
   /** 「系统原生」主题用系统标题栏，另外两套用自绘的（见 buildHtml 里的标题栏）。 */
-  async function applyDecorations(target: ThemeId): Promise<void> {
+  async function applyWindowChrome(target: ThemeId): Promise<void> {
     try {
       const appWindow = getCurrentWindow();
       const wanted = isNativeLayout(target);
       if ((await appWindow.isDecorated()) !== wanted) {
         await appWindow.setDecorations(wanted);
       }
+      // 系统标题栏的颜色跟窗口的浅色/深色走：界面本身是深色（#202020，Win11 深色
+      // 标题栏正好也是这个色），所以有系统标题栏时把窗口钉成深色，免得 Windows 用
+      // 浅色模式时顶上多一条亮带。另外两套是自绘标题栏，交回系统即可（null）。
+      await appWindow.setTheme(wanted ? "dark" : null);
+      // 光钉深色还不够：Windows 的标题栏带透明度（受壁纸色调影响），实测会偏蓝，
+      // 跟界面底色对不齐，所以直接把这一条染成界面底色；另外两套交回系统。
+      await invoke("set_caption_color", { color: wanted ? bodyColorRef() : null });
     } catch (err) {
       // 普通浏览器里没有窗口对象（预览用）。
-      console.error("切换窗口边框失败:", err);
+      console.error("调整窗口外观失败:", err);
     }
   }
 
@@ -1559,9 +1579,9 @@ async function main(): Promise<void> {
   window.setInterval(() => void refreshNowHook(), 1000);
   updateScrollThumbHook = updateScrollThumb;
 
-  // 先按主题把窗口边框调好，再挂界面：主题 3 的排版没有自绘标题栏。
-  await applyDecorations(theme);
+  // 先挂界面再调窗口：标题栏颜色要取新主题的界面底色。
   await mount(theme);
+  await applyWindowChrome(theme);
 }
 
 void main();
