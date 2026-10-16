@@ -1126,7 +1126,9 @@ async function main(): Promise<void> {
       // 后端只在子进程还活着时给 Running，Failed 必然是进程已退出，所以按 running 二分就够。
       renderToggleButton(!running);
       btnToggle.classList.toggle("primary", !running);
-      // 「重启 DSH」常驻（与托盘菜单同款入口）：运行中可一键重启，停止时等价于启动。
+      // 「重启 DSH」只在运行中出现（维护者要求）：启动前整个界面只有一个「启动 DSH」，
+      // 起来之后才同时给出「停止 / 重启 DSH」。
+      btnRestart.classList.toggle("hidden", !running);
 
       // 登录链接徽章：桥接就绪 > 日志兜底就绪 > 等待中 > 获取失败。
       // 正常状态的细节说明放在徽章的感叹号气泡里（维护者要求），失败信息仍留在行内便于直接排查。
