@@ -650,6 +650,12 @@ button.primary:hover:not(:disabled) {
   padding: 4px 0 10px 34px;
 }
 
+/* 「指定程序路径」「通过 WSL 启动」两组参数靠 .hidden 收起，但上面那条 display:flex
+   跟 .hidden 优先级相同、且在文件里更靠后，会把它盖掉（参数一直露在外面）。 */
+.fields.hidden {
+  display: none;
+}
+
 .fields label {
   font-size: 13px;
   color: #9fb2d8;
