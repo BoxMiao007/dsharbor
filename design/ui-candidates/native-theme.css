@@ -1,0 +1,471 @@
+/* 候选 J｜把候选 I 的「系统原生」（Windows 11 浅色）当成一层主题，套在正式界面上。
+ *
+ * 和 A–I 的区别：那九套是重新画的布局；这一套的 DOM 结构与布局一个字没动——
+ * 页面直接加载正式界面的 `src/style.css`，本文件只在其后覆盖配色、字体、圆角与
+ * 控件形状，所以窗口宽度、卡片顺序、间距、字号全部与线上一致。
+ * 落地方式也就是把本文件并进 `src/style.css`（不需要改 main.ts）。
+ *
+ * 覆盖面的取舍：只动「皮肤」，不动「行为」。悬停填色、逐字换字、下拉自绘这些
+ * 交互照旧，只把颜色换到 Windows 色板；日志框、键值行、徽章等只改颜色与圆角。
+ *
+ * 建议窗口：1000 × 700（正式默认尺寸，最小 960 × 520）。 */
+
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+
+  /* Windows 11 浅色色板 */
+  --win-bg: #f3f3f3;
+  --win-panel: #ffffff;
+  --win-panel-2: #fafafa;
+  --win-line: #e5e5e5;
+  --win-line-soft: #f0f0f0;
+  --win-text: #1b1b1b;
+  --win-text-dim: #616161;
+  --win-text-mute: #767676;
+  --win-accent: #005fb8;
+  --win-accent-hover: #1970c9;
+  --win-ok: #0f7b0f;
+  --win-ok-bg: #dff6dd;
+  --win-bad: #c42b1c;
+  --win-bad-bg: #fde7e9;
+
+  /* 页面底部方案切换条（cand-bar.css）的变量：切换条是预览台的一部分，
+     不是界面主题，所以这里给它一套浅色值，免得深色胶囊压在浅色界面上。 */
+  --fg: #1b1b1b;
+  --fg-dim: #616161;
+  --line: #e0e0e0;
+  --panel-solid: rgba(255, 255, 255, 0.94);
+  --panel-hi: #f0f0f0;
+  --accent: #005fb8;
+  --on-accent: #ffffff;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+/* ---- 底色：换成 Windows 的窗口底，关掉官网雾光渐变 ---- */
+
+body {
+  background-color: var(--win-bg);
+  color: var(--win-text);
+}
+
+body::before {
+  background: none;
+}
+
+/* ---- 标题栏：换成 Fluent 式的不透明标题栏 + 底部一条细线 ---- */
+
+.titlebar {
+  background: var(--win-bg);
+  border-bottom: 1px solid var(--win-line);
+}
+
+/* 原来那层「内容滚到标题栏底下就糊掉」的毛玻璃不要了：标题栏已经不透，
+   模糊层反而会在顶部留一条灰带。 */
+.titlebar::before {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.titlebar-brand {
+  color: var(--win-text);
+  letter-spacing: 0;
+}
+
+.win-btn {
+  color: var(--win-text);
+}
+
+.win-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.win-btn.win-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+/* ---- 页面标题 ---- */
+
+.head h1 {
+  color: var(--win-text);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.tagline {
+  color: var(--win-text-dim);
+}
+
+.light-hint {
+  color: var(--win-text-mute);
+}
+
+/* ---- 卡片：白底 + 细描边 + 极轻的投影（WinUI 卡片） ---- */
+
+.card {
+  background: var(--win-panel);
+  border: 1px solid var(--win-line);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.card h2 {
+  color: var(--win-text);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* 可折叠卡片的标题（「启动方式」「桥接插件」）：WinUI 的 Expander 表头悬停给一层极浅的灰 */
+.card-toggle {
+  color: var(--win-text);
+  font-weight: 600;
+  letter-spacing: 0;
+  border-radius: 4px;
+}
+
+.card-toggle:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.card-toggle:focus-visible {
+  outline: 2px solid var(--win-accent);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+.card-toggle:focus-visible:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.card-toggle .chev {
+  color: var(--win-text-dim);
+}
+
+/* ---- 状态徽章：方块药丸 + 状态点，配色走 Windows 的成功 / 错误 / 中性色 ---- */
+
+.badge {
+  border-radius: 4px;
+  font-weight: 400;
+}
+
+.badge-running {
+  background: var(--win-ok-bg);
+  color: var(--win-ok);
+  border: 1px solid #c9e8c6;
+}
+
+.badge-starting {
+  background: #eaf2fb;
+  color: var(--win-accent);
+  border: 1px solid #d3e5f7;
+}
+
+.badge-stopped,
+.badge-version {
+  background: #f3f3f3;
+  color: var(--win-text-dim);
+  border: 1px solid #e0e0e0;
+}
+
+.badge-failed {
+  background: var(--win-bad-bg);
+  color: var(--win-bad);
+  border: 1px solid #f7d5d8;
+}
+
+/* 状态点：运行中 / 启动中 / 失败三种状态各带一个同色小圆点，颜色一眼可辨。
+   「已停止」「DSH 版本」是中性与版本信息，不带点。 */
+.badge-running::before,
+.badge-starting::before,
+.badge-failed::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.spinner {
+  border-color: rgba(0, 95, 184, 0.25);
+  border-top-color: var(--win-accent);
+}
+
+.status-meta {
+  color: var(--win-text-dim);
+}
+
+.status-meta b {
+  color: var(--win-text);
+}
+
+/* ---- 按钮：Fluent 的方形浅灰按钮 + 强调色主按钮 ---- */
+
+button {
+  border-radius: 4px;
+  border: 1px solid #d0d0d0;
+  background: #fdfdfd;
+  color: var(--win-text);
+}
+
+button:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+
+/* 禁用态：Windows 是灰字实底，不用半透明 */
+button:disabled {
+  opacity: 1;
+  background: #f5f5f5;
+  border-color: #e5e5e5;
+  color: #b1b1b1;
+}
+
+button.primary {
+  background: var(--win-accent);
+  border-color: var(--win-accent);
+  color: #ffffff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--win-accent-hover);
+  border-color: var(--win-accent-hover);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--win-accent);
+  outline-offset: 1px;
+}
+
+/* 「停止 DSH」悬停填红：沿用原行为，只把红换成 Windows 的关闭红；
+   「重启 DSH」的琥珀色和它的深色文字保持原样（那组已经能读）。 */
+#btn-toggle:not(.swap)::before {
+  background: var(--win-bad);
+}
+
+#btn-toggle:not(.swap):hover {
+  color: #ffffff;
+  border-color: var(--win-bad);
+}
+
+/* 日志块右上角的「复制」：由胶囊改成 Windows 的小按钮 */
+.log-copy {
+  border-radius: 4px;
+  color: var(--win-text-dim);
+}
+
+.log-copy:hover:not(:disabled) {
+  color: var(--win-text);
+}
+
+/* ---- 输入框与自绘下拉框：WinUI 的「浅描边 + 深底线」样式 ---- */
+
+input[type="text"],
+.picker-btn {
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom-color: rgba(0, 0, 0, 0.45);
+  background: #ffffff;
+  color: var(--win-text);
+}
+
+input[type="text"]:hover,
+.picker-btn:hover {
+  background: #fbfbfb;
+  border-color: rgba(0, 0, 0, 0.06);
+  border-bottom-color: rgba(0, 0, 0, 0.55);
+}
+
+/* 聚焦：只用一条 2px 的强调色底线，不加外发光（WinUI 的做法） */
+input[type="text"]:focus,
+.picker-btn:focus-visible {
+  outline: none;
+  border-color: rgba(0, 0, 0, 0.06);
+  border-bottom-color: var(--win-accent);
+  box-shadow: inset 0 -1px 0 0 var(--win-accent);
+}
+
+input::placeholder {
+  color: var(--win-text-mute);
+}
+
+.picker-btn[aria-expanded="true"] {
+  border-color: rgba(0, 0, 0, 0.06);
+  border-bottom-color: var(--win-accent);
+  box-shadow: inset 0 -1px 0 0 var(--win-accent);
+}
+
+.picker-chev {
+  color: var(--win-text-dim);
+}
+
+/* 下拉弹层：白底、细描边、投影（Windows 的浮出层） */
+.picker-list {
+  border-radius: 6px;
+  border: 1px solid var(--win-line);
+  background: #ffffff;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+}
+
+.picker-option {
+  border-radius: 4px;
+  color: var(--win-text);
+}
+
+.picker-option:hover,
+.picker-option.active {
+  background: #f5f5f5;
+  color: var(--win-text);
+}
+
+/* 当前值那一行：浅灰底（Windows 的下拉框就是这么标当前项的，不用蓝底） */
+.picker-list:not(:hover):not(:has(.picker-option.active))
+  .picker-option[aria-selected="true"] {
+  background: #f0f0f0;
+  color: var(--win-text);
+}
+
+.picker-option .tick {
+  color: var(--win-accent);
+}
+
+/* ---- 启动方式单选行 ---- */
+
+.mode {
+  border-radius: 4px;
+}
+
+.mode:hover {
+  background: #f5f5f5;
+}
+
+.mode input {
+  accent-color: var(--win-accent);
+}
+
+.mode b {
+  color: var(--win-text);
+}
+
+.mode small {
+  color: var(--win-text-dim);
+}
+
+.fields label {
+  color: var(--win-text-dim);
+}
+
+.subcard {
+  border: 1px solid var(--win-line);
+  border-radius: 6px;
+  background: var(--win-panel-2);
+}
+
+.subcard-title {
+  color: var(--win-text);
+  letter-spacing: 0;
+}
+
+/* ---- 键值行（桥接插件 / 关于） ---- */
+
+.kv {
+  border: 1px solid var(--win-line);
+  border-radius: 6px;
+}
+
+.kv-row {
+  border-top: 1px solid var(--win-line-soft);
+  color: var(--win-text);
+}
+
+.kv-key {
+  color: var(--win-text-dim);
+}
+
+.kv-value {
+  color: var(--win-text);
+}
+
+/* ---- 日志折叠块 ---- */
+
+.log-box {
+  border: 1px solid var(--win-line);
+  border-radius: 4px;
+  background: var(--win-panel-2);
+  color: var(--win-text-dim);
+}
+
+.log-box summary {
+  color: var(--win-text);
+}
+
+.log-box summary:hover {
+  color: var(--win-accent);
+}
+
+.log-box .chev {
+  color: var(--win-text-dim);
+}
+
+.log-box pre {
+  border: 1px solid var(--win-line);
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--win-text);
+  font-family: "Cascadia Mono", Consolas, "Cascadia Code", monospace;
+}
+
+/* ---- 提示、错误、行内代码 ---- */
+
+.hint {
+  color: var(--win-text-dim);
+}
+
+.hint code,
+.mode small code {
+  border-radius: 3px;
+  background: #f0f0f0;
+  color: var(--win-text);
+}
+
+.error {
+  border: 1px solid #f7d5d8;
+  border-radius: 4px;
+  background: var(--win-bad-bg);
+  color: var(--win-bad);
+}
+
+/* 徽章里感叹号的悬空气泡：Windows 的浅色提示框 */
+.info-dot::after {
+  border: 1px solid #8a8a8a;
+  border-radius: 4px;
+  background: #f9f9f9;
+  color: var(--win-text);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.16);
+}
+
+/* ---- 滚动指示条：浅色主题上的深色胶囊 ---- */
+
+.scroll-thumb {
+  background: rgba(0, 0, 0, 0.28);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: rgba(0, 0, 0, 0.45);
+  background-clip: content-box;
+}

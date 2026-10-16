@@ -1,6 +1,6 @@
 /* 界面候选预览台的共用底座（由 scripts/ui-candidates.mjs 起静态服务）。
    这里只放所有候选共用的东西：重置、四种配色主题、按钮 / 徽章 / 卡片 / 键值行 /
-   输入框 / 自绘下拉框 / 日志框等基础件，以及页面底部的方案切换条。
+   输入框 / 自绘下拉框 / 日志框等基础件（页面底部的方案切换条见 cand-bar.css）。
    每个候选独有的布局写在各自页面的 <style> 里——某个候选被否掉，删掉那一个文件即可。
 
    五个候选共用同一份假数据（运行中 + 桥接就绪 + npx 启动），这样横向比较的只有
@@ -626,54 +626,6 @@ code {
   overflow: auto;
 }
 
-/* ---- 页面底部的方案切换条 ---- */
-
-.cand-bar {
-  position: fixed;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
-  /* 比命令面板的遮罩（250）高：面板常驻开着时也得能切方案 */
-  z-index: 400;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: var(--panel-solid);
-  box-shadow: var(--shadow);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  font-size: 12.5px;
-}
-
-.cand-bar a {
-  padding: 5px 11px;
-  border-radius: var(--r-pill);
-  color: var(--fg-dim);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.cand-bar a:hover {
-  background: var(--panel-hi);
-  color: var(--fg);
-}
-
-.cand-bar a.cur {
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-
-/* 方案多了以后，切换条只留字母 + 悬停提示，不然一排放不下。 */
-.cand-bar a.ltr {
-  width: 28px;
-  padding: 5px 0;
-  text-align: center;
-  font-weight: 600;
-}
 
 /* ---- 系统原生风配色（候选 I）：Windows 11 深色设置的底色 ---- */
 body.t-wins {
