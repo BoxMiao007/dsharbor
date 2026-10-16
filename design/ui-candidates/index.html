@@ -5,7 +5,8 @@
     <title>DSHarbor 界面候选 · 挑选页</title>
     <link rel="stylesheet" href="./common.css" />
     <style>
-      /* 挑选页本身不是候选，只是五套方案的入口 + 各自要看什么。 */
+      /* 挑选页本身不是候选，只是九个方案的入口 + 各自要看什么。
+         分两批：第一批比布局与配色（A–E），第二批比「用什么控件操作」（F–I）。 */
       body {
         display: flex;
         flex-direction: column;
@@ -13,7 +14,7 @@
       }
 
       .wrap {
-        width: min(1040px, 94vw);
+        width: min(1080px, 94vw);
         margin: 0 auto;
         padding: 6px 0 40px;
       }
@@ -26,7 +27,25 @@
         margin: 6px 0 18px;
         color: var(--fg-dim);
         font-size: 13.5px;
-        max-width: 78ch;
+        max-width: 82ch;
+      }
+
+      .batch {
+        margin: 26px 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .batch h2 {
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      .batch .rule {
+        flex: 1;
+        height: 1px;
+        background: var(--line);
       }
 
       .grid {
@@ -74,7 +93,7 @@
         font-size: 14px;
       }
 
-      .item h2 {
+      .item h3 {
         font-size: 15px;
         font-weight: 600;
       }
@@ -102,7 +121,6 @@
         line-height: 1.4;
         white-space: pre;
         overflow: hidden;
-        min-height: 96px;
       }
 
       .meta {
@@ -112,8 +130,22 @@
         margin-top: auto;
       }
 
+      .ctl {
+        font-size: 12.5px;
+        color: var(--fg-dim);
+        padding: 8px 10px;
+        border-radius: 9px;
+        background: var(--panel-2);
+        border: 1px solid var(--line-soft);
+      }
+
+      .ctl b {
+        color: var(--fg);
+        font-weight: 600;
+      }
+
       .tips {
-        margin-top: 22px;
+        margin-top: 26px;
         padding: 16px 18px;
         border-radius: 14px;
         background: var(--panel);
@@ -145,18 +177,86 @@
     </div>
 
     <div class="wrap">
-      <h1>界面候选（5 套）</h1>
+      <h1>界面候选（9 套，两批）</h1>
       <p class="lead">
-        五套都是可点的静态稿：假数据完全一样（运行中 · 桥接就绪 · npx 启动），所以横向比的只有布局与风格本身。点开任意一套，窗口大小按卡片上标的调一下再看，最贴近正式窗口时的样子。
+        九套都是可点的静态稿，假数据完全一样（运行中 · 桥接就绪 · npx 启动），横向比的只有布局、配色和操作方式。点开任意一套，窗口大小按卡片上标的调一下再看，最贴近正式窗口时的样子。
+      </p>
+      <p class="hint" style="margin: -6px 0 4px">
+        基线对照：<a href="/dist/mock.html" target="_blank" rel="noreferrer" style="color: var(--accent)">当前线上界面</a>（正式界面 + 假数据）。打不开就先在仓库里跑一次 <code>node scripts/mock-preview.mjs --no-serve</code>。
       </p>
 
-      <p class="hint" style="margin: -6px 0 16px">
-        先看基线：<a href="/dist/mock.html" target="_blank" rel="noreferrer" style="color: var(--accent)">当前线上界面</a>（正式界面 + 假数据，用于对照）。若打不开，先在仓库里跑一次 <code>node scripts/mock-preview.mjs --no-serve</code>。
-      </p>
+      <div class="batch">
+        <h2>第二批 · 换控件</h2>
+        <span class="hint">同样的事，换一种操作方式：不用下拉、不点弹层、不只靠鼠标</span>
+        <span class="rule"></span>
+      </div>
+
+      <div class="grid">
+        <a class="item" href="./f-segmented.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">F</span><span><h3>分段与开关</h3><span class="sub">所有选项摊平，点一下就到</span></span></div>
+          <div class="ctl">控件：<b>分段控件</b>替代下拉框 · <b>开关</b>替代勾选 · <b>滑块</b>选时间档 · <b>步进器</b>调端口 · 常用参数做成 <b>chip</b> 一点就加</div>
+          <pre class="sketch">启动方式  [npx][系统][路径][WSL]  ← 一排，全看得见
+附加参数  [         ] (--no-open)(--port 3081)
+端口      (跟随配置)(自定义)  [− 3080 +]
+关闭窗口后(立即释放)(延迟释放)
+          5s 15s 30s 1m  ●——</pre>
+          <p>全页面没有一个弹层；想改什么，选项就在眼前，点一下就切过去。信息密度比 A–E 都高，控件也最多。</p>
+          <div class="meta"><span class="badge">900 × 760</span><span class="badge ok">最好点</span></div>
+        </a>
+
+        <a class="item" href="./g-cards.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">G</span><span><h3>点选卡</h3><span class="sub">一张卡一个选项，代价写在卡上</span></span></div>
+          <div class="ctl">控件：<b>大卡片</b>替代单选框 · 参数在<b>卡内就地展开</b> · <b>开关</b>、<b>步进器</b>点缀 · 沿用现在的雾光蓝</div>
+          <pre class="sketch">┌───────────────┬───────────────┐
+│ ☁ 官方 npx 命令✓│ ⌘ 系统全局命令  │
+│ 首次较慢        │ 需先 npm i -g   │
+├───────────────┼───────────────┤
+│ 📄 指定程序路径 │ 🐧 通过 WSL 启动│
+│ [D:\tools\dsh.cmd]              │
+└───────────────┴───────────────┘</pre>
+          <p>选哪个不再是名字，而是一句代价说明；适合第一次用的人，但比较占地方，选项多起来会变长。</p>
+          <div class="meta"><span class="badge">980 × 800</span><span class="badge info">最好懂</span></div>
+        </a>
+
+        <a class="item" href="./h-palette.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">H</span><span><h3>命令面板</h3><span class="sub">主界面只留状态，操作全在面板里</span></span></div>
+          <div class="ctl">控件：<b>输入框 + 键盘列表</b>替代按钮堆 · ↑↓ 选、Enter 执行 · <b>Ctrl+K</b> 唤起 · 快捷 <b>chip</b> 兜底 · 执行后 <b>轻提示</b></div>
+          <pre class="sketch">DSH 运行中 · 端口 3099   [打开][浏览器]
+按 Ctrl+K 或 [打开命令面板]
+(复制链接)(停止 DSH)(重启 DSH)
+┌──────────────────────────┐
+│ › 停_                 Esc │
+│  停止 DSH      结束当前进程│
+│  重启 DSH      同样参数起  │
+└──────────────────────────┘</pre>
+          <p>界面最干净，动作全靠搜；熟手最快，但新手得先知道有面板（所以还留了几个常用 chip）。</p>
+          <div class="meta"><span class="badge">880 × 720</span><span class="badge warn">要记快捷键</span></div>
+        </a>
+
+        <a class="item" href="./i-native.html" target="_blank" rel="noreferrer">
+          <div class="top"><span class="letter">I</span><span><h3>系统原生</h3><span class="sub">不用自绘控件，贴着 Windows 来</span></span></div>
+          <div class="ctl">控件：Windows 的 <b>ComboBox</b> / <b>RadioButton</b> / <b>ToggleSwitch</b> / <b>NumberBox</b> / <b>Expander</b>，形状与交互照系统设置</div>
+          <pre class="sketch">DSHarbor 0.3.5      [重启][停止]
+▸ 运行方式   官方 npx 命令（首次较慢）▾
+▸ 端口       [ 3080 ] ▲▼  跟随配置
+▾ 启动方式
+  ○ 官方 npx 命令
+  ● 系统全局命令   启动最快
+▸ 窗口与托盘   ▸ 桥接插件   ▸ 关于</pre>
+          <p>一眼就知道怎么点，零学习成本；代价是没什么个性，和其他 Windows 小工具长得一样。</p>
+          <div class="meta"><span class="badge">960 × 780</span><span class="badge info">最省心</span></div>
+        </a>
+      </div>
+
+      <div class="batch">
+        <h2>第一批 · 换布局与配色</h2>
+        <span class="hint">控件都还是普通的下拉框和按钮，比的是信息怎么摆、底色什么调</span>
+        <span class="rule"></span>
+      </div>
 
       <div class="grid">
         <a class="item" href="./a-workbench.html" target="_blank" rel="noreferrer">
-          <div class="top"><span class="letter">A</span><span><h2>工作台</h2><span class="sub">两栏卡片 · 沿用现在的雾光蓝</span></span></div>
+          <div class="top"><span class="letter">A</span><span><h3>工作台</h3><span class="sub">两栏卡片 · 沿用现在的雾光蓝</span></span></div>
           <pre class="sketch">│ logo   DSH Web 控制台  …  [打开] │
 ├────────────────┬─────────────────┤
 │ 会话状态        │ 控制             │
@@ -168,20 +268,19 @@
         </a>
 
         <a class="item" href="./b-sidebar.html" target="_blank" rel="noreferrer">
-          <div class="top"><span class="letter">B</span><span><h2>侧栏</h2><span class="sub">左侧导航 · 右侧内容</span></span></div>
+          <div class="top"><span class="letter">B</span><span><h3>侧栏</h3><span class="sub">左侧导航 · 右侧内容</span></span></div>
           <pre class="sketch">│ logo              │ 会话             │
-│ ▸ 会话  ◂        │ ─────────────── │
-│   启动方式        │ 状态   运行中     │
-│   桥接插件        │ 端口   3099      │
-│   日志            │ 登录链接 已就绪    │
-│   窗口与托盘      │ [应用内打开]      │
+│ ▸ 会话  ◂        │ 状态   运行中     │
+│   启动方式        │ 端口   3099      │
+│   桥接插件        │ 登录链接 已就绪    │
+│   日志            │ [应用内打开]      │
 │   关于            │ □ 关闭后释放内存  │</pre>
           <p>内容多起来也不会变长：插件、设置、日志各占一页，日常用得最多的一屏只放状态与开关。</p>
           <div class="meta"><span class="badge">1080 × 720</span><span class="badge info">扩展性好</span></div>
         </a>
 
         <a class="item" href="./c-dashboard.html" target="_blank" rel="noreferrer">
-          <div class="top"><span class="letter">C</span><span><h2>仪表盘</h2><span class="sub">三列磁贴 · 中性深空蓝</span></span></div>
+          <div class="top"><span class="letter">C</span><span><h3>仪表盘</h3><span class="sub">三列磁贴 · 中性深空蓝</span></span></div>
           <pre class="sketch">│ 会话 控制 常用设置                │
 │ [会话]  [停止]   [下拉]           │
 │ [启动方式 ---- 2列]  [桥接插件]    │
@@ -192,7 +291,7 @@
         </a>
 
         <a class="item" href="./d-light.html" target="_blank" rel="noreferrer">
-          <div class="top"><span class="letter">D</span><span><h2>浅色设置风</h2><span class="sub">白底 · 可展开分组</span></span></div>
+          <div class="top"><span class="letter">D</span><span><h3>浅色设置风</h3><span class="sub">白底 · 可展开分组</span></span></div>
           <pre class="sketch">│ logo  DSHarbor 0.3.5  …  [停止]  │
 │ ▸ DSH 会话          运行中·3099  › │
 │ ▸ 启动方式          官方 npx 命令 › │
@@ -204,7 +303,7 @@
         </a>
 
         <a class="item" href="./e-terminal.html" target="_blank" rel="noreferrer">
-          <div class="top"><span class="letter">E</span><span><h2>终端风</h2><span class="sub">黑底等宽 · 密度优先</span></span></div>
+          <div class="top"><span class="letter">E</span><span><h3>终端风</h3><span class="sub">黑底等宽 · 密度优先</span></span></div>
           <pre class="sketch">$ dsharbor 0.3.5
 ── 会话 ──────────────────
 状态      运行中 (20704) 3099
@@ -218,18 +317,16 @@
       </div>
 
       <section class="tips">
-        <h2>挑的时候可以看这几点</h2>
+        <h2>也可以混着来</h2>
         <ul>
-          <li><b>窗口大小</b>：你平时会把它开多大？A / C 需要宽一点，D / E 窄一点也好看。</li>
-          <li><b>第一眼</b>：打开界面最想知道的是「DSH 跑起来没有、链接能不能点」，哪一套更快回答这个问题。</li>
-          <li><b>日常动作</b>：复制登录链接、打开界面、停 / 重启、装桥接插件——哪一套里这些最好找。</li>
-          <li><b>深色还是浅色</b>：A 沿用现在的雾光蓝，C 更中性，D 是浅色，E 是纯黑。</li>
-          <li><b>要不要左侧导航</b>：以后再加设置项时，B 和 D 最不容易变乱。</li>
+          <li>比方说：H 的极简主界面 + F 的分段控件改设置 + I 的系统下拉框，选一个方案为主体，再从别处搬两三个控件过来。</li>
+          <li>看的时候重点感受「改一个选项要几步」：F / G 是一步（点一下就完），H 是两步（唤起面板 + 选中），I 是三步（点下拉 + 看选项 + 再点一下）。</li>
+          <li>哪一套的「DSH 有没有跑起来、链接能不能点」最容易被一眼看到——这是这个界面最主要的用途。</li>
         </ul>
       </section>
 
       <p class="hint" style="margin-top: 14px">
-        这五套都是静态稿，只用来比较布局和风格；选定之后再按它把真实界面重做一遍（真实交互、真实数据都在正式实现里做）。
+        这九套都是静态稿，只用来比较布局、配色和操作方式；选定之后再按它把真实界面重做一遍（真实交互、真实数据都在正式实现里做）。
       </p>
     </div>
   </body>

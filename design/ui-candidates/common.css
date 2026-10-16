@@ -633,7 +633,8 @@ code {
   left: 50%;
   bottom: 14px;
   transform: translateX(-50%);
-  z-index: 200;
+  /* 比命令面板的遮罩（250）高：面板常驻开着时也得能切方案 */
+  z-index: 400;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -664,4 +665,485 @@ code {
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 600;
+}
+
+/* 方案多了以后，切换条只留字母 + 悬停提示，不然一排放不下。 */
+.cand-bar a.ltr {
+  width: 28px;
+  padding: 5px 0;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* ---- 系统原生风配色（候选 I）：Windows 11 深色设置的底色 ---- */
+body.t-wins {
+  --fg: #f3f3f3;
+  --fg-dim: #c8c8c8;
+  --fg-mute: #9b9b9b;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-soft: rgba(255, 255, 255, 0.055);
+  --panel: #2b2b2b;
+  --panel-2: #323232;
+  --panel-hi: #3a3a3a;
+  --panel-solid: #2b2b2b;
+  --input-bg: #1f1f1f;
+  --log-bg: #1b1b1b;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --accent: #4cc2ff;
+  --on-accent: #001b28;
+  --ok: #6ccb5f;
+  --warn: #fce100;
+  --bad: #ff99a4;
+  color: var(--fg);
+  background: #202020;
+}
+
+/* ==========================================================================
+   第二批控件（候选 F/G/H/I）：换的不是配色和排版，而是「怎么操作」。
+   分段控件替代下拉、开关替代勾选、点选卡替代单选框、步进器替代输框、
+   命令面板替代按钮堆——每个控件都是原生的 input，键盤与瞄不准都能用。
+   ========================================================================== */
+
+/* 分段控件：一排等宽选项，选中一块高亮；用 radio 实现，没有弹层。 */
+.seg {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel-2);
+}
+
+.seg label {
+  position: relative;
+}
+
+.seg input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.seg span {
+  display: block;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.seg label:hover span {
+  background: var(--panel-hi);
+  color: var(--fg);
+}
+
+.seg label:has(input:checked) span {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.seg label:has(input:focus-visible) span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.seg label:has(input:disabled) span {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 拉满整行、每项等宽（适合选项多的场合） */
+.seg.wide {
+  display: flex;
+}
+
+.seg.wide label {
+  flex: 1;
+}
+
+.seg.wide span {
+  text-align: center;
+}
+
+/* 开关：比勾选框更直白，点一下就是开 / 关。 */
+.tog {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--fg-dim);
+}
+
+.tog input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.tog .track {
+  width: 42px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-hi);
+  transition: background 0.15s;
+}
+
+.tog .knob {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  transition: margin-left 0.15s, background 0.15s;
+}
+
+.tog input:checked + .track {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.tog input:checked + .track .knob {
+  margin-left: 18px;
+  background: #fff;
+}
+
+.tog:has(input:focus-visible) .track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 滑块：选「多久之后释放内存」这类有量级的档位，比下拉快。 */
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 220px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--panel-hi);
+  outline: none;
+}
+
+.slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--panel-solid);
+  cursor: pointer;
+}
+
+.slider input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--panel-solid);
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.ticks {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
+/* 步进器：端口这类「小范围整数」用 − / + 微调，不用键盘敲。 */
+.step {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctrl);
+  background: var(--input-bg);
+  overflow: hidden;
+}
+
+.step button {
+  width: 32px;
+  height: 34px;
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.step button:hover {
+  background: var(--panel-hi);
+  color: var(--fg);
+}
+
+.step input {
+  width: 76px;
+  height: 34px;
+  border: 0;
+  border-left: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  background: none;
+  color: var(--fg);
+  text-align: center;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 13px;
+}
+
+/* 点选卡：一张卡一个选项，点整张卡就选上；参数就地展开在同一张卡里。 */
+.pick {
+  position: relative;
+  display: block;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.pick:hover {
+  background: var(--panel-hi);
+}
+
+.pick input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pick:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.pick:has(input:checked)::after {
+  content: "✓";
+  position: absolute;
+  top: 10px;
+  right: 13px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.pc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pc-ico {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--panel-hi);
+  font-size: 14px;
+}
+
+.pick b {
+  font-size: 13.5px;
+}
+
+.pick small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+
+/* 命令面板：所有动作收进一个输入框 + 可键盘导航的列表。 */
+.palette {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.p-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.p-search input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14.5px;
+  outline: none;
+}
+
+.p-search .pfx {
+  color: var(--accent);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.p-list {
+  max-height: 262px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.p-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: var(--fg-dim);
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.p-item[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--fg);
+}
+
+.p-item kbd {
+  margin-left: auto;
+}
+
+.p-item .pi-sub {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+
+.p-empty {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-mute);
+}
+
+kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg-mute);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+.chip {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-2);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--panel-hi);
+  color: var(--fg);
+}
+
+/* 覆盖式面板的遮罩：点空白处关闭。 */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 84px 16px 16px;
+  background: rgba(4, 8, 16, 0.5);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.scrim > .palette {
+  width: min(560px, 94vw);
+}
+
+/* 轻提示：执行完给一个交代，停 1.6 秒自己走。 */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 76px;
+  z-index: 300;
+  padding: 9px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+  color: var(--fg);
+  font-size: 13px;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 0.15s, transform 0.15s;
+  pointer-events: none;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(-6px);
+}
+
+/* 设置列表行（候选 F）：左边标签，右边控件，中间不断线。 */
+.setrow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.setrow:first-child {
+  border-top: 0;
+}
+
+.setrow > .k {
+  flex: 0 0 132px;
+  font-size: 13.5px;
+  color: var(--fg-dim);
+}
+
+.setrow > .v {
+  flex: 1;
+  min-width: 0;
+}
+
+.setrow > .v .hint {
+  margin-top: 6px;
+}
+
+.setrow.dim {
+  opacity: 0.5;
 }

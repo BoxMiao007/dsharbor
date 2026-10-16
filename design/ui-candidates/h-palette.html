@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>候选 H｜命令面板 · DSHarbor 界面候选</title>
+    <link rel="stylesheet" href="./common.css" />
+    <style>
+      /* 候选 H：换掉「一堆按钮和表单」这个做法。
+         主界面只留状态和两个最常用的动作，其余全部收进命令面板：
+         输入两三个字就筛出要执行的动作，↑↓ 选、Enter 执行，鼠标也照点。
+         适合窗口：880 × 720（最小宽度建议 820）。 */
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      .wrap {
+        width: min(820px, 94vw);
+        margin: 0 auto;
+        padding: 2px 0 78px;
+      }
+
+      .hero {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 6px;
+      }
+
+      .hero img {
+        width: 44px;
+        height: 44px;
+      }
+
+      .hero .badges {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .hero .big {
+        font-size: 20px;
+        font-weight: 600;
+      }
+
+      .hero .big em {
+        font-style: normal;
+        color: var(--ok);
+      }
+
+      .cmd-hint {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 14px 0 10px;
+        padding: 11px 14px;
+        border: 1px dashed var(--line);
+        border-radius: 12px;
+        font-size: 13px;
+        color: var(--fg-dim);
+      }
+
+      .quick {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin-bottom: 18px;
+      }
+
+      .status {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 26px;
+        padding: 14px 16px;
+        border: 1px solid var(--line-soft);
+        border-radius: 12px;
+        background: var(--panel-2);
+      }
+
+      .status .kv-row {
+        min-height: 32px;
+        font-size: 13px;
+      }
+
+      .status .kv-key {
+        flex: 0 0 84px;
+      }
+
+      .note {
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--fg-mute);
+      }
+    </style>
+  </head>
+  <body class="t-mist">
+    <div class="winbar">
+      <span class="winbar-brand"><img src="../../src/assets/logo.png" alt="" />DSHarbor</span>
+      <div class="winbar-btns"><span>—</span><span>▢</span><span class="close">✕</span></div>
+    </div>
+
+    <p class="cand-tag">候选 H｜命令面板 · 建议 880 × 720</p>
+
+    <div class="wrap">
+      <header class="hero">
+        <img src="../../src/assets/logo.png" alt="" />
+        <div>
+          <div class="big">DSH <em>运行中</em> · 端口 3099</div>
+          <div class="badges">
+            <span class="badge ok">桥接就绪</span>
+            <span class="badge info">✦ DSH 0.2.0-rc.2</span>
+            <span class="badge">npx 启动</span>
+          </div>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn" data-act="浏览器打开">浏览器打开</button>
+        <button class="btn primary" data-act="应用内打开">应用内打开</button>
+      </header>
+
+      <div class="cmd-hint">
+        <span>所有操作都在命令面板里：按</span>
+        <kbd>Ctrl</kbd><kbd>K</kbd>
+        <span>或</span>
+        <button class="btn sm" data-palette-open="#palette">打开命令面板</button>
+        <span class="spacer"></span>
+        <span class="hint">面板已打开（示意）：点面板外的空白处关闭。</span>
+      </div>
+
+      <div class="quick">
+        <button class="chip" data-act="复制登录链接">复制登录链接</button>
+        <button class="chip" data-act="停止 DSH">停止 DSH</button>
+        <button class="chip" data-act="重启 DSH">重启 DSH</button>
+        <button class="chip" data-act="安装桥接插件">安装桥接插件</button>
+        <button class="chip" data-act="打开日志目录">打开日志目录</button>
+      </div>
+
+      <div class="status">
+        <div class="kv-row"><span class="kv-key">进程号</span><span class="kv-val mono">20704</span></div>
+        <div class="kv-row"><span class="kv-key">端口</span><span class="kv-val mono">3099</span></div>
+        <div class="kv-row"><span class="kv-key">启动方式</span><span class="kv-val">官方 npx 命令</span></div>
+        <div class="kv-row"><span class="kv-key">登录通道</span><span class="kv-val">桥接插件（可靠）</span></div>
+        <div class="kv-row"><span class="kv-key">配置目录</span><span class="kv-val mono">AppData\Roaming\DSHarbor</span></div>
+        <div class="kv-row"><span class="kv-key">日志目录</span><span class="kv-val mono">C:\Users\me\.dsh\logs</span></div>
+      </div>
+
+      <p class="note">
+        界面里没有设置表单：启动方式、端口、轻量模式、插件这些改起来不频繁的东西，也在面板里以「设置：xxx」的形式出现，选中后展开对应的一项。
+      </p>
+    </div>
+
+    <!-- 命令面板（覆盖层）：默认打开示意，点空白处关闭，Ctrl+K 再打开 -->
+    <div class="scrim" id="palette">
+      <div class="palette">
+        <div class="p-search">
+          <span class="pfx">›</span>
+          <input placeholder="输入动作名，例如“停止”“链接”“插件”…" autocomplete="off" />
+          <kbd>Esc</kbd>
+        </div>
+        <div class="p-list">
+          <div class="p-item" data-keys="打开 界面 open" data-cmd="应用内打开">应用内打开<span class="pi-sub">在壳的窗口里打开 DSH</span></div>
+          <div class="p-item" data-keys="浏览器 browser 打开" data-cmd="浏览器打开">浏览器打开<span class="pi-sub">用默认浏览器打开带 token 的登录链接</span></div>
+          <div class="p-item" data-keys="复制 链接 token copy" data-cmd="复制登录链接">复制登录链接<span class="pi-sub">复制 http://127.0.0.1:3099/?token=…</span></div>
+          <div class="p-item" data-keys="停止 stop 关闭" data-cmd="停止 DSH">停止 DSH<span class="pi-sub">结束当前 DSH 进程（界面保持）</span></div>
+          <div class="p-item" data-keys="重启 restart" data-cmd="重启 DSH">重启 DSH<span class="pi-sub">停掉再用同样的参数启动</span></div>
+          <div class="p-item" data-keys="安装 插件 plugin bridge" data-cmd="安装桥接插件">桥接插件：安装 / 卸载<span class="pi-sub">当前已安装 · Windows 环境</span></div>
+          <div class="p-item" data-keys="设置 启动方式 端口 轻量 mode port lite" data-cmd="打开启动设置">设置：启动方式 / 端口<span class="pi-sub">当前：官方 npx 命令 · 端口跟随配置</span></div>
+          <div class="p-item" data-keys="设置 托盘 轻量模式 lite tray" data-cmd="打开窗口与托盘设置">设置：窗口与托盘<span class="pi-sub">当前：托盘单击启动界面 · 关闭立即释放</span></div>
+          <div class="p-item" data-keys="日志 log 诊断 输出" data-cmd="打开日志目录">打开日志目录<span class="pi-sub">C:\Users\me\.dsh\logs</span></div>
+          <div class="p-item" data-keys="配置 config 目录" data-cmd="打开配置目录">打开配置目录<span class="pi-sub">AppData\Roaming\DSHarbor</span></div>
+          <div class="p-empty hidden">没有匹配的动作</div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="cand-bar">
+      <a href="./index.html">挑选页</a>
+      <a href="./a-workbench.html" class="ltr" title="A 工作台">A</a>
+      <a href="./b-sidebar.html" class="ltr" title="B 侧栏">B</a>
+      <a href="./c-dashboard.html" class="ltr" title="C 仪表盘">C</a>
+      <a href="./d-light.html" class="ltr" title="D 浅色设置风">D</a>
+      <a href="./e-terminal.html" class="ltr" title="E 终端风">E</a>
+      <a href="./f-segmented.html" class="ltr" title="F 分段与开关">F</a>
+      <a href="./g-cards.html" class="ltr" title="G 点选卡">G</a>
+      <a href="./h-palette.html" class="ltr cur" title="H 命令面板">H</a>
+      <a href="./i-native.html" class="ltr" title="I 系统原生">I</a>
+    </nav>
+
+    <script src="./common.js"></script>
+  </body>
+</html>

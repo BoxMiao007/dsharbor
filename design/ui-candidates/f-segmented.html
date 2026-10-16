@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>候选 F｜分段与开关 · DSHarbor 界面候选</title>
+    <link rel="stylesheet" href="./common.css" />
+    <style>
+      /* 候选 F：换控件，不换内容。
+         所有选择都做成「看得见、点一下就到」的控件：分段控件、开关、滑块、步进器——
+         全页面没有一个弹层，也没有需要先点开才知道有哪些选项的下拉框。
+         适合窗口：900 × 760（最小宽度建议 820）。 */
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      .wrap {
+        width: min(820px, 94vw);
+        margin: 0 auto;
+        padding: 2px 0 78px;
+      }
+
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .head .badges {
+        display: flex;
+        gap: 8px;
+        margin-top: 7px;
+      }
+
+      .sub {
+        font-size: 12px;
+        color: var(--fg-mute);
+        margin-top: 3px;
+      }
+
+      .seg-note {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--fg-mute);
+      }
+    </style>
+  </head>
+  <body class="t-deep">
+    <div class="winbar">
+      <span class="winbar-brand"><img src="../../src/assets/logo.png" alt="" />DSHarbor</span>
+      <div class="winbar-btns"><span>—</span><span>▢</span><span class="close">✕</span></div>
+    </div>
+
+    <p class="cand-tag">候选 F｜分段与开关 · 建议 900 × 760</p>
+
+    <div class="wrap">
+      <header class="head">
+        <div>
+          <h1>DSH Web 控制台</h1>
+          <div class="badges">
+            <span class="badge ok">运行中 · 端口 3099</span>
+            <span class="badge ok">桥接就绪</span>
+            <span class="badge info">✦ DSH 0.2.0-rc.2</span>
+          </div>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn" data-act="浏览器打开">浏览器打开</button>
+        <button class="btn primary" data-act="应用内打开">应用内打开</button>
+      </header>
+
+      <section class="card">
+        <div class="setrow">
+          <span class="k">启动方式</span>
+          <div class="v">
+            <div class="seg wide" style="max-width: 520px">
+              <label><input type="radio" name="mode" value="npx" checked /><span>官方 npx 命令</span></label>
+              <label><input type="radio" name="mode" value="system" /><span>系统全局</span></label>
+              <label><input type="radio" name="mode" value="binary" /><span>程序路径</span></label>
+              <label><input type="radio" name="mode" value="wsl" /><span>WSL</span></label>
+            </div>
+            <p class="seg-note" data-reveal="mode=npx">未全局安装 DSH 时用；首次启动会自动下载（较慢）。执行 <code>npx --yes @deepseek-ai/dsh web --no-open</code></p>
+            <p class="seg-note hidden" data-reveal="mode=system">已执行过 <code>npm install -g @deepseek-ai/dsh</code>，直接调系统里的 <code>dsh</code>。</p>
+            <p class="seg-note hidden" data-reveal="mode=binary">最可靠：直接启动 dsh.exe / dsh.cmd 的完整路径，不走 PATH。</p>
+            <p class="seg-note hidden" data-reveal="mode=wsl">Windows 壳启动 WSL 发行版里的 DSH，需要该发行版里已装好 DSH。</p>
+            <div class="hidden" data-reveal="mode=binary" style="margin-top: 10px">
+              <input class="input mono" value="D:\tools\dsh.cmd" />
+            </div>
+            <div class="hidden" data-reveal="mode=wsl" style="margin-top: 10px">
+              <div class="row">
+                <div class="seg">
+                  <label><input type="radio" name="wsl" value="ubuntu" checked /><span>Ubuntu</span></label>
+                  <label><input type="radio" name="wsl" value="debian" /><span>Debian</span></label>
+                </div>
+                <input class="input mono" style="flex: 1" value="npx --yes @deepseek-ai/dsh web" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <span class="k">附加参数</span>
+          <div class="v">
+            <input class="input" id="extra-args" placeholder="留空即不带附加参数" value="" />
+            <div class="row" style="margin-top: 8px; gap: 6px">
+              <span class="hint">常用：</span>
+              <button class="chip" data-append="#extra-args" data-value="--no-open">--no-open</button>
+              <button class="chip" data-append="#extra-args" data-value="--port 3081">--port 3081</button>
+              <button class="chip" data-append="#extra-args" data-value="--verbose">--verbose</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <span class="k">端口</span>
+          <div class="v">
+            <div class="seg">
+              <label><input type="radio" name="portmode" value="follow" checked /><span>跟随 DSH 配置</span></label>
+              <label><input type="radio" name="portmode" value="custom" /><span>自定义</span></label>
+            </div>
+            <div class="hidden row" data-reveal="portmode=custom" style="margin-top: 10px">
+              <div class="step">
+                <button type="button" data-delta="-1">−</button>
+                <input value="3080" min="1024" max="65535" inputmode="numeric" />
+                <button type="button" data-delta="1">+</button>
+              </div>
+              <span class="hint">1024 – 65535</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <span class="k">托盘单击</span>
+          <div class="v">
+            <div class="seg">
+              <label><input type="radio" name="tray" value="launch" checked /><span>启动界面</span></label>
+              <label><input type="radio" name="tray" value="app" /><span>应用内窗口</span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <span class="k">关闭窗口后</span>
+          <div class="v">
+            <div class="seg">
+              <label><input type="radio" name="lite" value="now" checked /><span>立即释放内存</span></label>
+              <label><input type="radio" name="lite" value="delay" /><span>延迟释放</span></label>
+            </div>
+            <div class="hidden" data-reveal="lite=delay" style="margin-top: 12px">
+              <div class="slider">
+                <input type="range" min="0" max="4" step="1" value="1" data-out="#lite-out" data-labels="立即释放,5 秒,15 秒,30 秒,1 分钟" />
+                <b id="lite-out">5 秒</b>
+              </div>
+              <div class="ticks" style="padding-left: 0">
+                <span>5 秒</span><span>15 秒</span><span>30 秒</span><span>1 分钟</span>
+              </div>
+              <p class="hint" style="margin-top: 6px">延迟期间从托盘回来是秒开；到点后释放界面内存，DSH 与托盘继续跑。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <span class="k">桥接插件</span>
+          <div class="v">
+            <div class="row">
+              <span class="badge ok">已安装</span>
+              <span class="hint">目标环境 Windows · 最近备份 backup-1760500000（共 2 份）</span>
+            </div>
+            <div class="row" style="margin-top: 10px">
+              <button class="btn sm" disabled>安装</button>
+              <button class="btn sm" data-act="卸载桥接插件">卸载</button>
+              <button class="btn sm" data-act="恢复最近备份">恢复最近备份</button>
+              <button class="btn sm" data-act="打开备份目录">打开备份目录</button>
+            </div>
+            <div class="row" style="margin-top: 12px">
+              <label class="tog">
+                <input type="checkbox" checked /><span class="track"><span class="knob"></span></span>
+                <span>DSH 停止时自动检查插件状态</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <span class="k">输出</span>
+          <div class="v">
+            <div class="seg">
+              <label><input type="radio" name="logview" value="recent" checked /><span>最近输出</span></label>
+              <label><input type="radio" name="logview" value="ops" /><span>操作输出</span></label>
+              <label><input type="radio" name="logview" value="all" /><span>全部</span></label>
+            </div>
+            <div style="margin-top: 10px">
+              <div data-reveal="logview=recent">
+                <pre class="log" style="height: 120px">[12:04:11] 启动：npx --yes @deepseek-ai/dsh web --no-open --port 3099
+[12:04:12] dsh web: http://127.0.0.1:3099/?token=… (LAN: http://192.168.1.9:3099/?token=…)
+[12:04:13] 桥接通道就绪：GET /dsharbor-bridge/url 200
+[12:04:14] webserver 已监听 127.0.0.1:3099</pre>
+              </div>
+              <div data-reveal="logview=ops" class="hidden">
+                <pre class="log" style="height: 120px">[12:05:02] $ dsh plugin add file:dsharbor-bridge-0.3.5.tgz
+[12:05:09] 已备份 4 个文件到 backup-1760500000
+[12:05:11] 完成：桥接插件已安装</pre>
+              </div>
+              <div data-reveal="logview=all" class="hidden">
+                <pre class="log" style="height: 120px">[12:04:11] 启动：npx --yes @deepseek-ai/dsh web --no-open --port 3099
+[12:04:13] 桥接通道就绪：GET /dsharbor-bridge/url 200
+[12:05:02] $ dsh plugin add file:dsharbor-bridge-0.3.5.tgz
+[12:05:11] 完成：桥接插件已安装</pre>
+              </div>
+            </div>
+            <div class="row" style="margin-top: 10px">
+              <button class="btn sm" data-act="复制日志">复制</button>
+              <button class="btn sm" data-act="打开日志目录">打开日志目录</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top: 14px">
+        <details>
+          <summary style="cursor: pointer; font-size: 13.5px; color: var(--fg-dim)">关于（版本、目录、链接）</summary>
+          <div style="margin-top: 10px">
+            <div class="kv-row"><span class="kv-key">壳版本</span><span class="kv-val">0.3.5 · MIT</span></div>
+            <div class="kv-row"><span class="kv-key">DSH 版本</span><span class="kv-val">0.2.0-rc.2</span></div>
+            <div class="kv-row"><span class="kv-key">配置目录</span><span class="kv-val mono">C:\Users\me\AppData\Roaming\DSHarbor</span><button class="btn sm" data-act="打开配置目录">打开</button></div>
+            <div class="kv-row"><span class="kv-key">日志目录</span><span class="kv-val mono">C:\Users\me\.dsh\logs</span><button class="btn sm" data-act="打开日志目录">打开</button></div>
+            <div class="kv-row"><span class="kv-key">项目仓库</span><span class="kv-val mono">github.com/BoxMiao007/dsharbor</span><button class="btn sm" data-act="打开仓库">打开</button></div>
+          </div>
+        </details>
+      </section>
+    </div>
+
+    <nav class="cand-bar">
+      <a href="./index.html">挑选页</a>
+      <a href="./a-workbench.html" class="ltr" title="A 工作台">A</a>
+      <a href="./b-sidebar.html" class="ltr" title="B 侧栏">B</a>
+      <a href="./c-dashboard.html" class="ltr" title="C 仪表盘">C</a>
+      <a href="./d-light.html" class="ltr" title="D 浅色设置风">D</a>
+      <a href="./e-terminal.html" class="ltr" title="E 终端风">E</a>
+      <a href="./f-segmented.html" class="ltr cur" title="F 分段与开关">F</a>
+      <a href="./g-cards.html" class="ltr" title="G 点选卡">G</a>
+      <a href="./h-palette.html" class="ltr" title="H 命令面板">H</a>
+      <a href="./i-native.html" class="ltr" title="I 系统原生">I</a>
+    </nav>
+
+    <script src="./common.js"></script>
+  </body>
+</html>
