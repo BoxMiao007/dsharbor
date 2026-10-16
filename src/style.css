@@ -241,11 +241,10 @@ body::before {
   }
 }
 
-/* ---- 感叹号圆圈（ⓘ）+ 悬停气泡 ----
-   原来只出现在徽章里，现在 <label> 与 .setting-label 的文字后面也会有（13 / 13.5px 字号）。
-   尺寸 14px 与 line-height: 1 保持不变；纵向不用补 vertical-align: 行内 flex 的基线取第一个
-   flex 项（那个「!」）的基线，圆顶落在基线上方约 9px、圆底在下方约 5px，中文墨迹大致是
-   上方约 10px / 下方约 2.5px，两者相差在 2px 以内，看上去就是贴在文字右边。 */
+/* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
+   出现在徽章里，以及 <label> / .setting-label / .theme-field-label 的文字后面。
+   徽章里是行内形式（跟文字排在同一条线上）；装在标签文字后面的那几个是角标：
+   绝对定位到标签的右上角、像上标一样不占文字的位置，尺寸也从 14px 收到 13px。 */
 
 .info-dot {
   position: relative;
@@ -261,6 +260,27 @@ body::before {
   font-weight: 700;
   line-height: 1;
   cursor: help;
+}
+
+/* 角标形式：贴在标签文字的右上角。承载它的元素要能当定位上下文，且宽度要收紧到文字
+   （三个标签在各自的列里都是撑满的，不收的话 right: -13px 会把角标摆到列表右缘、
+   悬停气泡再向右展开就凸出窗口）。 */
+.fields label,
+.setting-label,
+.theme-field-label {
+  position: relative;
+  width: max-content;
+}
+
+.fields label > .info-dot,
+.setting-label > .info-dot,
+.theme-field-label > .info-dot {
+  position: absolute;
+  top: -4px;
+  right: -13px;
+  width: 13px;
+  height: 13px;
+  font-size: 9px;
 }
 
 .info-dot::after {
@@ -799,8 +819,7 @@ input[type="text"] {
   z-index: 30;
   top: calc(100% + 6px);
   left: 0;
-  right: 0;
-  margin: 0;
+  right: 0;  margin: 0;
   padding: 6px;
   list-style: none;
   max-height: 260px;
@@ -828,6 +847,14 @@ input[type="text"] {
 /* 蓝底表示「正要选中的这一项」。静止（指针不在列表里）时蓝底先落在当前值那一行，
    指针一进列表或键盘一按上下键，蓝底就只跟光标走，当前值那一行让出底色、只留行首 ✓
    （维护者要求：不指向时已选中行就是蓝底，指向时跟鼠标走、不固定在已选中行上）。 */
+/* 弹层默认向下展开；main.ts 的 Picker.open 会量下方空间，放不下时给它加 .up 改成向上翻
+   （贴按钮上沿），高度也由那段代码压到可用空间里 —— 绝对定位的弹层会撞大文档净高，
+   页面跟着上下跳（维护者要求下拉框展开不得撞大界面）。 */
+.picker-list.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
 .picker-option:hover,
 .picker-option.active {
   background: rgba(124, 172, 230, 0.34);

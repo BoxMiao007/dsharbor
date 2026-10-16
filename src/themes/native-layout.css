@@ -37,9 +37,9 @@ body {
 }
 
 #app {
-  /* 固定宽度（维护者要求）：原先是 min(880px, 94vw)，实机上从来没小于过 880px，
-     改成定值后窗口再窄也不重排（窗口最小 960px 时两侧各留 40px）。 */
-  width: 880px;
+  /* 固定宽度，与另两套主题的卡片同宽（维护者要求：三套主题整体宽度一致）：
+     主题 1/2 的 #app 是 min(680px, 96vw)，最小窗口 960px 下就是 680px。 */
+  width: 680px;
   margin: 0 auto;
   /* 分组之间的间距交给各自卡片上的 margin-top（I 的 .exp 就是这么排的）。 */
   gap: 0;
@@ -96,36 +96,29 @@ body {
   font-size: 12px;
 }
 
-/* 状态徽章与四颗操作按钮同一行：徽章居左、按钮居右（维护者要求）。
-   实测账：运行中时徽章组 433px + 按钮组 365px + 两段间距 ≈ 830px，卡片正文 844px；
-   宽度不够的极端情况（超长 PID/端口、更长的登录提示）允许按钮组整体折到下一行，
-   比两段相互挤压、或右侧被裁掉好读。 */
-.hero-status-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-/* 徽章组：不再单占一行，边距交给 .hero-status-row。 */
-.hero-status-row .status-row {
-  margin: 0;
+/* 状态徽章一行，靠左：不再与按钮挤同一行（按钮块改到下一行，见 .hero-actions）。 */
+.hero-card > .status-row {
+  margin: 10px 0 0;
   gap: 8px;
-  flex-wrap: nowrap;
-  min-width: 0;
 }
 
-/* 操作行：候选 I 的 hero 里没有按钮（I 的 .foot 是页脚，i-native.html:194–200），
-   这一行是主题三新加的；现在跟在状态徽章同行，只留间距。 */
+/* 按钮块：两行两列、整块靠右。
+   行一 = 「启动 DSH」（跨两列，宽度 = 下方两颗之和）/ 运行时换成「停止｜重启 DSH」；
+   行二 = 「应用内打开｜浏览器打开」，这两颗是尺寸基准。
+   max-content 列取该列最宽的那颗：应用内打开 / 浏览器打开 比 停止 / 重启 DSH 宽，
+   于是两行里的四颗宽度一致，行一不管跨列还是分列都与行二对齐。 */
 .hero-actions {
-  display: flex;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: end;
   gap: 8px;
-  margin-top: 0;
+  margin-top: 10px;
   flex: none;
+}
+
+/* 「启动 DSH」形态（.swap）占满两列；「停止」形态只占第一列。 */
+.hero-actions #btn-toggle.swap {
+  grid-column: 1 / -1;
 }
 
 /* 最近输出：与上面的按钮隔一条细线（I 的日志块前面也有一道 .log-head 分隔）。
@@ -189,50 +182,33 @@ body {
   border-top: 1px solid var(--j-line-soft);
 }
 
-/* ---- 4. 字段行：I 的 .field（标签 128px + 右侧控件，说明另起一行） ---------- */
+/* ---- 4. 字段行：I 的 .field（标签 + 控件，说明另起一行） ------------------ */
 
-/* 原版是竖排（标签在输入框上方），这里换成 I 的两列。:not(.hidden) 是为了不压过
-   .hidden 的 display:none（「指定二进制路径」「WSL」两组靠它隐藏）。 */
+/* 「指定程序路径」「通过 WSL 启动」展开出来的字段没有自己的标签，控件的左缘要对齐到
+   对应单选行的标题文字（维护者要求：所有的框与各自对应的标签文字左对齐）：
+   实测单选标题 x = 卡片正文左缘 + 45px（行内左内边距 13px + 单选圈 20px + 圈与文字间距 12px）。
+   :not(.hidden) 是为了不压过 .hidden 的 display:none（这两组靠它隐藏）。 */
 .fields:not(.hidden) {
   display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 8px 12px;
-  padding: 0;
+  gap: 6px;
+  padding: 0 0 0 45px;
 }
 
 .fields > label {
-  grid-column: 1;
   color: var(--j-fg-dim);
   font-size: 13.5px;
 }
 
-.fields > input,
-.fields > .picker,
-.fields > .port-row,
-.fields > .step,
-.fields > .grid-2,
-.fields > .hint {
-  grid-column: 2;
-}
-
-/* 合并框（附加参数 / 端口）里的字段行改成「标签在上、控件在下」（与原版一致）：框内两列
-   各只有 386px，横排留给控件的只剩 246px，而输入框与端口 NumberBox 都固定 260px —— 会
-   各溢出 14px，端口行里「还原」按钮还会被挤到第二行。控件拿到整列 386px 就都放得下
-   （260 + 12 + 49 按钮 = 321）。 */
+/* 合并框（附加参数 / 端口）：框里两列各只有 302px（卡片 680 → 正文 646 → 两列 302），
+   而输入框与端口 NumberBox 都固定 260px，横排放不下；所以标签在上、控件在下，
+   控件拿到整列 302px（260 + 12 + 49 = 321，端口 NumberBox 会收到 241）。
+   左内边距归零：框里已经有 14px 内边距，再缩进 45px 就与框内其他内容不对齐。 */
 .subcard .fields:not(.hidden) {
   grid-template-columns: minmax(0, 1fr);
   gap: 6px;
-}
-
-.subcard .fields > label,
-.subcard .fields > input,
-.subcard .fields > .picker,
-.subcard .fields > .port-row,
-.subcard .fields > .step,
-.subcard .fields > .grid-2,
-.subcard .fields > .hint {
-  grid-column: 1;
+  padding-left: 0;
 }
 
 /* 通用设置（附加参数 / 端口）：主题三不再单独成组，变成「启动方式」正文末尾的一块底色框，

@@ -218,6 +218,16 @@ class Picker {
     this.renderOptions();
     this.list.classList.remove("hidden");
     this.button.setAttribute("aria-expanded", "true");
+    // 绝对定位的弹层会把文档净高撑大，页面跟着上下跳（维护者要求下拉框展开不得撑大界面）：
+    // 下方空间不够就向上翻转，并把高度压到翻转方向能放下的范围里，保证弹层始终在视口内。
+    const rect = this.button.getBoundingClientRect();
+    const gap = 6;
+    const below = window.innerHeight - rect.bottom - gap - 8;
+    const above = rect.top - gap - 8;
+    const wanted = Math.min(this.list.scrollHeight, 260);
+    const flipUp = below < wanted && above > below;
+    this.list.classList.toggle("up", flipUp);
+    this.list.style.maxHeight = `${Math.max(120, Math.round(Math.min(wanted, flipUp ? above : below)))}px`;
     this.list.querySelector<HTMLElement>('.picker-option[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }
 
@@ -387,7 +397,8 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <span class="status-meta">端口：<b id="status-port">—</b></span>
     </div>
   `;
-  // hero 卡片状态行右侧的四颗按钮（主题三专用）：原版排版的两行按钮见 sessionActionsRow。
+  // hero 卡片里的四颗按钮（主题三专用）：原版排版的两行按钮见 sessionActionsRow。
+  // 排列交给 native-layout.css 的 .hero-actions（两行两列：启动/停止重启在上、两个打开在下）。
   const heroActions = `
     <div class="hero-actions actions">
       <button id="btn-toggle" class="primary">启动 DSH</button>
@@ -572,14 +583,14 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
 
   // 主题三：状态、提示、四颗动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
   // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色维持四张卡片的老样子。
-  // hero 卡片：标题区 + 提示 + 「状态徽章 + 四颗按钮」同一行 + 最近输出。
+  // hero 卡片：标题区 + 提示 + 状态徽章一行 + 按钮块（两行、整块靠右）+ 最近输出。
   const heroSection = nativeLayout
     ? `<section class="card hero-card">
   ${header}
   ${statusErrorBlock}
   ${loginNoteBlock}
-  <div class="hero-status-row">${badges}
-  ${heroActions}</div>
+  ${badges}
+  ${heroActions}
   <div class="hero-log">${logBlock}</div>
 </section>`
     : "";
