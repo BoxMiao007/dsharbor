@@ -39,10 +39,12 @@
   --j-ok: #6ccb5f;
   --j-warn: #fce100;
   --j-bad: #ff99a4;
-  /* 形状：卡片 14px / 控件 10px / 胶囊 999px（common.css:9–14），
-     下拉框另按 I 的 ComboBox 取 5px、弹层取 8px（i-native.html:88–94）。 */
-  --j-r-card: 14px;
-  --j-r-ctrl: 10px;
+  /* 形状统一到两档（维护者要求）：
+       容器档 8px —— 卡片、子卡片、下拉弹层、输出框、提示气泡；
+       控件档 5px —— 输入框、下拉按钮、NumberBox、小按钮、单选行、行内代码。
+     原来混着 14 / 10 / 6 / 5 四档，同一行里的输入框与下拉按钮圆角都不一样。 */
+  --j-r-card: 8px;
+  --j-r-ctrl: 5px;
   --j-r-combo: 5px;
   --j-r-list: 8px;
   --j-badge-h: 26px;
@@ -243,46 +245,61 @@ button.primary:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
-/* 卡片标题行也是个 button，但它不是按钮：高度交回原来那套（不加这行会被上面的 34px 顶高）。 */
+/* 卡片标题行也是个 button，但它不是按钮：高度交回原来那套（不加这行会被上面的 34px 顶高），
+   圆角也归到容器档 8px（原版留下的 10px 与卡片不同档）。 */
 .card-toggle {
   height: auto;
+  border-radius: var(--j-r-list);
 }
 
-/* 「停止 DSH」悬停填红、「重启 DSH」填黄：这两个是正式界面自己的悬停行为，
-   留着，只把颜色换成 I 调色板里的红与黄。 */
-#btn-toggle:not(.swap)::before {
+/* 「停止 / 重启 DSH」改成纯色填充（维护者要求去掉悬停特效）：基础那套已经不带
+   ::before 覆盖层与过渡，这里把颜色换成 I 调色板里的红与黄。 */
+#btn-toggle:not(.swap) {
   background: #d63a3f;
-}
-
-#btn-toggle:not(.swap):hover {
-  color: #fff;
   border-color: #d63a3f;
+  color: #fff;
 }
 
-#btn-restart::before {
+#btn-restart {
   background: var(--j-warn);
-}
-
-#btn-restart:hover {
-  color: var(--j-on-accent);
   border-color: var(--j-warn);
+  color: var(--j-on-accent);
 }
 
-/* 条目内的小按钮（关于卡片、桥接卡片）与日志标题行的「复制」：
-   都归到 I 的小按钮形状（common.css:309–314，高 28px、圆角 8px、字号 12.5px）。 */
-.log-copy,
-.kv-action {
+/* 条目内的小按钮（关于卡片、桥接卡片）与端口「还原」：
+   都归到 I 的小按钮形状（common.css:309–314，高 28px、圆角 5px、字号 12.5px）。 */
+.kv-action,
+.port-reset {
   height: 28px;
   padding: 0 11px;
-  border-radius: 8px;
+  border-radius: var(--j-r-combo);
   font-size: 12.5px;
   color: var(--j-fg-dim);
   background: var(--j-panel-2);
   border: 1px solid var(--j-line);
 }
 
+/* 日志区右上角的「复制」是悬浮在输出文字上的一层，不能带底框（会挡住字）：
+   底色只在悬停/聚焦日志区时才给一层半透明的面板色。半透明度由 src/style.css 的
+   .log-copy 控制。 */
+.log-copy {
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--j-r-combo);
+  font-size: 12.5px;
+  color: var(--j-fg-dim);
+  background: none;
+}
+
+.log-box:hover .log-copy,
+.log-box:focus-within .log-copy {
+  background: color-mix(in srgb, var(--j-panel-2) 72%, transparent);
+}
+
 .log-copy:hover:not(:disabled),
-.kv-action:hover:not(:disabled) {
+.kv-action:hover:not(:disabled),
+.port-reset:hover:not(:disabled) {
   color: var(--j-fg);
   background: var(--j-panel-hi);
 }
@@ -343,7 +360,7 @@ input::placeholder {
   height: 32px;
   gap: 6px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: var(--j-r-combo);
   color: var(--j-fg-dim);
 }
 
@@ -364,7 +381,7 @@ input::placeholder {
 /* ---- 8. 启动方式单选行：common.css:526–561 ＋ i-native.html:104–140 ------- */
 
 .mode {
-  border-radius: 6px;
+  border-radius: var(--j-r-combo);
 }
 
 .mode:hover {
@@ -492,6 +509,7 @@ input::placeholder {
 .log-box {
   padding: 0;
   border: 0;
+  border-radius: var(--j-r-list);
   background: none;
 }
 
@@ -510,7 +528,7 @@ input::placeholder {
 .log-box pre {
   padding: 10px 12px;
   border: 1px solid var(--j-line-soft);
-  border-radius: 10px;
+  border-radius: var(--j-r-list);
   background: var(--j-log-bg);
   color: var(--j-fg-dim);
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -578,7 +596,7 @@ code,
 .hint code,
 .mode small code {
   background: var(--j-panel-2);
-  border-radius: 6px;
+  border-radius: var(--j-r-combo);
 }
 
 /* ---- 13. 滚动条 ----------------------------------------------------------- */

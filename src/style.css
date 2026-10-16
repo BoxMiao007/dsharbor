@@ -20,6 +20,10 @@ body {
   justify-content: center;
   /* 顶部 34px 是给固定定位的自绘标题栏让出的位置（见 .titlebar） */
   padding: 60px 16px 34px;
+  /* 兜底：任何悬浮元素都不允许把页面顶出横向滚动条（维护者要求主题 3 禁止横向滚动）。
+     用 clip 而不是 hidden：clip 不会把 body 变成滚动容器，视口滚动与自绘滚动条的计量
+     都不受影响。 */
+  overflow-x: clip;
   /* 兜底色：等于雾光渐变的末端色，渐变未覆盖处也保持深蓝。 */
   background-color: #0a1c38;
   color: #eef2fa;
@@ -381,60 +385,19 @@ button.primary:hover:not(:disabled) {
   background: #4a7cf0;
 }
 
-/* 「停止 / 重启 DSH」的悬停效果：纯色平滑淡入填满按钮，文字随之变色。
-   只在「停止」形态生效（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。
-   填充走 ::before 覆盖层：平时透明（不占视觉），悬停淡入到不透明。 */
-#btn-toggle:not(.swap),
-#btn-restart {
-  position: relative;
-  z-index: 1;
-  transition: color 0.6s, border-color 0.6s;
-}
-
-#btn-toggle:not(.swap)::before,
-#btn-restart::before {
-  content: "";
-  position: absolute;
-  /* 向外扩 1px 盖住按钮的 1px 边框：只贴 padding 盒(inset:0)会在四周留一圈、
-     圆角处还留月牙形的缝。配合下面的 inherit 圆角，填充正好到边框盒外沿。 */
-  inset: -1px;
-  z-index: -1;
-  border-radius: inherit;
-  opacity: 0;
-  transition: opacity 0.6s;
-}
-
-/* 纯色填充，不做色渐变；「渐变」只体现在悬停淡入的过程上。 */
-#btn-toggle:not(.swap)::before {
+/* 「停止 / 重启 DSH」：纯色填充，没有悬停与过渡（维护者要求去掉特效）。
+   停止 = 红底白字，重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
+   只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
+#btn-toggle:not(.swap) {
   background: #ff0000;
-}
-
-#btn-restart::before {
-  background: #f5ae51;
-}
-
-#btn-toggle:not(.swap):hover::before,
-#btn-restart:hover::before {
-  opacity: 1;
-}
-
-/* 悬停文字色：红底白字；黄色 #f5ae51 偏亮，白字对比度不足（约 1.9:1），改用深字保证可读。
-   边框色跟着填充走，免得填满后还留一圈原来的浅灰描边。 */
-#btn-toggle:not(.swap):hover {
-  color: #fff;
   border-color: #ff0000;
+  color: #fff;
 }
 
-#btn-restart:hover {
-  color: #1b2536;
+#btn-restart {
+  background: #f5ae51;
   border-color: #f5ae51;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #btn-toggle:not(.swap)::before,
-  #btn-restart::before {
-    transition: none;
-  }
+  color: #1b2536;
 }
 
 /* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。
@@ -614,19 +577,56 @@ button.primary:hover:not(:disabled) {
   cursor: text;
 }
 
-/* 「最近输出 / 操作输出」标题行右侧的复制按钮：同样按徽章尺寸统一。 */
+/* 「最近输出 / 操作输出」右上角的复制按钮：悬浮在输出区内部（.log-area）。
+   平时半透明（能看清底下的文字，不全透明），鼠标进入日志区或键盘聚焦时才完全不透明。
+   平时 pointer-events: none：在输出框里拖选文字经过它时不会误触，也就能一直保持半透明。
+   打开时给按钮留出的空间不用额外占位：按钮只压在右上角一两行上，且半透明可透视。 */
+.log-area {
+  position: relative;
+}
+
 .log-copy {
-  margin-left: auto;
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  height: var(--badge-height);
+  padding: 0 var(--badge-padding-x);
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font-size: var(--badge-font-size);
+  line-height: 1;
+  color: #9fb2d8;
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.log-box:hover .log-copy,
+.log-box:focus-within .log-copy {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.log-copy:hover:not(:disabled) {
+  color: #eef2fa;
+}
+
+/* 端口「还原」按钮（原来是显示当前状态的徽章）：点一下清空端口输入框 = 回到
+   「跟随 DSH 配置」；框里本来就空时禁用（disabled 的半透明由通用 button:disabled 给）。 */
+.port-reset {
   flex: none;
+  white-space: nowrap;
   height: var(--badge-height);
   padding: 0 var(--badge-padding-x);
   border-radius: 999px;
   font-size: var(--badge-font-size);
   line-height: 1;
+  font-weight: 600;
   color: #9fb2d8;
 }
 
-.log-copy:hover:not(:disabled) {
+.port-reset:hover:not(:disabled) {
   color: #eef2fa;
 }
 
@@ -721,27 +721,17 @@ input[type="text"] {
   display: flex;
   gap: 12px;
   align-items: center;
-  /* 原版（主题 1）的「通用设置」在两列网格里，列宽只有约 289px
-     （680px 卡片 - 48px 卡片内边距 - 2px 边框 - 32px 子面板内边距 - 2px 边框 - 18px 列间距，
-     再除以 2），而「260px 输入框 + 12px 间距 + 约 106px 徽章」约 378px。放不下时让输入框
-     收窄（flex-basis 260px、可缩到 0），而不是把徽章挤到第二行 —— 徽章标的是当前生效端口，
-     和输入框同行才读得通。主题三的「通用设置」是整列宽（386px），260px 放得下，不会缩。 */
+  /* 原版（主题 1）的「通用设置」在两列网格里，列宽只有约 273px，而「260px 输入框 +
+     12px 间距 + 「还原」按钮」约 324px。放不下时让输入框收窄（flex-basis 260px、可缩到 0），
+     而不是把按钮挤到第二行。主题三的「通用设置」是整列宽（386px），260px 放得下，不会缩。 */
   flex-wrap: nowrap;
 }
 
-
-/* 输入框不再拉伸：端口框和「附加参数」一样固定 260px。 */
 /* 端口框：放得下时固定 260px（和「附加参数」对齐），放不下时收窄。 */
-.port-row input {
+.port-row > input[type="text"] {
   flex: 0 1 260px;
   width: 260px;
   min-width: 0;
-}
-
-
-.port-row .badge {
-  flex: none;
-  white-space: nowrap;
 }
 
 .hint {

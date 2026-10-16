@@ -37,7 +37,9 @@ body {
 }
 
 #app {
-  width: min(880px, 94vw);
+  /* 固定宽度（维护者要求）：原先是 min(880px, 94vw)，实机上从来没小于过 880px，
+     改成定值后窗口再窄也不重排（窗口最小 960px 时两侧各留 40px）。 */
+  width: 880px;
   margin: 0 auto;
   /* 分组之间的间距交给各自卡片上的 margin-top（I 的 .exp 就是这么排的）。 */
   gap: 0;
@@ -94,22 +96,36 @@ body {
   font-size: 12px;
 }
 
-/* 状态徽章（含 PID / 端口）在 I 里跟在说明下面，不再单占一行。 */
-.head.hero .status-row {
-  margin: 10px 0 0;
+/* 状态徽章与四颗操作按钮同一行：徽章居左、按钮居右（维护者要求）。
+   实测账：运行中时徽章组 433px + 按钮组 365px + 两段间距 ≈ 830px，卡片正文 844px；
+   宽度不够的极端情况（超长 PID/端口、更长的登录提示）允许按钮组整体折到下一行，
+   比两段相互挤压、或右侧被裁掉好读。 */
+.hero-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+/* 徽章组：不再单占一行，边距交给 .hero-status-row。 */
+.hero-status-row .status-row {
+  margin: 0;
   gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 /* 操作行：候选 I 的 hero 里没有按钮（I 的 .foot 是页脚，i-native.html:194–200），
-   这一行是主题三新加的，数值取自维护者要求：整行靠右、间距 8px、与上方状态行留 10px。
-   允许换行：四颗按钮约 480px，而原生窗口最小 960px 时卡片正文还有 840px 左右，
-   一般用不上，只是不让它溢出。 */
+   这一行是主题三新加的；现在跟在状态徽章同行，只留间距。 */
 .hero-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 0;
+  flex: none;
 }
 
 /* 最近输出：与上面的按钮隔一条细线（I 的日志块前面也有一道 .log-head 分隔）。
@@ -202,8 +218,8 @@ body {
 
 /* 合并框（附加参数 / 端口）里的字段行改成「标签在上、控件在下」（与原版一致）：框内两列
    各只有 386px，横排留给控件的只剩 246px，而输入框与端口 NumberBox 都固定 260px —— 会
-   各溢出 14px，端口行「跟随 DSH 配置」徐章还会被挤到第二行。控件拿到整列 386px 就都放得下
-   （260 + 12 + 104 徐章 = 376）。 */
+   各溢出 14px，端口行里「还原」按钮还会被挤到第二行。控件拿到整列 386px 就都放得下
+   （260 + 12 + 49 按钮 = 321）。 */
 .subcard .fields:not(.hidden) {
   grid-template-columns: minmax(0, 1fr);
   gap: 6px;
@@ -277,6 +293,14 @@ body {
 .setting-label {
   font-size: 13.5px;
   color: var(--j-fg-dim);
+}
+
+/* 右列（轻量模式）的 ⓘ 气泡改成向左展开：这个圆点已经在卡片 2/3 处，320px 宽的
+   气泡再向右展开就顶出视口（实测最窄窗口 960px 下会多出横向溢出）。向左展开最多
+   盖到卡片中部，不会撑出横向滚动条。 */
+.settings-row .setting-col:nth-child(2) .info-dot::after {
+  left: auto;
+  right: 0;
 }
 
 /* 界面主题：上面的分隔线由 .settings-row 的下边线充当（两条挨着的 1px 线会糊成一条粗线），

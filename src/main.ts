@@ -387,7 +387,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <span class="status-meta">端口：<b id="status-port">—</b></span>
     </div>
   `;
-  // hero 卡片右下角的四颗按钮（主题三专用）：原版排版的两行按钮见 sessionActionsRow。
+  // hero 卡片状态行右侧的四颗按钮（主题三专用）：原版排版的两行按钮见 sessionActionsRow。
   const heroActions = `
     <div class="hero-actions actions">
       <button id="btn-toggle" class="primary">启动 DSH</button>
@@ -413,8 +413,11 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   `;
   const logBlock = `
     <details class="log-box">
-      <summary><span class="chev">▸</span>最近输出<button type="button" class="log-copy" id="btn-copy-log">复制</button></summary>
-      <pre id="log">（暂无输出）</pre>
+      <summary><span class="chev">▸</span>最近输出</summary>
+      <div class="log-area">
+        <pre id="log">（暂无输出）</pre>
+        <button type="button" class="log-copy" id="btn-copy-log">复制</button>
+      </div>
     </details>
   `;
   // 原版排版把两条托盘设置留在会话卡片里，说明直接写在控件下方。
@@ -488,7 +491,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         </div>
         <div class="fields">
           <label for="port">端口 <span id="port-info" class="info-dot" role="img" tabindex="0" aria-label="端口说明" data-tip="正在读取 DSH 配置…">!</span></label>
-          <div class="port-row">${portControl}<span id="port-badge" class="badge badge-stopped">跟随 DSH 配置</span></div>
+          <div class="port-row">${portControl}<button type="button" id="port-reset" class="port-reset" title="把端口还原为默认（留空 = 跟随 DSH 配置）">还原</button></div>
         </div>
       </div>
     </div>
@@ -509,8 +512,11 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <p id="bridge-note" class="hint hidden"></p>
     <p id="bridge-error" class="error hidden"></p>
     <details class="log-box">
-      <summary><span class="chev">▸</span>操作输出<button type="button" class="log-copy" id="btn-copy-bridge-output">复制</button></summary>
-      <pre id="bridge-output">（暂无操作）</pre>
+      <summary><span class="chev">▸</span>操作输出</summary>
+      <div class="log-area">
+        <pre id="bridge-output">（暂无操作）</pre>
+        <button type="button" class="log-copy" id="btn-copy-bridge-output">复制</button>
+      </div>
     </details>
   `;
   const aboutKv = `
@@ -555,24 +561,25 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   const titleAndTagline = `${h1Line}
   ${tagline}
   ${lightHint}`;
-  // 页头：原生排版换成候选 I 的 hero（logo 在左）；动作按钮与最近输出在 hero 卡片更下方。
+  // 页头：原生排版换成候选 I 的 hero（logo 在左）；状态徽章与四颗按钮在卡片里的同一行。
   const header = nativeLayout
     ? `<header class="head hero">
   <img class="hero-logo" src="${logoUrl}" alt="" draggable="false" />
   <div class="hero-text">${titleAndTagline}
-  ${badges}
   </div>
 </header>`
     : `<header class="head">${titleAndTagline}</header>`;
 
   // 主题三：状态、提示、四颗动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
   // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色维持四张卡片的老样子。
+  // hero 卡片：标题区 + 提示 + 「状态徽章 + 四颗按钮」同一行 + 最近输出。
   const heroSection = nativeLayout
     ? `<section class="card hero-card">
   ${header}
   ${statusErrorBlock}
   ${loginNoteBlock}
-  ${heroActions}
+  <div class="hero-status-row">${badges}
+  ${heroActions}</div>
   <div class="hero-log">${logBlock}</div>
 </section>`
     : "";
@@ -679,7 +686,7 @@ async function main(): Promise<void> {
     const binaryPath = $<HTMLInputElement>("binary-path");
     const innerInput = $<HTMLInputElement>("wsl-inner");
     const portInput = $<HTMLInputElement>("port");
-    const portBadge = $<HTMLSpanElement>("port-badge");
+    const portReset = $<HTMLButtonElement>("port-reset");
     const portInfoEl = $<HTMLSpanElement>("port-info");
     const loginBadge = $<HTMLSpanElement>("login-badge");
     const loginText = $<HTMLElement>("login-text");
@@ -839,7 +846,7 @@ async function main(): Promise<void> {
       })();
     }
 
-    // 复制按钮在 <summary> 里：拦掉默认行为，避免顺带折叠/展开日志块。
+    // 复制按钮悬浮在日志区右上角（不在 <summary> 里），点它不会折叠日志块。
     for (const [button, pre] of [
       [btnCopyLog, logEl],
       [btnCopyBridgeOutput, bridgeOutput],
@@ -882,13 +889,12 @@ async function main(): Promise<void> {
 
     function renderPortHint(): void {
       const raw = portInput.value.trim();
-      if (raw !== "") {
-        portBadge.className = "badge badge-running";
-        portBadge.textContent = `自定义 ${raw}`;
-      } else {
-        portBadge.className = "badge badge-stopped";
-        portBadge.textContent = "跟随 DSH 配置";
-      }
+      // 输入框提示显示 DSH 配置里的真实端口（读不到就显示默认 3080）：只是提示文字，
+      // 不参与保存，「留空 = 跟随 DSH 配置」的语义不变。
+      const managedPort = portHint !== null && portHint.source === "managed" ? portHint.port : null;
+      portInput.placeholder = String(managedPort ?? 3080);
+      // 空 = 本来就跟配置走，没有可还原的东西。
+      portReset.disabled = raw === "";
       if (!portHint) {
         setPortTip("正在读取 DSH 配置…");
         return;
@@ -1003,9 +1009,16 @@ async function main(): Promise<void> {
     for (const input of [extraInput, binaryPath, innerInput, portInput]) {
       input.addEventListener("change", () => void persistConfigQuiet());
     }
-    // 端口：输入即刷新徽章（不含程序化赋值）；失焦再刷新一次保证同步。
+    // 端口：输入即刷新提示与「还原」按钮（不含程序化赋值）；失焦再刷新一次保证同步。
     portInput.addEventListener("input", renderPortHint);
     portInput.addEventListener("change", renderPortHint);
+    // 「还原」：清空输入框并派发 input/change，走与手打完全相同的自动保存路径。
+    portReset.addEventListener("click", () => {
+      portInput.value = "";
+      portInput.dispatchEvent(new Event("input", { bubbles: true }));
+      portInput.dispatchEvent(new Event("change", { bubbles: true }));
+      portInput.focus();
+    });
     // 「原生」主题的端口是 I 的 NumberBox，带上下箭头；原版那个文本框里没有按钮，
     // 这段就取不到元素、自然不生效。基准值取「当前输入 > 已读到的生效端口 > 3080」。
     for (const spin of Array.from(root.querySelectorAll<HTMLButtonElement>("#port ~ .spins .spin, .port-row .step.num .spin"))) {
