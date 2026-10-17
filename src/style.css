@@ -417,10 +417,11 @@ button.primary:hover:not(:disabled) {
   background: #4a7cf0;
 }
 
-/* 会话按钮的图标段 + 统一悬停推动动效（2026-10-17 维护者定的第三版交互）：
+/* 会话按钮的图标段 + 悬停「图标板漫过」动效（2026-10-17 维护者在候选页里选定 C：原版 Uiverse
+   cssbuttons-io 的做法，节奏放慢到 500ms 与「重启 DSH」的旋转一致，四颗按钮统一）：
    常态 = 文字居中 + 右端一个小图标分段（分隔线 + 右缘贴边）；
-   悬停 = 文字与图标彼此相向一步（文字右移、图标左移，像互让一步），移开同时归位——
-   用 transform 位移实现，不再改按钮/图标段的底色（红/黄纯色任何状态下都不变）。
+   悬停 = 图标板向左漫过整颗按钮（宽度展开到全宽、分隔线消失、图标落到中央），文字原地淡出；
+   移开各自归位。任何状态下不改按钮/图标段的底色（红/黄纯色保持不变）。
    图标段是正方形（边长 --btn-ico-size = 按钮高度，主题 2/3 的矮按钮在 native-dark.css 收小）。
    只作用于 .actions-row 里带图标的四颗按钮，「启动 DSH」形态（.swap 逐字切换）没有图标段，不受影响。 */
 .actions-row button {
@@ -430,8 +431,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .actions-row button .btn-text {
-  display: inline-block;
-  transition: transform 300ms ease;
+  transition: opacity 500ms ease;
 }
 
 /* 图标段占右端一个方格（38px）：给带图标的按钮把右侧内边距让出来（10px 间隙 + 方格），
@@ -450,7 +450,7 @@ button.primary:hover:not(:disabled) {
   align-items: center;
   justify-content: center;
   border-left: 1px solid var(--btn-ico-line, rgba(255, 255, 255, 0.28));
-  transition: transform 300ms ease;
+  transition: width 500ms ease, border-color 500ms ease;
 }
 
 .actions-row button .btn-ico svg {
@@ -464,14 +464,15 @@ button.primary:hover:not(:disabled) {
   transition: transform 200ms;
 }
 
-/* 悬停推动：文字向右让向图标、图标向左让向文字；移开各自滑回。
-   transform 不参与布局，按钮尺寸与文字居中都不受影响。 */
-.actions-row button:hover:not(:disabled) .btn-text {
-  transform: translateX(12px);
+/* 悬停：图标板漫过整颗按钮（宽度全开、分隔线消失、图标随板居中），文字原地淡出。
+   width参与的布局不受影响（图标段绝对定位），文字淡出后组件仍占原宽。 */
+.actions-row button:hover:not(:disabled) .btn-ico {
+  width: 100%;
+  border-left-color: transparent;
 }
 
-.actions-row button:hover:not(:disabled) .btn-ico {
-  transform: translateX(-10px);
+.actions-row button:hover:not(:disabled) .btn-text {
+  opacity: 0;
 }
 
 .actions-row button:active:not(:disabled) .btn-ico svg {
