@@ -376,13 +376,18 @@ function isStarting(status: SessionStatus): boolean {
  * 最短转满 700ms：重启快到轮询都没看见「启动中」时也至少给出一圈反馈。
  * 状态放模块级：切主题会把整个界面重建一次，转动要跨重建继续，计时不重来。
  */
+// 与 src/style.css 的 --spin-ms（700ms）同值不同责：那边是一圈转动的时长，这里是收场前给足的最短反馈；
+// 改转速时两处一起检查。
 const RESTART_SPIN_MIN_MS = 700;
 const RESTART_SPIN_MAX_MS = 30_000;
 /** 「已停止」会出现在重启「先停旧、再起新」的缝隙里，这个时长内不收场，免得转动一闪而过。 */
 const RESTART_SPIN_STOP_GRACE_MS = 3_000;
 
 let restartSpin: { startedAt: number; sawStarting: boolean } | null = null;
+/** 最短时长补收定时器（条件提前满足时到点收场）。 */
 let restartSpinTimer: number | undefined;
+/** 30 秒上限的独立兜底定时器：不搭轮询便车——dsh_status 一直报错时也得停转。 */
+let restartSpinCapTimer: number | undefined;
 
 /** 由 mount 注入「重新查询一次状态」，供上面最短时长的定时器到点补一拍（render 每秒也会跑）。 */
 let requestStatusRefresh: () => Promise<void> = async () => {};
@@ -394,20 +399,31 @@ function applyRestartSpin(): void {
 
 function beginRestartSpin(): void {
   window.clearTimeout(restartSpinTimer);
+  window.clearTimeout(restartSpinCapTimer);
   restartSpinTimer = undefined;
+  restartSpinCapTimer = undefined;
   restartSpin = { startedAt: Date.now(), sawStarting: false };
   applyRestartSpin();
+  // 30 秒必停：只要点过重启就有这条兜底，不依赖后续任何轮询成功。
+  restartSpinCapTimer = window.setTimeout(() => {
+    restartSpinCapTimer = undefined;
+    endRestartSpin();
+    void requestStatusRefresh();
+  }, RESTART_SPIN_MAX_MS);
 }
 
 function endRestartSpin(): void {
   if (restartSpin === null) return;
   restartSpin = null;
   window.clearTimeout(restartSpinTimer);
+  window.clearTimeout(restartSpinCapTimer);
   restartSpinTimer = undefined;
+  restartSpinCapTimer = undefined;
   applyRestartSpin();
 }
 
-/** render 每次拿到状态就过一遍收场条件；条件满足但还没转满最短时长时，挂个到点的定时器补收。 */
+/** render 每次拿到状态就过一遍收场条件；条件满足但还没转满最短时长时，挂个到点的定时器补收
+ * （到点直接收场 + 补一拍刷新，刷新失败也不影响收场这件事本身）。 */
 function updateRestartSpin(status: SessionStatus, starting: boolean): void {
   const spin = restartSpin;
   if (spin === null) return;
@@ -418,14 +434,16 @@ function updateRestartSpin(status: SessionStatus, starting: boolean): void {
     failed ||
     (status.state === "running" && !starting) ||
     (status.state === "stopped" && (spin.sawStarting || elapsed >= RESTART_SPIN_STOP_GRACE_MS));
-  if (!settled && elapsed < RESTART_SPIN_MAX_MS) return;
+  if (!settled) return;
   const remaining = RESTART_SPIN_MIN_MS - elapsed;
   if (failed || remaining <= 0) {
     endRestartSpin();
     return;
   }
+  window.clearTimeout(restartSpinTimer);
   restartSpinTimer = window.setTimeout(() => {
     restartSpinTimer = undefined;
+    endRestartSpin();
     void requestStatusRefresh();
   }, remaining);
 }
@@ -1309,6 +1327,8 @@ async function main(): Promise<void> {
       const portError = portFieldError();
       if (portError) {
         localError = portError;
+        // 重启点击时已经开始转（beginRestartSpin），命令没发出去就别转了。
+        endRestartSpin();
         await refresh();
         return;
       }
@@ -1318,6 +1338,8 @@ async function main(): Promise<void> {
         await invoke(command, { config: collectConfig() });
       } catch (err) {
         localError = String(err);
+        // 命令被后端拒绝（如端口占用）：重启没真正发生，立即收拾掉点击时的转动。
+        if (command === "restart_dsh") endRestartSpin();
       }
       await refresh();
     }

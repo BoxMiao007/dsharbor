@@ -14,7 +14,9 @@
   --btn-lead-ms: 200ms; /* 图标到中心前的提前起势量（延迟 = 漫过时长 − 提前量 = 300ms） */
   --btn-hl-ms: 200ms; /* 悬停提亮（红→#ff3636 / 重启 brightness）与按下图标缩放的过渡 */
   /* 转圈节拍：「启动中」徽章的加载圈与「重启 DSH」点击后的持续转动共用，
-     维护者要求两者转速一致（改这一处两边同步）。 */
+     维护者要求两者转速一致（改这一处两边同步）。
+     src/main.ts 的 RESTART_SPIN_MIN_MS 用同一个 700 数值但职责不同（那边=收场前
+     最短反馈时长，这里=一圈时长），改转速时两处一起检查。 */
   --spin-ms: 700ms;
 }
 
@@ -480,16 +482,17 @@ button.primary:hover:not(:disabled) {
   transition: transform var(--btn-hl-ms);
 }
 
-/* 悬停：图标板漫过整颗按钮（宽度全开、分隔线消失、图标随板居中，时长 --btn-sweep-ms），
-   同时文字沿左推出按钮外、被 overflow 裁掉（位移不是淡出）。
+/* 悬停与「重启 DSH」点击后的持续转动（.is-restarting）共用同一组终态值（review 建议合并，
+   只此一份不会出现「改了悬停忘了转动」）：图标板漫过整颗按钮（宽度全开、分隔线消失、
+   图标随板居中，时长 --btn-sweep-ms），文字沿左推出按钮外、被 overflow 裁掉（位移不是淡出）。
    推出量 = 文字自身宽度 + 64px：文字起点在按钮中央，这段距离足够连最宽的
    「浏览器打开」（170px 按钮里约偏右 50px 起）也完全滑出左缘。 */
-.actions-row button:hover:not(:disabled) .btn-ico {
+.actions-row button:is(:hover:not(:disabled), .is-restarting) .btn-ico {
   width: 100%;
   border-left-color: transparent;
 }
 
-.actions-row button:hover:not(:disabled) .btn-text {
+.actions-row button:is(:hover:not(:disabled), .is-restarting) .btn-text {
   transform: translateX(calc(-100% - 64px));
 }
 
@@ -537,20 +540,11 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁在悬停终态——
-   文字推出、图标板铺满，并且与鼠标是否还停在按钮上无关——图标按 --spin-ms 无限转，
-   与「启动中」徽章的加载圈同速。什么时候收工由 src/main.ts 定（徽章离开「启动中」/ 启动失败 /
-   点「停止」/ 30 秒兜底），收工后这里的类一去掉就交回上面的悬停规则。
-   类名在重建界面（切主题）后会由 render 重新贴上，转动跨重建连续。
-   选择器与上面两条悬停规则同权重（0,3,1），靠排在后面生效。 */
-.actions-row button.is-restarting .btn-ico {
-  width: 100%;
-  border-left-color: transparent;
-}
-
-.actions-row button.is-restarting .btn-text {
-  transform: translateX(calc(-100% - 64px));
-}
-
+   与鼠标是否还停在按钮上无关——图标按 --spin-ms 无限转，与「启动中」徽章的加载圈同速。
+   锁定的终态值就是上面悬停那组合并后的规则（:is(:hover, .is-restarting)），只此一份。
+   什么时候收工由 src/main.ts 定（徽章离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
+   收工后这里的类一去掉就交回悬停规则。
+   类名在重建界面（切主题）后会由 render 重新贴上，转动跨重建连续。 */
 #btn-restart.is-restarting .btn-ico svg {
   animation: btn-restart-spin var(--spin-ms) linear infinite;
 }
