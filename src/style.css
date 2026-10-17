@@ -268,7 +268,7 @@ body::before {
 /* 角标形式：贴在标签文字的右上角（2026-10-17 晚三轮微调：1px→-1px→top:0，
    定在与文字轻微咬合的高度、横向留缝 right:-10px）。
    承载它的元素要能当定位上下文，且宽度要收紧到文字
-   （三个标签在各自的列里都是撑满的，不收的话 right: -9px 会把角标摆到列表右缘、
+   （三个标签在各自的列里都是撑满的，不收的话 right: -10px 会把角标摆到列表右缘、
    悬停气泡再向右展开就凸出窗口）。 */
 .fields label,
 .setting-label,
@@ -424,14 +424,15 @@ button.primary:hover:not(:disabled) {
    常态 = 文字居中 + 右端一个小图标分段（分隔线 + 右缘贴边）；
    悬停 = 图标板向左漫过整颗按钮（宽度全开、分隔线消失、图标落到中央）；
    同时文字沿左被推出按钮外（overflow:hidden 裁掉，是位移不是淡出）；移开各自归位。
-   任何状态下不改按钮/图标段的底色（红/黄纯色保持不变）。
+   悬停除动效外还会提亮底色（停止 #ff3636 / 重启 brightness，见下方红黄块），图标段本身仍不着色。
    图标段是正方形（边长 --btn-ico-size = 按钮高度，主题 2/3 的矮按钮在 native-dark.css 收小）。
    只作用于 .actions-row 里带图标的四颗按钮，「启动 DSH」形态（.swap 逐字切换）没有图标段，不受影响。 */
 .actions-row button {
   position: relative;
   overflow: hidden;
-  /* 高亮底色的过渡（200ms，Uiverse 参考的节奏）：停止/重启悬停提亮时平滑变色。 */
-  transition: background 200ms;
+  /* 悬停提亮的过渡（200ms，Uiverse 参考的节奏）：停止换 background、重启换 filter，
+     两个都给过渡，避免重启的提亮瞬时跳变。 */
+  transition: background 200ms, filter 200ms;
   --btn-ico-size: 38px;
 }
 

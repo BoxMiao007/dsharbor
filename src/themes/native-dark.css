@@ -122,7 +122,8 @@ body::before {
 
 /* 正式界面把徽章的高度、横向内边距、字号收在 :root 变量里（src/style.css:4–10），
    覆盖这三个变量即全局生效，连日志标题行右侧的「复制」胶囊一起换。
-   数值取 I 的 .badge：高 26px、内边距 10px、字号 12.5px。 */
+   数值取 I 的 .badge：内边距 10px、字号 12.5px；高度跟随 src/style.css 的 --badge-height
+   （2026-10-17 晚统一收成 24px，见那边的注释）。 */
 :root {
   --badge-height: var(--j-badge-h);
   --badge-padding-x: 10px;
@@ -259,14 +260,8 @@ button.primary:hover:not(:disabled) {
   border-radius: var(--j-r-list);
 }
 
-/* 「停止 / 重启 DSH」纯色填充与主题 1 对齐（维护者 2026-10-17 晚把停止统一成 #e62222）；
-   悬停提亮 #ff3636 走 src/style.css 的基础规则，这里不用重复。 */
-#btn-toggle:not(.swap) {
-  background: #e62222;
-  border-color: #e62222;
-  color: #fff;
-}
-
+/* 「停止 / 重启 DSH」不再在这里覆盖：底色与悬停提亮（#e62222 / #ff3636 / brightness）
+   与主题 1 共用 src/style.css 的规则，主题 2 只把重启的黄换成 I 调色板的 --j-warn。 */
 #btn-restart {
   background: var(--j-warn);
   border-color: var(--j-warn);
