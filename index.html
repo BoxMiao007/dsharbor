@@ -4,6 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DSHarbor</title>
+    <style>
+      /* 深色两套主题的首屏预着色：页面加载到 main.ts 挂载界面还有一段空窗，
+         那段时间按 <html data-theme> 先把底色铺成 #202020，否则每次开窗 /
+         切主题都会先闪一帧亮底（原版浅色）再变深。原版没有 data-theme，不命中。 */
+      html[data-theme="nativeDark"],
+      html[data-theme="native"] {
+        background: #202020;
+      }
+    </style>
+    <script>
+      // 主题存在 WebView 的 localStorage，页面一进来就同步挂上 data-theme（深色两套），
+      // 让上面的预着色规则即刻生效；原版不挂，保持浅底。失败（隐私模式）按原版走。
+      try {
+        var storedTheme = localStorage.getItem("dsharbor.ui.theme");
+        if (storedTheme === "nativeDark" || storedTheme === "native") {
+          document.documentElement.setAttribute("data-theme", storedTheme);
+        }
+      } catch (err) {
+        /* 读不到就按原版浅底走 */
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

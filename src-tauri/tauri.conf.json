@@ -10,25 +10,18 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "DSHarbor",
-        "width": 760,
-        "height": 700,
-        "minWidth": 720,
-        "minHeight": 520,
-        "center": true,
-        "decorations": false
-      }
-    ]
+    "windows": []
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "BoxMiao007",
     "shortDescription": "DSH Web 的轻量桌面壳",
-    "resources": ["resources/*.tgz"],
+    "resources": [
+      "resources/*.tgz"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,7 +32,9 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese"]
+        "languages": [
+          "SimpChinese"
+        ]
       }
     }
   }

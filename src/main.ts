@@ -64,6 +64,8 @@ interface ShellConfig {
   trayClick: TrayClick;
   /** 关闭窗口后延迟多少秒释放界面内存；0 = 立即。 */
   lightDelaySecs: number;
+  /** 界面主题的 Rust 侧镜像（见 save_ui_theme：开窗前定窗口装饰用）。 */
+  uiTheme: ThemeId;
 }
 
 /** 与 Rust 侧 `profile::PortHint` 对应。 */
@@ -328,6 +330,32 @@ function readStoredTheme(): ThemeId {
   return "classic";
 }
 
+/** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
+const TOGGLE_TEXT_REST = "启动 DSH";
+const TOGGLE_TEXT_HOVER = "开始运行";
+
+/** 逐字拆成 span；空格用 nbsp，否则在 inline-block 里会被折叠成 0 宽。 */
+function charsToSpans(text: string): string {
+  return Array.from(text)
+    .map((ch) => `<span>${ch === " " ? "&nbsp;" : ch}</span>`)
+    .join("");
+}
+
+/**
+ * 「启动 / 停止」按钮停止态的内部标记（两组文字做逐字切换，样式见 style.css 的
+ * #btn-toggle.swap）。buildHtml 的初始标记必须就用这一形态：-run 轮询 render 前
+ * 若按钮先以普通按钮（红底大「启动 DSH」）渲染一帧，开着界面/切主题就会闪一下红。
+ */
+function toggleSwapHtml(): string {
+  // 逐字 span 会被读屏逐字念出来，故对读屏隐藏画面、用 aria-label 给整体名字。
+  return (
+    `<span class="text-window" aria-hidden="true">` +
+    `<span class="span-mother">${charsToSpans(TOGGLE_TEXT_REST)}</span>` +
+    `<span class="span-mother2">${charsToSpans(TOGGLE_TEXT_HOVER)}</span>` +
+    `</span>`
+  );
+}
+
 /** 「原生」类的主题：外观照搬候选 I（它俩还共用一处差别：端口带上下箭头）。 */
 function isNativeLook(theme: ThemeId): boolean {
   return theme !== "classic";
@@ -413,7 +441,8 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   const sessionActionsRow = `
     <div class="actions-row">
       <div class="actions actions-primary">
-        <button id="btn-toggle" class="primary">启动 DSH</button>
+        <!-- 初始即停止态的逐字切换形态：首帧就用正确样式，等 render 前不会闪红底大字。 -->
+        <button id="btn-toggle" class="primary swap" aria-label="${TOGGLE_TEXT_REST}">${toggleSwapHtml()}</button>
         <button id="btn-restart" class="hidden"><span class="btn-text">重启 DSH</span><span class="btn-ico" aria-hidden="true">${ICON_RESTART}</span></button>
       </div>
       <div class="actions actions-open hidden" id="actions-open">
@@ -671,6 +700,13 @@ async function main(): Promise<void> {
     style.textContent = themeCss(next);
     if (!themeStyle) {
       document.head.appendChild(style);
+    }
+    // 同步 <html data-theme>：index.html 首屏内联样式按它预着色，避免深色主题
+    // 开窗先闪一帧亮底；主题切换时刷新，回到原版则摘掉（恢复浅底）。
+    if (isNativeLook(next)) {
+      document.documentElement.dataset.theme = next;
+    } else {
+      delete document.documentElement.dataset.theme;
     }
 
     root.innerHTML = buildHtml(info, next);
@@ -940,6 +976,9 @@ async function main(): Promise<void> {
           launch: collectConfig(),
           trayClick: trayPicker.value as TrayClick,
           lightDelaySecs: Number(lightDelayPicker.value),
+          // 主题镜像一致即可；写进 save_shell_config 会被整份串行化，若不一致也顺手对齐
+          // （正常路径由 switchTheme 单独走 save_ui_theme）。
+          uiTheme: theme,
         };
         await invoke("save_shell_config", { config: shell });
         // 配置已回到合法状态：把之前因非法输入显示的错误消掉。
@@ -1100,22 +1139,14 @@ async function main(): Promise<void> {
     /** 最近一次渲染的状态：「启动 / 停止」合并成一个按钮，靠它决定该发哪条命令。 */
     let currentStatus: SessionStatus | null = null;
 
-    /** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
-    const TOGGLE_TEXT_REST = "启动 DSH";
-    const TOGGLE_TEXT_HOVER = "开始运行";
-    /** 上次渲染的按钮形态：render 每秒跑一次，只在跨状态时重建 DOM，免得打断悬停动画。 */
-    let toggleMode: "swap" | "plain" | null = null;
-
-    /** 逐字拆成 span；空格用 nbsp，否则在 inline-block 里会被折叠成 0 宽。 */
-    function charsToSpans(text: string): string {
-      return Array.from(text)
-        .map((ch) => `<span>${ch === " " ? "&nbsp;" : ch}</span>`)
-        .join("");
-    }
+    /** 上次渲染的按钮形态：render 每秒跑一次，只在跨状态时重建 DOM。
+     * 初始就是 swap（buildHtml 的标记带 .swap），第一轮 render 不必重建。 */
+    let toggleMode: "swap" | "plain" | null = "swap";
 
     /**
      * 渲染「启动 / 停止」按钮：停止态用两组文字做逐字切换（样式在 style.css 的 #btn-toggle.swap），
      * 运行态是普通纯文本按钮。两种形态只在切换时重建一次。
+     * （TOGGLE_TEXT_* / charsToSpans / 初始 swap 标记在模块级，buildHtml 也要用。）
      */
     function renderToggleButton(stopped: boolean): void {
       const mode = stopped ? "swap" : "plain";
@@ -1128,14 +1159,9 @@ async function main(): Promise<void> {
         btnToggle.innerHTML = `<span class="btn-text">停止</span><span class="btn-ico" aria-hidden="true">${ICON_STOP}</span>`;
         return;
       }
-      // 逐字 span 会被读屏逐字念出来，故对读屏隐藏画面、用 aria-label 给整体名字。
       btnToggle.classList.add("swap");
       btnToggle.setAttribute("aria-label", TOGGLE_TEXT_REST);
-      btnToggle.innerHTML =
-        `<span class="text-window" aria-hidden="true">` +
-        `<span class="span-mother">${charsToSpans(TOGGLE_TEXT_REST)}</span>` +
-        `<span class="span-mother2">${charsToSpans(TOGGLE_TEXT_HOVER)}</span>` +
-        `</span>`;
+      btnToggle.innerHTML = toggleSwapHtml();
     }
 
     function render(status: SessionStatus): void {
@@ -1493,6 +1519,14 @@ async function main(): Promise<void> {
     refreshNowHook = refresh;
   }
 
+  /** 把主题镜像给 Rust（ui_theme）：开窗处要在页面加载前决定窗口装饰（见 save_ui_theme）。 */
+  function syncThemeToShell(next: ThemeId): void {
+    invoke("save_ui_theme", { theme: next }).catch((err) => {
+      // 失败只影响下次开窗的头一帧（可能闪一次自绘标题栏），本次界面不受影响。
+      console.debug("镜像主题到外壳失败:", err);
+    });
+  }
+
   /** 换主题：记下来（下次启动沿用）→ 按主题重建界面 → 调整窗口边框与标题栏。 */
   async function switchTheme(next: ThemeId): Promise<void> {
     theme = next;
@@ -1501,6 +1535,9 @@ async function main(): Promise<void> {
     } catch {
       // 存不下（隐私模式）也不影响这次切换，只是下次启动回到默认。
     }
+    // Rust 侧镜像同步要先行：万一用户在界面重建/窗口调整完成前关掉壳，
+    // 下次开窗也能按新主题出装饰。
+    syncThemeToShell(next);
     // 先挂界面再调窗口：标题栏颜色要取新主题的界面底色。
     await mount(next);
     await applyWindowChrome(next);
@@ -1621,6 +1658,9 @@ async function main(): Promise<void> {
   updateScrollThumbHook = updateScrollThumb;
 
   // 先挂界面再调窗口：标题栏颜色要取新主题的界面底色。
+  // 主题镜像给 Rust：老配置里没有这份镜像（主题本来只存 localStorage），启动时补齐，
+  // 下次开窗（含托盘重开）就能第一时间按主题出系统标题栏/自绘标题栏。
+  syncThemeToShell(theme);
   await mount(theme);
   await applyWindowChrome(theme);
 }

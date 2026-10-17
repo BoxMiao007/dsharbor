@@ -290,9 +290,16 @@ fn save_shell_config(app: tauri::AppHandle, config: settings::ShellConfig) -> Re
 }
 
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
+///
+/// async 命令：同步命令跑在主线程上，而读 target 环境配置在 WSL 模式下要起 wsl.exe
+/// （几百毫秒到数秒）——主线程一堵，窗口的拖动/滚动/点击全跟着僵（切换启动方式卡顿的根因）。
 #[tauri::command]
-fn profile_port_hint(config: LaunchConfig) -> Result<profile::PortHint, String> {
-    profile::port_hint(&config)
+async fn profile_port_hint(config: LaunchConfig) -> Result<profile::PortHint, String> {
+    // spawn_blocking 错掉（JoinError）或 port_hint 自己报错都要传给界面。
+    let hint = tauri::async_runtime::spawn_blocking(move || profile::port_hint(&config))
+        .await
+        .map_err(|err| format!("后台读取端口信息失败：{err}"))??;
+    Ok(hint)
 }
 
 /// 停掉当前会话（无会话时无事发生）。
@@ -305,8 +312,11 @@ fn stop_session(state: &AppState) {
 }
 
 /// 停止 DSH（杀进程树并等待退出）。
+///
+/// async 命令：结束进程树要等子进程真正退出（最坏等到超时），同步命令会把这段
+/// 等待全压在主线程上，点「停止」整个窗口跟着僵住。
 #[tauri::command]
-fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
     // 壳外检测到的 DSH 不是壳的子进程，代为结束既做不到也越权：
     // 明确说明，而不是让「停止」看起来按了没反应。
     let external = state.external_port.lock().ok().and_then(|slot| *slot);
@@ -391,8 +401,14 @@ fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option
 }
 
 /// 查询会话状态（前端每秒轮询一次）。
+///
+/// async 命令：无会话时这个命令会做壳外 DSH 探测（TCP + HTTP 指纹），环境里只要
+/// 有防火墙/安全软件拦一下就会等满超时——每秒都在主线程上等，拖动和滚动就一直卡。
 #[tauri::command]
-fn dsh_status(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> SessionStatus {
+async fn dsh_status(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SessionStatus, String> {
     let mut status = match state.session.lock() {
         Ok(mut guard) => match guard.as_mut() {
             Some(session) => session.status(),
@@ -427,13 +443,19 @@ fn dsh_status(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Sessi
     if let Ok(slot) = state.dsh_version.lock() {
         status.dsh_version = slot.clone();
     }
-    status
+    Ok(status)
 }
 
 /// 枚举 WSL 发行版（配置界面的下拉框）。
+///
+/// async 命令：wsl.exe 首次要拉起整个 WSL 子系统（秒级），同步命令会让切到
+/// 「通过 WSL 启动」时整个窗口发僵。
 #[tauri::command]
-fn list_wsl_distros() -> Result<Vec<String>, String> {
-    wsl::list_distros()
+async fn list_wsl_distros() -> Result<Vec<String>, String> {
+    let distros = tauri::async_runtime::spawn_blocking(wsl::list_distros)
+        .await
+        .map_err(|err| format!("后台枚举 WSL 发行版失败：{err}"))??;
+    Ok(distros)
 }
 
 /// 打开（或刷新）DSH 界面窗口——界面与托盘的「应用内打开」。
@@ -622,7 +644,27 @@ fn open_external(target: String) -> Result<(), String> {
 /// 主题「系统原生」用它把标题栏钉成和界面一样的色。`DWMWA_CAPTION_COLOR` 是
 /// Windows 11（build 22000）起才有的属性，旧系统上调用会失败——保持系统颜色即可。
 #[tauri::command]
+#[cfg(windows)]
 fn set_caption_color(window: tauri::Window, color: Option<u32>) -> Result<(), String> {
+    let hwnd = window
+        .hwnd()
+        .map_err(|err| format!("拿不到窗口句柄：{err}"))?
+        .0;
+    set_caption_color_raw(hwnd as isize, color);
+    Ok(())
+}
+
+/// 非 Windows 上没有 hwnd 可言：收下参数、保持系统颜色（本应用也只在 Windows 发版）。
+#[tauri::command]
+#[cfg(not(windows))]
+fn set_caption_color(window: tauri::Window, color: Option<u32>) -> Result<(), String> {
+    let _ = (window, color);
+    Ok(())
+}
+
+/// 上色动作本体：按句柄干活，`tauri::Window`（命令入口）与 `tauri::WebviewWindow`
+/// （建窗/启动流程入口）都能喂进来。
+fn set_caption_color_raw(hwnd: isize, color: Option<u32>) {
     #[cfg(windows)]
     {
         // dwmapi 是系统库，直接声明省一个依赖。
@@ -639,15 +681,11 @@ fn set_caption_color(window: tauri::Window, color: Option<u32>) -> Result<(), St
         // 这个值表示「没有自定义颜色」，交给系统主题决定。
         const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
 
-        let hwnd = window
-            .hwnd()
-            .map_err(|err| format!("拿不到窗口句柄：{err}"))?
-            .0;
         let value = color.unwrap_or(DWMWA_COLOR_DEFAULT);
-        // SAFETY：hwnd 来自本窗口；value 是栈上的 u32，按属性要求传 4 字节。
+        // SAFETY：hwnd 来自本进程的窗口；value 是栈上的 u32，按属性要求传 4 字节。
         let result = unsafe {
             DwmSetWindowAttribute(
-                hwnd,
+                hwnd as *mut core::ffi::c_void,
                 DWMWA_CAPTION_COLOR,
                 std::ptr::from_ref(&value).cast(),
                 4,
@@ -656,12 +694,47 @@ fn set_caption_color(window: tauri::Window, color: Option<u32>) -> Result<(), St
         if result < 0 && color.is_some() {
             eprintln!("自定义标题栏颜色失败（Windows 版本可能不支持）：0x{result:08X}");
         }
-        Ok(())
     }
     #[cfg(not(windows))]
     {
-        let _ = (window, color);
-        Ok(())
+        let _ = (hwnd, color);
+    }
+}
+
+/// 按已存主题在窗口层摆好外观：系统原生 → 系统标题栏 + 深色主题 + 界面同色 caption；
+/// 其余两套 → 无装饰（自绘标题栏）、caption 交回系统。
+///
+/// 必须在建窗/首帧之前调用：等前端挂载完再切，每次开窗（含托盘重开）都会先闪一帧
+/// 自绘标题栏（主题 1 的样子）再换成系统标题栏——这正是每次启动闪主题 1 的根因。
+fn apply_native_chrome(window: &tauri::WebviewWindow, native: bool) {
+    if let Err(err) = window.set_decorations(native) {
+        eprintln!("[dsharbor] 设置窗口装饰失败：{err}");
+    }
+    if native {
+        // 界面本身深色：钉成深色主题，免得系统标题栏给条浅色带（同前端 applyWindowChrome）。
+        if let Err(err) = window.set_theme(Some(tauri::Theme::Dark)) {
+            eprintln!("[dsharbor] 设置窗口深色主题失败：{err}");
+        }
+    }
+    // 界面底 #202020 → COLORREF 是 0x00202020（0x00BBGGRR）；非原生主题交回系统。
+    // hwnd() 只在 Windows 上存在（本应用也只在 Windows 发版，Linux 只是单测编译目标）。
+    #[cfg(windows)]
+    match window.hwnd() {
+        Ok(hwnd) => set_caption_color_raw(hwnd.0 as isize, native.then_some(0x0020_2020)),
+        Err(err) => eprintln!("[dsharbor] 拿不到窗口句柄，标题栏颜色保持默认：{err}"),
+    }
+    #[cfg(not(windows))]
+    let _ = native;
+}
+
+/// 开窗即定 webview 底色：WebView2 首次绘制前有一帧自身底色（纯白），index.html
+/// 再怎么预着色也管不到它。原生暗色主题（nativeDark/native）给 #202020，
+/// classic 给近页面底的浅灰。前端切主题不调这个——亮暗外壳瞬间整页覆盖，露不出底。
+fn webview_base_color(theme: Option<&str>) -> tauri::window::Color {
+    if matches!(theme, Some("nativeDark") | Some("native")) {
+        tauri::window::Color(32, 32, 32, 255)
+    } else {
+        tauri::window::Color(250, 251, 252, 255)
     }
 }
 
@@ -752,12 +825,36 @@ fn bridge_restore(
 }
 
 /// 查询桥接插件在当前目标环境中的状态。
+///
+/// async 命令：WSL 目标下要经 wsl.exe 读发行版里的文件（秒级），同步命令会让
+/// 换启动方式时整个窗口发僵（同 profile_port_hint）。
 #[tauri::command]
-fn bridge_state(
+async fn bridge_state(
     app: tauri::AppHandle,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeState, String> {
-    plugin::state(&app, &config)
+    let bridge = tauri::async_runtime::spawn_blocking(move || plugin::state(&app, &config))
+        .await
+        .map_err(|err| format!("后台读取桥接状态失败：{err}"))??;
+    Ok(bridge)
+}
+
+/// 记录界面主题（Rust 侧镜像）。
+///
+/// 主题本体记在 WebView 的 localStorage，Rust 读不到；但窗口装饰（主题 3 换系统
+/// 标题栏）必须在建窗那一刻定下来，不能等页面挂载完（否则每次开窗先闪一帧主题 1）。
+/// 所以界面每次换主题/启动时把值镜像一份到这里，开窗处（setup、create_main_window）读它。
+#[tauri::command]
+fn save_ui_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
+    if !matches!(theme.as_str(), "classic" | "nativeDark" | "native") {
+        return Err(format!("未知主题：{theme}"));
+    }
+    let mut config = settings::load(&app);
+    if config.ui_theme.as_deref() == Some(theme.as_str()) {
+        return Ok(());
+    }
+    config.ui_theme = Some(theme);
+    settings::save(&app, &config)
 }
 
 /// 轻量模式状态机的副作用执行器（托盘点击、关窗事件、测试钩子都走这里）。
@@ -944,6 +1041,23 @@ fn show_or_create_main(app: &tauri::AppHandle) {
 /// 漏一项不会有编译错误，只会让重建出来的窗口套回系统标题栏，而页面里的 .titlebar
 /// 依旧照画，于是「关窗后从托盘重开界面」变成上下两个标题栏（真机实测：客户区高度
 /// 之外的标题栏从 8px 变成 38px）。
+/// 按镜像的 ui_theme 建主窗口：装饰、webview 底色都按主题定，第一帧就是正确外观。
+/// 必须在主线程调用（背景见 create_main_window 注释）。
+fn build_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, tauri::Error> {
+    let theme = settings::load(app).ui_theme;
+    let native = theme.as_deref() == Some("native");
+    let base = webview_base_color(theme.as_deref());
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("DSHarbor")
+        .inner_size(760.0, 700.0)
+        .min_inner_size(720.0, 520.0)
+        .center()
+        .decorations(native)
+        .background_color(base)
+        .build()
+}
+
+/// 托盘重建主窗口的入口（首次启动的窗口在 setup 里建，不走这里）。
 ///
 /// 关键：经 `run_on_main_thread` 排队到主线程创建。窗口创建必须发生在主线程；
 /// 从 async_runtime 任务里直接 build 会触发 WebView2 的卡死/进程崩溃
@@ -958,16 +1072,16 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), String> {
         if app_for_main.get_webview_window("main").is_some() {
             return;
         }
-        let result =
-            WebviewWindowBuilder::new(&app_for_main, "main", WebviewUrl::App("index.html".into()))
-                .title("DSHarbor")
-                .inner_size(760.0, 700.0)
-                .min_inner_size(720.0, 520.0)
-                .center()
-                .decorations(false)
-                .build();
-        if let Err(err) = result {
-            eprintln!("[dsharbor] 创建主窗口失败：{err}");
+        let result = build_main_window(&app_for_main);
+        match result {
+            Ok(_window) => {
+                if let Some(window) = app_for_main.get_webview_window("main") {
+                    let native =
+                        settings::load(&app_for_main).ui_theme.as_deref() == Some("native");
+                    apply_native_chrome(&window, native);
+                }
+            }
+            Err(err) => eprintln!("[dsharbor] 创建主窗口失败：{err}"),
         }
     })
     .map_err(|err| format!("调度主窗口创建失败：{err}"))?;
@@ -1019,6 +1133,35 @@ pub fn run() {
         }))
         .manage(AppState::default())
         .setup(|app| {
+            // 主窗口不在 tauri.conf.json 里声明：conf 的装饰/底色是写死的，暗色主题
+            // 在这里按镜像的 ui_theme 现建，开窗第一帧就是正确外观（若由 conf 静态建窗，
+            // setup 再改也追不上 webview 的第一次绘制，暗色主题开窗必闪一帧浅底）。
+            // 必须赶在页面加载前，否则每次开窗都先闪一帧自绘标题栏（主题 3 尤其明显）。
+            let window = match app.get_webview_window("main") {
+                Some(window) => window,
+                None => {
+                    let theme = settings::load(app.handle()).ui_theme;
+                    let native = theme.as_deref() == Some("native");
+                    let base = webview_base_color(theme.as_deref());
+                    WebviewWindowBuilder::new(
+                        app.handle(),
+                        "main",
+                        WebviewUrl::App("index.html".into()),
+                    )
+                    .title("DSHarbor")
+                    .inner_size(760.0, 700.0)
+                    .min_inner_size(720.0, 520.0)
+                    .center()
+                    .decorations(native)
+                    .background_color(base)
+                    .build()
+                    .map_err(|err| format!("主窗口创建失败：{err}"))?
+                }
+            };
+            let theme = settings::load(app.handle()).ui_theme;
+            let native = theme.as_deref() == Some("native");
+            apply_native_chrome(&window, native);
+            let _ = window.set_background_color(Some(webview_base_color(theme.as_deref())));
             // 上次记录到的 DSH 版本号：壳重开后界面立刻沿用这个值，
             // 不再等（也不是）本次启动的查询——查询规则不变，见 query_dsh_version_async。
             if let Some(state) = app.try_state::<AppState>() {
@@ -1070,6 +1213,7 @@ pub fn run() {
             profile_port_hint,
             open_external,
             set_caption_color,
+            save_ui_theme,
             open_shell_dir
         ])
         .build(tauri::generate_context!())

@@ -34,6 +34,11 @@ pub struct ShellConfig {
     /// 旧配置没有这个键，取默认 0 = 现有行为。
     #[serde(default)]
     pub light_delay_secs: u64,
+    /// 界面主题的 Rust 侧镜像（JSON 键 `uiTheme`，classic|nativeDark|native）。
+    /// 主题本体在 WebView 的 localStorage；这里只为开窗时定窗口装饰——
+    /// 等页面挂载完再切会先闪一帧自绘标题栏，所以必须由 Rust 在建窗前读到。
+    #[serde(default)]
+    pub ui_theme: Option<String>,
 }
 
 impl Default for ShellConfig {
@@ -46,6 +51,7 @@ impl Default for ShellConfig {
             },
             tray_click: TrayClick::Launcher,
             light_delay_secs: 0,
+            ui_theme: None,
         }
     }
 }
@@ -86,6 +92,7 @@ pub fn load(app: &tauri::AppHandle) -> ShellConfig {
             launch,
             tray_click: TrayClick::default(),
             light_delay_secs: 0,
+            ui_theme: None,
         },
         Err(_) => ShellConfig::default(),
     }

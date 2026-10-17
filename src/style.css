@@ -244,27 +244,28 @@ body::before {
 /* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
    出现在徽章里，以及 <label> / .setting-label / .theme-field-label 的文字后面。
    徽章里是行内形式（跟文字排在同一条线上）；装在标签文字后面的那几个是角标：
-   绝对定位到标签的右上角、像上标一样不占文字的位置，尺寸也从 14px 收到 12px（2026-10-17
-   再收一轮：标签角标 13→11px，与 13px 上下文字成比例，观感不再比正文抢眼）。 */
+   绝对定位到标签的右上角、像上标一样不占文字的位置。尺寸一路收下来：14→12px，
+   2026-10-17 标签角标 13→11px；同日维护者仍嫌大、且相对所在元素偏高，再收成
+   行内 10px / 角标 9px，与所在元素比例协调、不遮相邻内容。 */
 
 .info-dot {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   flex: none;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: 8.5px;
+  font-size: 7.5px;
   font-weight: 700;
   line-height: 1;
   cursor: help;
 }
 
 /* 角标形式：贴在标签文字的右上角。承载它的元素要能当定位上下文，且宽度要收紧到文字
-   （三个标签在各自的列里都是撑满的，不收的话 right: -13px 会把角标摆到列表右缘、
+   （三个标签在各自的列里都是撑满的，不收的话 right: -11px 会把角标摆到列表右缘、
    悬停气泡再向右展开就凸出窗口）。 */
 .fields label,
 .setting-label,
@@ -277,11 +278,11 @@ body::before {
 .setting-label > .info-dot,
 .theme-field-label > .info-dot {
   position: absolute;
-  top: -4px;
-  right: -13px;
-  width: 11px;
-  height: 11px;
-  font-size: 8px;
+  top: -3px;
+  right: -11px;
+  width: 9px;
+  height: 9px;
+  font-size: 7px;
 }
 
 .info-dot::after {
@@ -418,22 +419,23 @@ button.primary:hover:not(:disabled) {
 /* 会话按钮的图标段 + 悬停漫过效果（参考 Uiverse.io cssbuttons-io 的滑入按钮，按三主题配色改编）：
    常态 = 文字居中 + 右端一个小图标分段（分隔线 + 右缘贴边）；
    悬停 = 图标板向左漫过整颗按钮、文字淡出；按下 = 图标轻缩一下。
-   「停止 / 重启 DSH」（红/黄实底）的分隔线用深一档的同底色；普通按钮用半透明白。
+   图标段是正方形（边长 --btn-ico-size = 按钮高度，主题 2/3 的矮按钮在 native-dark.css 收小）。
    只作用于 .actions-row 里的按钮，「启动 DSH」形态（.swap 逐字切换）不含图标段，不受影响。 */
 .actions-row button {
   position: relative;
   overflow: hidden;
   transition: background 200ms;
+  --btn-ico-size: 38px;
 }
 
 .actions-row button .btn-text {
   transition: opacity 200ms;
 }
 
-/* 图标段占右端 24px：给带图标的按钮把右侧内边距让出来（文字内边距 22px + 24px），
+/* 图标段占右端一个方格（38px）：给带图标的按钮把右侧内边距让出来（10px 间隙 + 方格），
    保证居中的文字不会被图标分段压住；「启动 DSH」形态没有图标段，不受影响。 */
 .actions-row button:has(.btn-ico) {
-  padding-right: calc(22px + 24px);
+  padding-right: calc(10px + var(--btn-ico-size));
 }
 
 .actions-row button .btn-ico {
@@ -441,7 +443,7 @@ button.primary:hover:not(:disabled) {
   top: 0;
   right: 0;
   height: 100%;
-  width: 24px;
+  width: var(--btn-ico-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -450,8 +452,8 @@ button.primary:hover:not(:disabled) {
 }
 
 .actions-row button .btn-ico svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -474,15 +476,33 @@ button.primary:hover:not(:disabled) {
   transform: scale(0.8);
 }
 
+/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。一次性动画（每次进入悬停转一圈），
+   结束位 = 静止位（360deg），不会在退出悬停时跳变。 */
+@keyframes btn-restart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#btn-restart:hover:not(:disabled) .btn-ico svg {
+  animation: btn-restart-spin 0.5s ease;
+}
+
 /* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）；悬停漫过效果走上面统一的 .btn-ico 机制。
    停止 = 红底白字，重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
    分隔线用深一档的同底色，让右端的图标分段落在这两颗亮色按钮上。
+   「停止」的悬停漫过用深红而不是统一的提亮白：红底上叠 16% 白会变浅红，维护者要求深红
+   （rgba(0,0,0,0.35) 叠在 #ff0000 上 ≈ #a60000）。重启仍是提亮白（黄底向浅黄走，与其余一致）。
    只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
 #btn-toggle:not(.swap) {
   background: #ff0000;
   border-color: #ff0000;
   color: #fff;
   --btn-ico-line: rgba(0, 0, 0, 0.22);
+}
+
+#btn-toggle:not(.swap):hover:not(:disabled) .btn-ico {
+  background: rgba(0, 0, 0, 0.35);
 }
 
 #btn-restart {

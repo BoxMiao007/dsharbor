@@ -228,6 +228,13 @@ button {
   font-size: 13.5px;
 }
 
+/* 会话按钮图标段的方格边长跟按钮高走：这套按钮统一 34px 高，34 才是正方形
+   （基础套的 38px 在这里会被压成长方形）。要压过 src/style.css 的
+   `.actions-row button{--btn-ico-size:38px}`，必须用同样的选择器（ 见 native-layout.css 的加载顺序）。 */
+.actions-row button {
+  --btn-ico-size: 34px;
+}
+
 button:hover:not(:disabled) {
   background: var(--j-panel-hi);
 }
@@ -258,6 +265,12 @@ button.primary:hover:not(:disabled) {
   background: #d63a3f;
   border-color: #d63a3f;
   color: #fff;
+}
+
+/* 「停止」悬停漫过同样要深红（跟 src/style.css 的处理一致）：这套的红是 #d63a3f，
+   叠 30% 黑 ≈ #96282c，避免统一的提亮白把红洗浅。 */
+#btn-toggle:not(.swap):hover:not(:disabled) .btn-ico {
+  background: rgba(0, 0, 0, 0.3);
 }
 
 #btn-restart {
