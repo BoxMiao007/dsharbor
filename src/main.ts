@@ -56,7 +56,7 @@ type CardKey = "session" | "modes" | "common" | "bridge" | "about";
 interface ShellConfig {
   launch: LaunchConfig;
   trayClick: TrayClick;
-  /** 关闭窗口后延迟多少秒进入轻量模式；0 = 立即。 */
+  /** 关闭窗口后延迟多少秒释放界面内存；0 = 立即。 */
   lightDelaySecs: number;
 }
 
@@ -375,7 +375,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <div class="titlebar-buttons">
         <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">${ICON_MINIMIZE}</button>
         <button id="win-max" class="win-btn" type="button" title="最大化" aria-label="最大化">${ICON_MAXIMIZE}</button>
-        <button id="win-close" class="win-btn win-close" type="button" title="关闭（轻量模式）" aria-label="关闭">${ICON_CLOSE}</button>
+        <button id="win-close" class="win-btn win-close" type="button" title="关闭窗口（DSH 继续运行）" aria-label="关闭">${ICON_CLOSE}</button>
       </div>
     </div>
   `;
@@ -383,7 +383,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <h1>${info.name}</h1>
   `;
   const tagline = `
-    <p class="tagline">DSH Web 的轻量桌面壳</p>
+    <p class="tagline">DSH Web 的桌面壳</p>
   `;
   const lightHint = `
     <p class="light-hint">关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻；单击托盘图标随时回来（关闭后多久进入、打开哪个窗口均可在下面设置）。</p>
@@ -433,7 +433,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <p class="hint">单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 应用内打开 / 打开启动界面」随时可用。</p>
     </div>
     <div class="fields tray-fields">
-      <label>关闭窗口后进入轻量模式</label>
+      <label>关闭窗口后释放界面内存</label>
       <div class="picker" id="light-delay-picker"></div>
       <p class="hint">关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。</p>
     </div>
@@ -547,7 +547,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         <div class="picker" id="tray-picker"></div>
       </div>
       <div class="setting-col">
-        <span class="setting-label">关闭窗口后进入轻量模式 <span class="info-dot" role="img" tabindex="0" aria-label="轻量模式说明" data-tip="关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。">!</span></span>
+        <span class="setting-label">关闭窗口后释放界面内存 <span class="info-dot" role="img" tabindex="0" aria-label="关闭窗口说明" data-tip="关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。">!</span></span>
         <div class="picker" id="light-delay-picker"></div>
       </div>
     </div>
@@ -706,7 +706,7 @@ async function main(): Promise<void> {
       { value: "dsh", label: "应用内窗口" },
     ]);
     const lightDelayPicker = new Picker("light-delay-picker", () => void persistConfigQuiet());
-    /** 「关闭窗口后进入轻量模式」的延迟候选，value 为秒数的十进制字符串。 */
+    /** 「关闭窗口后释放界面内存」的延迟候选，value 为秒数的十进制字符串。 */
     const LIGHT_DELAY_CHOICES: PickerChoice[] = [
       { value: "0", label: "立即" },
       { value: "5", label: "5 秒" },

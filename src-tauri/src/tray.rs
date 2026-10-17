@@ -34,7 +34,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .build()?;
 
     let mut builder = TrayIconBuilder::with_id("main")
-        .tooltip("DSHarbor — DSH Web 的轻量桌面壳")
+        .tooltip("DSHarbor — DSH Web 的桌面壳")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {

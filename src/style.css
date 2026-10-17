@@ -244,19 +244,20 @@ body::before {
 /* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
    出现在徽章里，以及 <label> / .setting-label / .theme-field-label 的文字后面。
    徽章里是行内形式（跟文字排在同一条线上）；装在标签文字后面的那几个是角标：
-   绝对定位到标签的右上角、像上标一样不占文字的位置，尺寸也从 14px 收到 13px。 */
+   绝对定位到标签的右上角、像上标一样不占文字的位置，尺寸也从 14px 收到 12px（2026-10-17
+   再收一轮：标签角标 13→11px，与 13px 上下文字成比例，观感不再比正文抢眼）。 */
 
 .info-dot {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex: none;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: 10px;
+  font-size: 8.5px;
   font-weight: 700;
   line-height: 1;
   cursor: help;
@@ -278,9 +279,9 @@ body::before {
   position: absolute;
   top: -4px;
   right: -13px;
-  width: 13px;
-  height: 13px;
-  font-size: 9px;
+  width: 11px;
+  height: 11px;
+  font-size: 8px;
 }
 
 .info-dot::after {
