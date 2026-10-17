@@ -265,7 +265,8 @@ body::before {
   cursor: help;
 }
 
-/* 角标形式：贴在标签文字的右上角。承载它的元素要能当定位上下文，且宽度要收紧到文字
+/* 角标形式：贴在标签文字的右上角（维护者嫌偏高，2026-10-17 晚从 -2px 再调低到 top:1px）。
+   承载它的元素要能当定位上下文，且宽度要收紧到文字
    （三个标签在各自的列里都是撑满的，不收的话 right: -9px 会把角标摆到列表右缘、
    悬停气泡再向右展开就凸出窗口）。 */
 .fields label,
@@ -279,7 +280,7 @@ body::before {
 .setting-label > .info-dot,
 .theme-field-label > .info-dot {
   position: absolute;
-  top: -2px;
+  top: 1px;
   right: -9px;
   width: 8px;
   height: 8px;
@@ -529,6 +530,11 @@ button.primary:hover:not(:disabled) {
   border-color: #f5ae51;
   color: #1b2536;
   --btn-ico-line: rgba(0, 0, 0, 0.18);
+}
+
+/* 重启图标改白色（维护者要求）：黄底深字按钮里图标跟文字同色会显闷，白图标旋转时更醒目。 */
+#btn-restart .btn-ico svg {
+  stroke: #fff;
 }
 
 /* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。
