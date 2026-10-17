@@ -265,7 +265,8 @@ body::before {
   cursor: help;
 }
 
-/* 角标形式：贴在标签文字的右上角（维护者嫌偏高，2026-10-17 晚从 -2px 再调低到 top:1px）。
+/* 角标形式：贴在标签文字的右上角（2026-10-17 晚两轮微调：先调低到 1px 又嫌紧贴文字，
+   定在 top:-1px / right:-10px，与文字留一圈缝隙）。
    承载它的元素要能当定位上下文，且宽度要收紧到文字
    （三个标签在各自的列里都是撑满的，不收的话 right: -9px 会把角标摆到列表右缘、
    悬停气泡再向右展开就凸出窗口）。 */
@@ -280,8 +281,8 @@ body::before {
 .setting-label > .info-dot,
 .theme-field-label > .info-dot {
   position: absolute;
-  top: 1px;
-  right: -9px;
+  top: -1px;
+  right: -10px;
   width: 8px;
   height: 8px;
   font-size: 6px;
@@ -418,11 +419,12 @@ button.primary:hover:not(:disabled) {
   background: #4a7cf0;
 }
 
-/* 会话按钮的图标段 + 悬停「图标板漫过」动效（2026-10-17 维护者在候选页里选定 C：原版 Uiverse
-   cssbuttons-io 的做法，节奏放慢到 500ms 与「重启 DSH」的旋转一致，四颗按钮统一）：
+/* 会话按钮的图标段 + 悬停「文字推出 + 图标板漫过」动效（2026-10-17 维护者定稿：
+   Uiverse cssbuttons-io 的漫过骨架 + 文字真正被推出去）：
    常态 = 文字居中 + 右端一个小图标分段（分隔线 + 右缘贴边）；
-   悬停 = 图标板向左漫过整颗按钮（宽度展开到全宽、分隔线消失、图标落到中央），文字原地淡出；
-   移开各自归位。任何状态下不改按钮/图标段的底色（红/黄纯色保持不变）。
+   悬停 = 图标板向左漫过整颗按钮（宽度全开、分隔线消失、图标落到中央）；
+   同时文字沿左被推出按钮外（overflow:hidden 裁掉，是位移不是淡出）；移开各自归位。
+   任何状态下不改按钮/图标段的底色（红/黄纯色保持不变）。
    图标段是正方形（边长 --btn-ico-size = 按钮高度，主题 2/3 的矮按钮在 native-dark.css 收小）。
    只作用于 .actions-row 里带图标的四颗按钮，「启动 DSH」形态（.swap 逐字切换）没有图标段，不受影响。 */
 .actions-row button {
@@ -432,7 +434,8 @@ button.primary:hover:not(:disabled) {
 }
 
 .actions-row button .btn-text {
-  transition: opacity 500ms ease;
+  display: inline-block;
+  transition: transform 500ms ease;
 }
 
 /* 图标段占右端一个方格（38px）：给带图标的按钮把右侧内边距让出来（10px 间隙 + 方格），
@@ -465,23 +468,25 @@ button.primary:hover:not(:disabled) {
   transition: transform 200ms;
 }
 
-/* 悬停：图标板漫过整颗按钮（宽度全开、分隔线消失、图标随板居中），文字原地淡出。
-   width参与的布局不受影响（图标段绝对定位），文字淡出后组件仍占原宽。 */
+/* 悬停：图标板漫过整颗按钮（宽度全开、分隔线消失、图标随板居中，需 500ms），
+   同时文字沿左推出按钮外、被 overflow 裁掉（位移不是淡出）。
+   推出量 = 文字自身宽度 + 64px：文字起点在按钮中央，这段距离足够连最宽的
+   「浏览器打开」（170px 按钮里约偏右 50px 起）也完全滑出左缘。 */
 .actions-row button:hover:not(:disabled) .btn-ico {
   width: 100%;
   border-left-color: transparent;
 }
 
 .actions-row button:hover:not(:disabled) .btn-text {
-  opacity: 0;
+  transform: translateX(calc(-100% - 64px));
 }
 
 .actions-row button:active:not(:disabled) .btn-ico svg {
   transform: scale(0.8);
 }
 
-/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。一次性动画（每次进入悬停转一圈），
-   结束位 = 静止位（360deg），不会在退出悬停时跳变。 */
+/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 500ms（= 图标板漫过整钮的时长），
+   图标到达中心后才开始起转；一次性动画，结束位 = 静止位（360deg），不会在退出悬停时跳变。 */
 @keyframes btn-restart-spin {
   to {
     transform: rotate(360deg);
@@ -489,12 +494,13 @@ button.primary:hover:not(:disabled) {
 }
 
 #btn-restart:hover:not(:disabled) .btn-ico svg {
-  animation: btn-restart-spin 0.5s ease;
+  animation: btn-restart-spin 0.5s ease 500ms;
 }
 
 /* 「停止」图标：实心方块（维护者要求），悬停时在实心与空心之间闪动一次——
    与「重启 DSH」的旋转同节奏（0.5s ease）。fill 不是可插值属性，按离散步进切换：
    实心 → 25% 处变空心 → 75% 处变回实心，看上就是一次来回闪动；结束位 = 实心常态，不跳变。
+   动画延迟 500ms（= 图标板漫过整钮的时长），图标到达中心后才开始闪动。
    只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
 @keyframes btn-stop-flash {
   0%,
@@ -511,13 +517,13 @@ button.primary:hover:not(:disabled) {
 }
 
 #btn-toggle:not(.swap):hover:not(:disabled) .btn-ico svg {
-  animation: btn-stop-flash 0.5s ease;
+  animation: btn-stop-flash 0.5s ease 500ms;
 }
 
 /* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
    停止 = 红底白字，重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
    分隔线用深一档的同底色，让右端的图标分段落在这两颗亮色按钮上。
-   悬停已于 2026-10-17 统一换成上面的「文字/图标互让一步」动效，不再改任何底色。 */
+   悬停动效已统一为上面的「文字向左推出 + 图标板漫过」，不改任何底色。 */
 #btn-toggle:not(.swap) {
   background: #ff0000;
   border-color: #ff0000;
@@ -530,11 +536,6 @@ button.primary:hover:not(:disabled) {
   border-color: #f5ae51;
   color: #1b2536;
   --btn-ico-line: rgba(0, 0, 0, 0.18);
-}
-
-/* 重启图标改白色（维护者要求）：黄底深字按钮里图标跟文字同色会显闷，白图标旋转时更醒目。 */
-#btn-restart .btn-ico svg {
-  stroke: #fff;
 }
 
 /* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。
