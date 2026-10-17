@@ -14,9 +14,9 @@
       {
         "label": "main",
         "title": "DSHarbor",
-        "width": 1000,
+        "width": 760,
         "height": 700,
-        "minWidth": 960,
+        "minWidth": 720,
         "minHeight": 520,
         "center": true,
         "decorations": false

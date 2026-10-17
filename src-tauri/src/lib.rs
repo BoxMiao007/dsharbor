@@ -856,8 +856,8 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), String> {
         let result =
             WebviewWindowBuilder::new(&app_for_main, "main", WebviewUrl::App("index.html".into()))
                 .title("DSHarbor")
-                .inner_size(1000.0, 700.0)
-                .min_inner_size(960.0, 520.0)
+                .inner_size(760.0, 700.0)
+                .min_inner_size(720.0, 520.0)
                 .center()
                 .decorations(false)
                 .build();
