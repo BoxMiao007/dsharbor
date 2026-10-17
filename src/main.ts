@@ -583,14 +583,17 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
 
   // 主题三：状态、提示、四颗动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
   // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色维持四张卡片的老样子。
-  // hero 卡片：标题区 + 提示 + 状态徽章一行 + 按钮块（两行、整块靠右）+ 最近输出。
+  // hero 卡片：标题区 + 提示 + （状态徽章居左、按钮块靠右）同一行 + 最近输出。
+  // 徽章与按钮套一层 .hero-status-row：只把空白填上，不改变两边各自的内容与排列。
   const heroSection = nativeLayout
     ? `<section class="card hero-card">
   ${header}
   ${statusErrorBlock}
   ${loginNoteBlock}
-  ${badges}
-  ${heroActions}
+  <div class="hero-status-row">
+    ${badges}
+    ${heroActions}
+  </div>
   <div class="hero-log">${logBlock}</div>
 </section>`
     : "";
