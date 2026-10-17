@@ -265,8 +265,8 @@ body::before {
   cursor: help;
 }
 
-/* 角标形式：贴在标签文字的右上角（2026-10-17 晚两轮微调：先调低到 1px 又嫌紧贴文字，
-   定在 top:-1px / right:-10px，与文字留一圈缝隙）。
+/* 角标形式：贴在标签文字的右上角（2026-10-17 晚三轮微调：1px→-1px→top:0，
+   定在与文字轻微咬合的高度、横向留缝 right:-10px）。
    承载它的元素要能当定位上下文，且宽度要收紧到文字
    （三个标签在各自的列里都是撑满的，不收的话 right: -9px 会把角标摆到列表右缘、
    悬停气泡再向右展开就凸出窗口）。 */
@@ -281,7 +281,7 @@ body::before {
 .setting-label > .info-dot,
 .theme-field-label > .info-dot {
   position: absolute;
-  top: -1px;
+  top: 0;
   right: -10px;
   width: 8px;
   height: 8px;
@@ -430,6 +430,8 @@ button.primary:hover:not(:disabled) {
 .actions-row button {
   position: relative;
   overflow: hidden;
+  /* 高亮底色的过渡（200ms，Uiverse 参考的节奏）：停止/重启悬停提亮时平滑变色。 */
+  transition: background 200ms;
   --btn-ico-size: 38px;
 }
 
@@ -485,8 +487,9 @@ button.primary:hover:not(:disabled) {
   transform: scale(0.8);
 }
 
-/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 500ms（= 图标板漫过整钮的时长），
-   图标到达中心后才开始起转；一次性动画，结束位 = 静止位（360deg），不会在退出悬停时跳变。 */
+/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 300ms（图标板漫过需 500ms，
+   提前 200ms 起转，接近中心时动画已在进行）；一次性动画，结束位 = 静止位（360deg），
+   不会在退出悬停时跳变。 */
 @keyframes btn-restart-spin {
   to {
     transform: rotate(360deg);
@@ -494,13 +497,13 @@ button.primary:hover:not(:disabled) {
 }
 
 #btn-restart:hover:not(:disabled) .btn-ico svg {
-  animation: btn-restart-spin 0.5s ease 500ms;
+  animation: btn-restart-spin 0.5s ease 300ms;
 }
 
 /* 「停止」图标：实心方块（维护者要求），悬停时在实心与空心之间闪动一次——
    与「重启 DSH」的旋转同节奏（0.5s ease）。fill 不是可插值属性，按离散步进切换：
    实心 → 25% 处变空心 → 75% 处变回实心，看上就是一次来回闪动；结束位 = 实心常态，不跳变。
-   动画延迟 500ms（= 图标板漫过整钮的时长），图标到达中心后才开始闪动。
+   动画延迟 300ms（提前 200ms 起势，接近中心时已在闪动）。
    只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
 @keyframes btn-stop-flash {
   0%,
@@ -517,18 +520,25 @@ button.primary:hover:not(:disabled) {
 }
 
 #btn-toggle:not(.swap):hover:not(:disabled) .btn-ico svg {
-  animation: btn-stop-flash 0.5s ease 500ms;
+  animation: btn-stop-flash 0.5s ease 300ms;
 }
 
 /* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
-   停止 = 红底白字，重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
+   停止 = 红底白字（#e62222，2026-10-17 晚从 #ff0000 调整），重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
    分隔线用深一档的同底色，让右端的图标分段落在这两颗亮色按钮上。
-   悬停动效已统一为上面的「文字向左推出 + 图标板漫过」，不改任何底色。 */
+   悬停 = 漫过动效 + 高亮加回（维护者要求）：停止提亮到 #ff3636（Uiverse 参考的高亮红），
+   重启用 brightness 轻提亮（两套主题通用，不硬编码色值）。 */
+
 #btn-toggle:not(.swap) {
-  background: #ff0000;
-  border-color: #ff0000;
+  background: #e62222;
+  border-color: #e62222;
   color: #fff;
   --btn-ico-line: rgba(0, 0, 0, 0.22);
+}
+
+#btn-toggle:not(.swap):hover:not(:disabled) {
+  background: #ff3636;
+  border-color: #ff3636;
 }
 
 #btn-restart {
@@ -536,6 +546,10 @@ button.primary:hover:not(:disabled) {
   border-color: #f5ae51;
   color: #1b2536;
   --btn-ico-line: rgba(0, 0, 0, 0.18);
+}
+
+#btn-restart:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
 /* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。

@@ -259,12 +259,11 @@ button.primary:hover:not(:disabled) {
   border-radius: var(--j-r-list);
 }
 
-/* 「停止 / 重启 DSH」改成纯色填充（维护者要求去掉悬停特效）：基础那套已经不带
-   ::before 覆盖层与过渡，这里把颜色换成 I 调色板里的红与黄。悬停动效与主题 1 一致
-   （文字/图标互让一步），点名的红色按钮悬停不再加深。 */
+/* 「停止 / 重启 DSH」纯色填充与主题 1 对齐（维护者 2026-10-17 晚把停止统一成 #e62222）；
+   悬停提亮 #ff3636 走 src/style.css 的基础规则，这里不用重复。 */
 #btn-toggle:not(.swap) {
-  background: #d63a3f;
-  border-color: #d63a3f;
+  background: #e62222;
+  border-color: #e62222;
   color: #fff;
 }
 
