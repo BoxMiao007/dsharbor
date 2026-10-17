@@ -4,6 +4,7 @@
 //! 轻量模式（关窗销毁 WebView、DSH 常驻、托盘常驻）由核心库的
 //! `dsharbor_core::lifecycle` 状态机决策，本文件只负责执行副作用。
 
+mod detect;
 mod launcher;
 mod plugin;
 mod profile;
@@ -59,6 +60,10 @@ struct AppState {
     spawn_error: Mutex<Option<String>>,
     /// 最近一次成功启动的 DSH 版本号；随状态轮询回给界面（取不到时保持 None）。
     dsh_version: Mutex<Option<String>>,
+    /// 壳外检测：目标端口上已有 DSH Web 在听（不是壳的子进程）时记下端口；消失即清。
+    external_port: Mutex<Option<u16>>,
+    /// 已把保存的启动配置懒加载进 last_config（壳刚打开还没有启动过时，外部检测照常要端口）。
+    last_config_loaded: std::sync::atomic::AtomicBool,
     /// 延迟销毁主窗口的世代号：每次重新计时或撤销计时都自增，
     /// 上一轮的计时线程醒来发现不是最新一代就直接放弃（见 arm_light_destroy）。
     light_generation: std::sync::atomic::AtomicU64,
@@ -135,6 +140,7 @@ fn spawn_session(
     config: &LaunchConfig,
     launcher_args: &[String],
 ) -> Result<(), String> {
+    let mut spawned_child = false;
     let result = {
         let mut guard = state
             .session
@@ -146,18 +152,39 @@ fn spawn_session(
             }
         }
         *guard = None;
-        match launcher::spawn(config, launcher_args) {
-            Ok(session) => {
-                *guard = Some(session);
+        // 壳外检测：目标端口已有服务在听就不盲目拉起第二个进程。
+        // 确认是 DSH（多半是上次壳异常退出的残留，或用户自己起的）→ 按外部运行中报送；
+        // 是别的程序占着端口 → 给出明确的占用提示，代替原先干巴巴的退出代码。
+        let port = detect::effective_port(config);
+        if detect::port_alive(port) {
+            if detect::dsh_fingerprint(port) == Some(true) {
+                if let Ok(mut slot) = state.external_port.lock() {
+                    *slot = Some(port);
+                }
                 Ok(())
+            } else {
+                Err(format!(
+                    "检测到端口 {port} 已被其他程序占用，没有启动新进程；可更换端口或结束占用它的程序后再试。"
+                ))
             }
-            Err(err) => Err(err),
+        } else {
+            if let Ok(mut slot) = state.external_port.lock() {
+                *slot = None;
+            }
+            match launcher::spawn(config, launcher_args) {
+                Ok(session) => {
+                    *guard = Some(session);
+                    spawned_child = true;
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
         }
     };
     if let Ok(mut slot) = state.spawn_error.lock() {
         *slot = result.as_ref().err().cloned();
     }
-    if result.is_ok() {
+    if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
         query_dsh_version_async(app, config);
     }
@@ -280,6 +307,19 @@ fn stop_session(state: &AppState) {
 /// 停止 DSH（杀进程树并等待退出）。
 #[tauri::command]
 fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    // 壳外检测到的 DSH 不是壳的子进程，代为结束既做不到也越权：
+    // 明确说明，而不是让「停止」看起来按了没反应。
+    let external = state.external_port.lock().ok().and_then(|slot| *slot);
+    if let Some(port) = external {
+        if detect::port_alive(port) {
+            return Err(format!(
+                "127.0.0.1:{port} 上的 DSH 不是本壳启动的，无法代为结束；请自行结束该进程后再试。"
+            ));
+        }
+        if let Ok(mut slot) = state.external_port.lock() {
+            *slot = None;
+        }
+    }
     let mut guard = state
         .session
         .lock()
@@ -291,18 +331,83 @@ fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// 壳外 DSH 按「运行中」报送时的状态：进程不是壳的子进程，PID 未知；
+/// 来龙去脉写进日志区说明，不假装报错、也不假装停止/重启对它有效。
+fn external_status(port: u16) -> SessionStatus {
+    SessionStatus {
+        state: launcher::SessionState::Running,
+        pid: None,
+        port: Some(port),
+        error: None,
+        log_tail: vec![format!(
+            "检测到 127.0.0.1:{port} 已有 DSH Web 在运行（不是本壳启动的，可能是上次壳异常退出留下的）。为避免端口冲突没有重复拉起新进程；要由本壳管理（登录链接 / 停止 / 重启），请先结束该进程再点「启动 DSH」。"
+        )],
+        login_ready: false,
+        login_channel: None,
+        login_error: None,
+        dsh_version: None,
+    }
+}
+
+/// 无会话时的壳外检测：外部标记还活着就继续报送；没有标记就用「最近一次启动配置（否则读一次已保存配置）」的目标端口探一下，探到 DSH 就记标记。
+fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option<SessionStatus> {
+    if let Ok(mut slot) = state.external_port.lock() {
+        match *slot {
+            Some(port) => {
+                if detect::port_alive(port) {
+                    return Some(external_status(port));
+                }
+                *slot = None;
+            }
+            None => {
+                let config = {
+                    let mut guard = state.last_config.lock().ok()?;
+                    if guard.is_none()
+                        && !state
+                            .last_config_loaded
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        // 只读一次盘：壳刚打开、还没在壳里启动过，用已保存的启动方式探测。
+                        *guard = Some(settings::load(app).launch);
+                        state
+                            .last_config_loaded
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    guard.clone()
+                };
+                if let Some(config) = config {
+                    let port = detect::effective_port(&config);
+                    if detect::port_alive(port) && detect::dsh_fingerprint(port) == Some(true) {
+                        // 用外层 slot 守卫直接写：Mutex 不可重入，这里再 lock() 一把会永久卡死
+                        // dsh_status（真实事故：探到壳外 DSH 就整只壳停在初始停止态）。
+                        *slot = Some(port);
+                        return Some(external_status(port));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 查询会话状态（前端每秒轮询一次）。
 #[tauri::command]
-fn dsh_status(state: tauri::State<'_, AppState>) -> SessionStatus {
+fn dsh_status(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> SessionStatus {
     let mut status = match state.session.lock() {
         Ok(mut guard) => match guard.as_mut() {
             Some(session) => session.status(),
             None => {
-                // 无会话时也要把托盘重启等后台启动失败的原因显示出来。
-                let mut status = SessionStatus::stopped();
-                if let Ok(slot) = state.spawn_error.lock() {
-                    status.error = slot.clone();
-                }
+                // 无会话时先做壳外检测：目标端口上已有 DSH 在听（上次壳异常退出的残留，
+                // 或用户自己在终端起的）就按「运行中（外部）」报送，不重复拉起；
+                // 标记的进程消失了就清掉，回到普通停止态。
+                let status = external_detection_status(&app, &state).unwrap_or_else(|| {
+                    // 无外部 DSH 时也要把托盘重启等后台启动失败的原因显示出来。
+                    let mut status = SessionStatus::stopped();
+                    if let Ok(slot) = state.spawn_error.lock() {
+                        status.error = slot.clone();
+                    }
+                    status
+                });
                 status
             }
         },

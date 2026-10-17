@@ -415,19 +415,81 @@ button.primary:hover:not(:disabled) {
   background: #4a7cf0;
 }
 
-/* 「停止 / 重启 DSH」：纯色填充，没有悬停与过渡（维护者要求去掉特效）。
+/* 会话按钮的图标段 + 悬停漫过效果（参考 Uiverse.io cssbuttons-io 的滑入按钮，按三主题配色改编）：
+   常态 = 文字居中 + 右端一个小图标分段（分隔线 + 右缘贴边）；
+   悬停 = 图标板向左漫过整颗按钮、文字淡出；按下 = 图标轻缩一下。
+   「停止 / 重启 DSH」（红/黄实底）的分隔线用深一档的同底色；普通按钮用半透明白。
+   只作用于 .actions-row 里的按钮，「启动 DSH」形态（.swap 逐字切换）不含图标段，不受影响。 */
+.actions-row button {
+  position: relative;
+  overflow: hidden;
+  transition: background 200ms;
+}
+
+.actions-row button .btn-text {
+  transition: opacity 200ms;
+}
+
+/* 图标段占右端 24px：给带图标的按钮把右侧内边距让出来（文字内边距 22px + 24px），
+   保证居中的文字不会被图标分段压住；「启动 DSH」形态没有图标段，不受影响。 */
+.actions-row button:has(.btn-ico) {
+  padding-right: calc(22px + 24px);
+}
+
+.actions-row button .btn-ico {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid var(--btn-ico-line, rgba(255, 255, 255, 0.28));
+  transition: width 200ms, border-color 200ms, background 200ms;
+}
+
+.actions-row button .btn-ico svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 200ms;
+}
+
+.actions-row button:hover:not(:disabled) .btn-ico {
+  width: 100%;
+  border-left-color: transparent;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.actions-row button:hover:not(:disabled) .btn-text {
+  opacity: 0;
+}
+
+.actions-row button:active:not(:disabled) .btn-ico svg {
+  transform: scale(0.8);
+}
+
+/* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）；悬停漫过效果走上面统一的 .btn-ico 机制。
    停止 = 红底白字，重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
+   分隔线用深一档的同底色，让右端的图标分段落在这两颗亮色按钮上。
    只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
 #btn-toggle:not(.swap) {
   background: #ff0000;
   border-color: #ff0000;
   color: #fff;
+  --btn-ico-line: rgba(0, 0, 0, 0.22);
 }
 
 #btn-restart {
   background: #f5ae51;
   border-color: #f5ae51;
   color: #1b2536;
+  --btn-ico-line: rgba(0, 0, 0, 0.18);
 }
 
 /* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。

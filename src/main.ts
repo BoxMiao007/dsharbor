@@ -16,6 +16,12 @@ const ICON_MAXIMIZE = `<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.6"
 const ICON_RESTORE = `<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.6" y="2.6" width="6.8" height="6.8" rx="1.3" /><path d="M3 2.6V1.6h5.4a1 1 0 0 1 1 1v5.4H8.4" /></svg>`;
 const ICON_CLOSE = `<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1 9 9M9 1 1 9" /></svg>`;
 
+/** 会话按钮的图标（描边风格跟随系统线条；描边参数在 style.css 的 .btn-ico 统一给）。 */
+const ICON_STOP = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" /></svg>`;
+const ICON_RESTART = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" /><path d="M21 3v5h-5" /></svg>`;
+const ICON_OPEN_APP = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="2" /><path d="M2.5 9h19" /><path d="M6.5 4.5V9" /><path d="M10.5 4.5V9" /></svg>`;
+const ICON_OPEN_BROWSER = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" /><path d="M2.5 12h19" /><path d="M12 2.5a14.7 14.7 0 0 1 3.8 9.5 14.7 14.7 0 0 1-3.8 9.5 14.7 14.7 0 0 1-3.8-9.5A14.7 14.7 0 0 1 12 2.5z" /></svg>`;
+
 /** 与 Rust 侧 `app_info` 命令的返回结构一一对应。 */
 interface AppInfo {
   name: string;
@@ -408,11 +414,11 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <div class="actions-row">
       <div class="actions actions-primary">
         <button id="btn-toggle" class="primary">启动 DSH</button>
-        <button id="btn-restart" class="hidden">重启 DSH</button>
+        <button id="btn-restart" class="hidden"><span class="btn-text">重启 DSH</span><span class="btn-ico" aria-hidden="true">${ICON_RESTART}</span></button>
       </div>
       <div class="actions actions-open hidden" id="actions-open">
-        <button id="btn-open-app" disabled>应用内打开</button>
-        <button id="btn-open-browser" disabled>浏览器打开</button>
+        <button id="btn-open-app" disabled><span class="btn-text">应用内打开</span><span class="btn-ico" aria-hidden="true">${ICON_OPEN_APP}</span></button>
+        <button id="btn-open-browser" disabled><span class="btn-text">浏览器打开</span><span class="btn-ico" aria-hidden="true">${ICON_OPEN_BROWSER}</span></button>
       </div>
     </div>
   `;
@@ -1048,9 +1054,12 @@ async function main(): Promise<void> {
       loginInfo.setAttribute("aria-label", `登录链接说明：${text}`);
     }
 
-    /** 「启动中」= 进程已起来、登录链接还没就绪（npx 首次下载与 DSH 冷启动都停在这一步）。 */
+    /**
+     * 「启动中」= 本壳拉起的进程已起来、登录链接还没就绪（npx 首次下载与 DSH 冷启动都停在这一步）。
+     * 壳外检测到的 DSH（pid 未知）不在等待登录链接的路上，直接按「运行中」显示，否则会永远转圈。
+     */
     function isStarting(status: SessionStatus): boolean {
-      return status.state === "running" && !status.loginReady && !status.loginError;
+      return status.state === "running" && status.pid !== null && !status.loginReady && !status.loginError;
     }
 
     /**
@@ -1115,7 +1124,8 @@ async function main(): Promise<void> {
       if (!stopped) {
         btnToggle.classList.remove("swap");
         btnToggle.removeAttribute("aria-label");
-        btnToggle.textContent = "停止";
+        // 「停止」与其余三颗会话按钮一样带图标段（悬停展开效果由 CSS 统一处理）。
+        btnToggle.innerHTML = `<span class="btn-text">停止</span><span class="btn-ico" aria-hidden="true">${ICON_STOP}</span>`;
         return;
       }
       // 逐字 span 会被读屏逐字念出来，故对读屏隐藏画面、用 aria-label 给整体名字。
