@@ -96,56 +96,11 @@ body {
   font-size: 12px;
 }
 
-/* 状态徽章与操作按钮同一行：徽章居左、按钮块居右（维护者要求），
-   按钮块左侧那片空白由徽章填上。
-   徽章组拿满剩余宽度、内部自行折行（.status-row 本来就是 flex-wrap）；
-   停止态五枚徽章不到 430px，一行放得下；运行态版本号与 PID / 端口变长，
-   溢出的徽章落到第二行，仍与两行高的按钮块同处一行，卡片高度不变。
-   按钮块永不换行（flex: none），始终钉在右侧。 */
-.hero-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+/* 状态徽章行回到独立一整行（三个主题统一的排版）：下面跟着占满一行的按钮行，
+   拉伸、靠右、换行全在 style.css 的 .actions-row；这里只补徽章行与上方提示文字的间距
+   （它和按钮行的间距由 .status-row 自带的 margin-bottom 负责）。 */
+.hero-card .status-row {
   margin-top: 10px;
-}
-
-/* 徽章组：吃掉按钮块剩下的宽度；外边距交给 .hero-status-row，自己清零。
-   徽章内边距与组内间距各收一点，为的是停止态五枚徽章能落在一行：
-   正文 643px − 按钮块 203px − 组间距 10px = 429px 可用，按候选 I 的数值
-   （内边距 10px、间距 8px）要 439px，就会有一枚掉到第二行；收到 7px / 6px 后是 421px，
-   留 8px 余量。再挤（运行态版本号 + 四位 PID + 四位端口 ≈ 443px）徽章自己折第二行，
-   按钮块不动、卡片高度也不变。 */
-.hero-status-row > .status-row {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  gap: 6px;
-}
-
-/* 只收紧徽章：--badge-padding-x 还管着日志复制按钮与端口「还原」按钮，不动那两个。 */
-.hero-status-row .badge {
-  padding: 0 7px;
-}
-
-/* 按钮块：两行两列、整块靠右。
-   行一 = 「启动 DSH」（跨两列，宽度 = 下方两颗之和）/ 运行时换成「停止｜重启 DSH」；
-   行二 = 「应用内打开｜浏览器打开」，这两颗是尺寸基准。
-   max-content 列取该列最宽的那颗：应用内打开 / 浏览器打开 比 停止 / 重启 DSH 宽，
-   于是两行里的四颗宽度一致，行一不管跨列还是分列都与行二对齐。
-   它是 .hero-status-row 里的右侧项：flex:none 让它按内容宽度（203px）落位，
-   上外边距归外层那行管（见 .hero-status-row 的 margin-top）。 */
-.hero-actions {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  justify-content: end;
-  gap: 8px;
-  flex: none;
-}
-
-/* 「启动 DSH」形态（.swap）占满两列；「停止」形态只占第一列。 */
-.hero-actions #btn-toggle.swap {
-  grid-column: 1 / -1;
 }
 
 /* 最近输出：与上面的按钮隔一条细线（I 的日志块前面也有一道 .log-head 分隔）。

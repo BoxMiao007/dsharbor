@@ -397,26 +397,20 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <span class="status-meta">端口：<b id="status-port">—</b></span>
     </div>
   `;
-  // hero 卡片里的四颗按钮（主题三专用）：原版排版的两行按钮见 sessionActionsRow。
-  // 排列交给 native-layout.css 的 .hero-actions（两行两列：启动/停止重启在上、两个打开在下）。
-  const heroActions = `
-    <div class="hero-actions actions">
-      <button id="btn-toggle" class="primary">启动 DSH</button>
-      <button id="btn-restart">重启 DSH</button>
-      <button id="btn-open-app" disabled>应用内打开</button>
-      <button id="btn-open-browser" disabled>浏览器打开</button>
-    </div>
-  `;
-  // 会话区共用件：hero 卡片（主题三）与原版「DSH 会话」卡片用同一份标记，id 不变，绑定代码共用。
+  // 会话区共用件：三个主题同一份标记，id 不变，绑定代码共用。
   const statusErrorBlock = `<p id="status-error" class="error hidden"></p>`;
   const loginNoteBlock = `<p id="login-note" class="hint login-note hidden"></p>`;
+  // 按钮行（维护者要求，三个主题统一）：排在状态徽章行下面、占满一整行。
+  // 启动前整行只有「启动 DSH」；运行后「停止 / 重启 DSH」撑满左侧余量，
+  // 「应用内打开 / 浏览器打开」靠右。两组的显隐由 render() 按状态切换，
+  // 拉伸与靠右在 style.css 的 .actions-row 里。
   const sessionActionsRow = `
     <div class="actions-row">
-      <div class="actions">
+      <div class="actions actions-primary">
         <button id="btn-toggle" class="primary">启动 DSH</button>
-        <button id="btn-restart">重启 DSH</button>
+        <button id="btn-restart" class="hidden">重启 DSH</button>
       </div>
-      <div class="actions">
+      <div class="actions actions-open hidden" id="actions-open">
         <button id="btn-open-app" disabled>应用内打开</button>
         <button id="btn-open-browser" disabled>浏览器打开</button>
       </div>
@@ -581,19 +575,16 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
 </header>`
     : `<header class="head">${titleAndTagline}</header>`;
 
-  // 主题三：状态、提示、四颗动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
+  // 主题三：状态、提示、动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
   // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色维持四张卡片的老样子。
-  // hero 卡片：标题区 + 提示 + （状态徽章居左、按钮块靠右）同一行 + 最近输出。
-  // 徽章与按钮套一层 .hero-status-row：只把空白填上，不改变两边各自的内容与排列。
+  // hero 卡片：标题区 + 提示 + 状态徽章行 + 按钮行（三个主题同一套排版）+ 最近输出。
   const heroSection = nativeLayout
     ? `<section class="card hero-card">
   ${header}
   ${statusErrorBlock}
   ${loginNoteBlock}
-  <div class="hero-status-row">
-    ${badges}
-    ${heroActions}
-  </div>
+  ${badges}
+  ${sessionActionsRow}
   <div class="hero-log">${logBlock}</div>
 </section>`
     : "";
@@ -708,6 +699,7 @@ async function main(): Promise<void> {
     const loginNote = $<HTMLParagraphElement>("login-note");
     const btnOpenApp = $<HTMLButtonElement>("btn-open-app");
     const btnOpenBrowser = $<HTMLButtonElement>("btn-open-browser");
+    const actionsOpen = $<HTMLElement>("actions-open");
     const trayPicker = new Picker("tray-picker", () => void persistConfigQuiet());
     trayPicker.setChoices([
       { value: "launcher", label: "启动界面（默认）" },
@@ -1164,6 +1156,8 @@ async function main(): Promise<void> {
       // 「重启 DSH」只在运行中出现（维护者要求）：启动前整个界面只有一个「启动 DSH」，
       // 起来之后才同时给出「停止 / 重启 DSH」。
       btnRestart.classList.toggle("hidden", !running);
+      // 「应用内打开 / 浏览器打开」整组也只在运行后出现（维护者要求）：启动前按钮行整行就是「启动 DSH」。
+      actionsOpen.classList.toggle("hidden", !running);
 
       // 登录链接徽章：桥接就绪 > 日志兜底就绪 > 等待中 > 获取失败。
       // 正常状态的细节说明放在徽章的感叹号气泡里（维护者要求），失败信息仍留在行内便于直接排查。

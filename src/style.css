@@ -357,17 +357,26 @@ body::before {
   gap: 10px;
 }
 
-/* 两组操作按钮同排（维护者要求）：组内间距 10px；窗口有余量时第二组（打开界面）
-   被 `margin-left: auto` 推到右缘，与左侧「控制 DSH」分列左右；余量不足时先退到
-   28px 的组间距，再整体换行，不挤压按钮。 */
+/* 按钮行（维护者要求，三个主题统一）：排在状态徽章行下面、占满一整行。
+   主组（启动 DSH，或运行后的 停止 + 重启 DSH）撑满左侧余量、组内两颗平分宽度；
+   打开组（应用内打开 / 浏览器打开）按内容宽度靠右，由 render() 只在运行后移除 .hidden。
+   窗口窄到放不下两组时打开组整体换行到下一行，仍靠右，不挤压按钮。 */
 .actions-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   flex-wrap: wrap;
-  gap: 10px 28px;
+  gap: 10px;
 }
 
-.actions-row > .actions + .actions {
+.actions-row > .actions-primary {
+  flex: 1 1 auto;
+}
+
+.actions-row > .actions-primary > button {
+  flex: 1 1 0;
+}
+
+.actions-row > .actions-open {
   margin-left: auto;
 }
 
