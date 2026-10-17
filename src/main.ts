@@ -360,6 +360,76 @@ function toggleSwapHtml(): string {
   );
 }
 
+/**
+ * 「启动中」= 本壳拉起的进程已起来、登录链接还没就绪（npx 首次下载与 DSH 冷启动都停在这一步）。
+ * 壳外检测到的 DSH（pid 未知）不在等待登录链接的路上，直接按「运行中」显示，否则会永远转圈。
+ */
+function isStarting(status: SessionStatus): boolean {
+  return status.state === "running" && status.pid !== null && !status.loginReady && !status.loginError;
+}
+
+/**
+ * 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁在悬停终态（文字推出、
+ * 图标板铺满）并按徽章「启动中」的节拍（--spin-ms）无限转，鼠标移开也不归位。
+ * 收场信号：徽章离开「启动中」（运行中就绪 / 启动失败）→ 正常收工；点「停止」主动打断 → 立即停；
+ * 30 秒上限 → 兜底停（登录链接一直不就绪时别转下去）。
+ * 最短转满 700ms：重启快到轮询都没看见「启动中」时也至少给出一圈反馈。
+ * 状态放模块级：切主题会把整个界面重建一次，转动要跨重建继续，计时不重来。
+ */
+const RESTART_SPIN_MIN_MS = 700;
+const RESTART_SPIN_MAX_MS = 30_000;
+/** 「已停止」会出现在重启「先停旧、再起新」的缝隙里，这个时长内不收场，免得转动一闪而过。 */
+const RESTART_SPIN_STOP_GRACE_MS = 3_000;
+
+let restartSpin: { startedAt: number; sawStarting: boolean } | null = null;
+let restartSpinTimer: number | undefined;
+
+/** 由 mount 注入「重新查询一次状态」，供上面最短时长的定时器到点补一拍（render 每秒也会跑）。 */
+let requestStatusRefresh: () => Promise<void> = async () => {};
+
+/** 把转动状态贴到界面上那颗「重启 DSH」上（切主题后元素会换，所以每次现查）。 */
+function applyRestartSpin(): void {
+  document.querySelector<HTMLButtonElement>("#btn-restart")?.classList.toggle("is-restarting", restartSpin !== null);
+}
+
+function beginRestartSpin(): void {
+  window.clearTimeout(restartSpinTimer);
+  restartSpinTimer = undefined;
+  restartSpin = { startedAt: Date.now(), sawStarting: false };
+  applyRestartSpin();
+}
+
+function endRestartSpin(): void {
+  if (restartSpin === null) return;
+  restartSpin = null;
+  window.clearTimeout(restartSpinTimer);
+  restartSpinTimer = undefined;
+  applyRestartSpin();
+}
+
+/** render 每次拿到状态就过一遍收场条件；条件满足但还没转满最短时长时，挂个到点的定时器补收。 */
+function updateRestartSpin(status: SessionStatus, starting: boolean): void {
+  const spin = restartSpin;
+  if (spin === null) return;
+  const elapsed = Date.now() - spin.startedAt;
+  if (starting) spin.sawStarting = true;
+  const failed = status.state === "failed";
+  const settled =
+    failed ||
+    (status.state === "running" && !starting) ||
+    (status.state === "stopped" && (spin.sawStarting || elapsed >= RESTART_SPIN_STOP_GRACE_MS));
+  if (!settled && elapsed < RESTART_SPIN_MAX_MS) return;
+  const remaining = RESTART_SPIN_MIN_MS - elapsed;
+  if (failed || remaining <= 0) {
+    endRestartSpin();
+    return;
+  }
+  restartSpinTimer = window.setTimeout(() => {
+    restartSpinTimer = undefined;
+    void requestStatusRefresh();
+  }, remaining);
+}
+
 /** 「原生」类的主题：外观照搬候选 I（它俩还共用一处差别：端口带上下箭头）。 */
 function isNativeLook(theme: ThemeId): boolean {
   return theme !== "classic";
@@ -1098,14 +1168,6 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 「启动中」= 本壳拉起的进程已起来、登录链接还没就绪（npx 首次下载与 DSH 冷启动都停在这一步）。
-     * 壳外检测到的 DSH（pid 未知）不在等待登录链接的路上，直接按「运行中」显示，否则会永远转圈。
-     */
-    function isStarting(status: SessionStatus): boolean {
-      return status.state === "running" && status.pid !== null && !status.loginReady && !status.loginError;
-    }
-
-    /**
      * 输出块（「最近输出」「操作输出」）的文本更新。
      *
      * 状态每秒轮询一次，每次都把同一个字符串重新赋给 `textContent`；换掉文本节点本身就会清掉选区，
@@ -1225,6 +1287,8 @@ async function main(): Promise<void> {
       }
       btnOpenApp.disabled = !status.loginReady;
       btnOpenBrowser.disabled = !status.loginReady;
+      // 「重启 DSH」的持续转动：拿这次状态过一遍收场条件（每秒轮询都会走到这里）。
+      updateRestartSpin(status, starting);
       // 日志会不断长个儿，顺带把滚动指示条的几何刷新一下（这里只算不显示）。
       updateScrollThumbHook();
     }
@@ -1236,6 +1300,7 @@ async function main(): Promise<void> {
         console.error("查询状态失败:", err);
       }
     }
+    requestStatusRefresh = refresh;
 
     /** 按当前界面配置启动 DSH；`restart_dsh` 会先停掉现有会话再拉起（「启动」与「重启」共用）。 */
     async function startOrRestart(command: "start_dsh" | "restart_dsh"): Promise<void> {
@@ -1258,10 +1323,20 @@ async function main(): Promise<void> {
     }
 
     // 「启动 DSH / 停止」同一个按钮：运行中（含「启动中」）点击是停止，否则是启动（失败后也是重新启动）。
+    // 转动中按下「停止」= 主动打断重启：转动立即停（维护者规格），剩下的交给 stop_dsh。
     btnToggle.addEventListener("click", () => {
-      void (currentStatus?.state === "running" ? stopDsh() : startOrRestart("start_dsh"));
+      if (currentStatus?.state === "running") {
+        endRestartSpin();
+        void stopDsh();
+        return;
+      }
+      void startOrRestart("start_dsh");
     });
-    btnRestart.addEventListener("click", () => void startOrRestart("restart_dsh"));
+    // 「重启 DSH」：点击瞬间开始持续转动（不等悬停漫过的 300ms 提前量），转动期间照旧可点、重点即重新计时。
+    btnRestart.addEventListener("click", () => {
+      beginRestartSpin();
+      void startOrRestart("restart_dsh");
+    });
 
     async function stopDsh(): Promise<void> {
       localError = null;
@@ -1521,6 +1596,8 @@ async function main(): Promise<void> {
     await refresh();
     void refreshBridgeState();
     refreshNowHook = refresh;
+    // 切主题会重建整个界面：转动状态与计时在模块级，这里把类重新贴到新的那颗「重启 DSH」上。
+    applyRestartSpin();
   }
 
   /** 把主题镜像给 Rust（ui_theme）：开窗处要在页面加载前决定窗口装饰（见 save_ui_theme）。 */

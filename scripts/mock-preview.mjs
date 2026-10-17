@@ -37,6 +37,8 @@ const serve = !args.includes("--no-serve");
 /** 假后端的初始状态：直接改它就能换预览里的场景。 */
 const state = {
   session: "stopped", // stopped | running | starting | failed
+  /** true = 运行中但登录链接还没就绪（真实的「启动中」：running + 无登录链接）。 */
+  loginPending: false,
   dshVersion: "0.2.0-rc.2",
   counter: 0,
   bridgeInstalls: 0,
@@ -58,7 +60,7 @@ window.__mockUnimplemented = [];
       pid: running ? 20704 : null,
       port: running ? 3099 : null,
       loginUrl: running ? "https://example.invalid/dsh?token=mock" : null,
-      loginReady: running,
+      loginReady: running && !S.loginPending,
       loginError: null,
       logTail: S.session === "stopped" ? [] : ["第 " + S.counter + " 行 mock 输出"],
       dshVersion: S.dshVersion,

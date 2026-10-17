@@ -13,6 +13,9 @@
   --btn-sweep-ms: 500ms; /* 悬停漫过：图标板展开 + 文字推出的时长，也是闪动/旋转一轮的时长 */
   --btn-lead-ms: 200ms; /* 图标到中心前的提前起势量（延迟 = 漫过时长 − 提前量 = 300ms） */
   --btn-hl-ms: 200ms; /* 悬停提亮（红→#ff3636 / 重启 brightness）与按下图标缩放的过渡 */
+  /* 转圈节拍：「启动中」徽章的加载圈与「重启 DSH」点击后的持续转动共用，
+     维护者要求两者转速一致（改这一处两边同步）。 */
+  --spin-ms: 700ms;
 }
 
 * {
@@ -239,7 +242,7 @@ body::before {
   border-radius: 50%;
   border: 2px solid rgba(147, 197, 253, 0.3);
   border-top-color: #93c5fd;
-  animation: dsh-spin 0.7s linear infinite;
+  animation: dsh-spin var(--spin-ms) linear infinite;
 }
 
 @keyframes dsh-spin {
@@ -496,14 +499,15 @@ button.primary:hover:not(:disabled) {
 
 /* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 = 漫过时长 − 提前起势量
    （500ms − 200ms = 300ms，接近中心时动画已在进行）；一次性动画，结束位 = 静止位
-   （360deg），不会在退出悬停时跳变。 */
+   （360deg），不会在退出悬停时跳变。点击后进入持续转动（.is-restarting）时交给下面那套规则，
+   这里排除掉，免得两套 animation 抢同一个属性。 */
 @keyframes btn-restart-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-#btn-restart:hover:not(:disabled) .btn-ico svg {
+#btn-restart:hover:not(:disabled):not(.is-restarting) .btn-ico svg {
   animation: btn-restart-spin var(--btn-sweep-ms) ease
     calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
 }
@@ -530,6 +534,25 @@ button.primary:hover:not(:disabled) {
 #btn-toggle:not(.swap):hover:not(:disabled) .btn-ico svg {
   animation: btn-stop-flash var(--btn-sweep-ms) ease
     calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
+}
+
+/* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁在悬停终态——
+   文字推出、图标板铺满，并且与鼠标是否还停在按钮上无关——图标按 --spin-ms 无限转，
+   与「启动中」徽章的加载圈同速。什么时候收工由 src/main.ts 定（徽章离开「启动中」/ 启动失败 /
+   点「停止」/ 30 秒兜底），收工后这里的类一去掉就交回上面的悬停规则。
+   类名在重建界面（切主题）后会由 render 重新贴上，转动跨重建连续。
+   选择器与上面两条悬停规则同权重（0,3,1），靠排在后面生效。 */
+.actions-row button.is-restarting .btn-ico {
+  width: 100%;
+  border-left-color: transparent;
+}
+
+.actions-row button.is-restarting .btn-text {
+  transform: translateX(calc(-100% - 64px));
+}
+
+#btn-restart.is-restarting .btn-ico svg {
+  animation: btn-restart-spin var(--spin-ms) linear infinite;
 }
 
 /* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
