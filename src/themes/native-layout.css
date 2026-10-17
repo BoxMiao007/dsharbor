@@ -287,6 +287,11 @@ body {
    所以两处都要还原。 */
 html {
   scrollbar-width: auto;
+  /* 展开/折叠卡片会让文档高度在视口上下浮动，滚动条随之出现/消失；不预留空间时，
+     每次出现/消失都会改变正文宽度，居中的 #app 会左右横跳（维护者反馈的抖动）。
+     both-edges 两侧各预留一条与滚动条等宽的槽，滚动条只在右槽里出没，
+     #app 始终严格居中。预览浏览器是 overlay 滚动条、不占宽，本条只在真机生效。 */
+  scrollbar-gutter: stable both-edges;
 }
 
 html::-webkit-scrollbar {
