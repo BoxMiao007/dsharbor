@@ -2,8 +2,9 @@
   color-scheme: dark;
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   /* 徽章尺寸统一（维护者要求）：全站徽章与「复制」胶囊按钮共用这三个值，
-     改一处即整体变化，不会再出现某一个徽章或胶囊偏大偏小。 */
-  --badge-height: 28px;
+     改一处即整体变化，不会再出现某一个徽章或胶囊偏大偏小。
+     高度 2026-10-17 维护者两轮反馈「过高」从 28px 收到 24px（原生暗色侧同收，见 --j-badge-h）。 */
+  --badge-height: 24px;
   --badge-padding-x: 10px;
   --badge-font-size: 13px;
 }
@@ -246,26 +247,26 @@ body::before {
    徽章里是行内形式（跟文字排在同一条线上）；装在标签文字后面的那几个是角标：
    绝对定位到标签的右上角、像上标一样不占文字的位置。尺寸一路收下来：14→12px，
    2026-10-17 标签角标 13→11px；同日维护者仍嫌大、且相对所在元素偏高，再收成
-   行内 10px / 角标 9px，与所在元素比例协调、不遮相邻内容。 */
+   行内 10px / 角标 9px；当轮晚些时候第三次反馈仍大，最终收成行内 8.5px / 角标 8px。 */
 
 .info-dot {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 10px;
-  height: 10px;
+  width: 8.5px;
+  height: 8.5px;
   flex: none;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: 7.5px;
+  font-size: 6.5px;
   font-weight: 700;
   line-height: 1;
   cursor: help;
 }
 
 /* 角标形式：贴在标签文字的右上角。承载它的元素要能当定位上下文，且宽度要收紧到文字
-   （三个标签在各自的列里都是撑满的，不收的话 right: -11px 会把角标摆到列表右缘、
+   （三个标签在各自的列里都是撑满的，不收的话 right: -9px 会把角标摆到列表右缘、
    悬停气泡再向右展开就凸出窗口）。 */
 .fields label,
 .setting-label,
@@ -278,11 +279,11 @@ body::before {
 .setting-label > .info-dot,
 .theme-field-label > .info-dot {
   position: absolute;
-  top: -3px;
-  right: -11px;
-  width: 9px;
-  height: 9px;
-  font-size: 7px;
+  top: -2px;
+  right: -9px;
+  width: 8px;
+  height: 8px;
+  font-size: 6px;
 }
 
 .info-dot::after {
@@ -416,20 +417,21 @@ button.primary:hover:not(:disabled) {
   background: #4a7cf0;
 }
 
-/* 会话按钮的图标段 + 悬停漫过效果（参考 Uiverse.io cssbuttons-io 的滑入按钮，按三主题配色改编）：
+/* 会话按钮的图标段 + 统一悬停推动动效（2026-10-17 维护者定的第三版交互）：
    常态 = 文字居中 + 右端一个小图标分段（分隔线 + 右缘贴边）；
-   悬停 = 图标板向左漫过整颗按钮、文字淡出；按下 = 图标轻缩一下。
+   悬停 = 文字与图标彼此相向一步（文字右移、图标左移，像互让一步），移开同时归位——
+   用 transform 位移实现，不再改按钮/图标段的底色（红/黄纯色任何状态下都不变）。
    图标段是正方形（边长 --btn-ico-size = 按钮高度，主题 2/3 的矮按钮在 native-dark.css 收小）。
-   只作用于 .actions-row 里的按钮，「启动 DSH」形态（.swap 逐字切换）不含图标段，不受影响。 */
+   只作用于 .actions-row 里带图标的四颗按钮，「启动 DSH」形态（.swap 逐字切换）没有图标段，不受影响。 */
 .actions-row button {
   position: relative;
   overflow: hidden;
-  transition: background 200ms;
   --btn-ico-size: 38px;
 }
 
 .actions-row button .btn-text {
-  transition: opacity 200ms;
+  display: inline-block;
+  transition: transform 300ms ease;
 }
 
 /* 图标段占右端一个方格（38px）：给带图标的按钮把右侧内边距让出来（10px 间隙 + 方格），
@@ -448,12 +450,12 @@ button.primary:hover:not(:disabled) {
   align-items: center;
   justify-content: center;
   border-left: 1px solid var(--btn-ico-line, rgba(255, 255, 255, 0.28));
-  transition: width 200ms, border-color 200ms, background 200ms;
+  transition: transform 300ms ease;
 }
 
 .actions-row button .btn-ico svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -462,14 +464,14 @@ button.primary:hover:not(:disabled) {
   transition: transform 200ms;
 }
 
-.actions-row button:hover:not(:disabled) .btn-ico {
-  width: 100%;
-  border-left-color: transparent;
-  background: rgba(255, 255, 255, 0.16);
+/* 悬停推动：文字向右让向图标、图标向左让向文字；移开各自滑回。
+   transform 不参与布局，按钮尺寸与文字居中都不受影响。 */
+.actions-row button:hover:not(:disabled) .btn-text {
+  transform: translateX(12px);
 }
 
-.actions-row button:hover:not(:disabled) .btn-text {
-  opacity: 0;
+.actions-row button:hover:not(:disabled) .btn-ico {
+  transform: translateX(-10px);
 }
 
 .actions-row button:active:not(:disabled) .btn-ico svg {
@@ -488,21 +490,37 @@ button.primary:hover:not(:disabled) {
   animation: btn-restart-spin 0.5s ease;
 }
 
-/* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）；悬停漫过效果走上面统一的 .btn-ico 机制。
+/* 「停止」图标：实心方块（维护者要求），悬停时在实心与空心之间闪动一次——
+   与「重启 DSH」的旋转同节奏（0.5s ease）。fill 不是可插值属性，按离散步进切换：
+   实心 → 25% 处变空心 → 75% 处变回实心，看上就是一次来回闪动；结束位 = 实心常态，不跳变。
+   只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
+@keyframes btn-stop-flash {
+  0%,
+  100% {
+    fill: currentColor;
+  }
+  50% {
+    fill: none;
+  }
+}
+
+#btn-toggle:not(.swap) .btn-ico svg {
+  fill: currentColor;
+}
+
+#btn-toggle:not(.swap):hover:not(:disabled) .btn-ico svg {
+  animation: btn-stop-flash 0.5s ease;
+}
+
+/* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
    停止 = 红底白字，重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
    分隔线用深一档的同底色，让右端的图标分段落在这两颗亮色按钮上。
-   「停止」的悬停漫过用深红而不是统一的提亮白：红底上叠 16% 白会变浅红，维护者要求深红
-   （rgba(0,0,0,0.35) 叠在 #ff0000 上 ≈ #a60000）。重启仍是提亮白（黄底向浅黄走，与其余一致）。
-   只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
+   悬停已于 2026-10-17 统一换成上面的「文字/图标互让一步」动效，不再改任何底色。 */
 #btn-toggle:not(.swap) {
   background: #ff0000;
   border-color: #ff0000;
   color: #fff;
   --btn-ico-line: rgba(0, 0, 0, 0.22);
-}
-
-#btn-toggle:not(.swap):hover:not(:disabled) .btn-ico {
-  background: rgba(0, 0, 0, 0.35);
 }
 
 #btn-restart {

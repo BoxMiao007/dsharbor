@@ -47,7 +47,7 @@
   --j-r-ctrl: 5px;
   --j-r-combo: 5px;
   --j-r-list: 8px;
-  --j-badge-h: 26px;
+  --j-badge-h: 24px; /* 跟 src/style.css 的 --badge-height 收缩同步（28→24，维护者嫌徽章过高） */
 }
 
 /* ---- 2. 窗口底与标题栏 ---------------------------------------------------- */
@@ -260,17 +260,12 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 「停止 / 重启 DSH」改成纯色填充（维护者要求去掉悬停特效）：基础那套已经不带
-   ::before 覆盖层与过渡，这里把颜色换成 I 调色板里的红与黄。 */
+   ::before 覆盖层与过渡，这里把颜色换成 I 调色板里的红与黄。悬停动效与主题 1 一致
+   （文字/图标互让一步），点名的红色按钮悬停不再加深。 */
 #btn-toggle:not(.swap) {
   background: #d63a3f;
   border-color: #d63a3f;
   color: #fff;
-}
-
-/* 「停止」悬停漫过同样要深红（跟 src/style.css 的处理一致）：这套的红是 #d63a3f，
-   叠 30% 黑 ≈ #96282c，避免统一的提亮白把红洗浅。 */
-#btn-toggle:not(.swap):hover:not(:disabled) .btn-ico {
-  background: rgba(0, 0, 0, 0.3);
 }
 
 #btn-restart {
