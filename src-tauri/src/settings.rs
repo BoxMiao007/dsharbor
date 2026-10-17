@@ -23,6 +23,28 @@ pub enum TrayClick {
 /// 0 = 立即销毁（现有行为）；其余为「先隐藏、到点再销毁」的秒数。
 pub const LIGHT_DELAY_CHOICES: [u64; 6] = [0, 5, 15, 30, 60, 300];
 
+/// 界面主题（Rust 侧的镜像，主题本体在 WebView 的 localStorage）。
+/// 序列化成 classic|nativeDark|native，与前端 main.ts 的 ThemeId 字面量一一对应；
+/// 改名会让两侧对不上（开窗装饰按 classic 兜底再闪一帧），必须同步。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum UiTheme {
+    #[default]
+    Classic,
+    NativeDark,
+    Native,
+}
+
+/// IPC 传入的主题名转枚举（save_ui_theme 的校验入口）；不认识的返回 None。
+pub fn parse_ui_theme(raw: &str) -> Option<UiTheme> {
+    match raw {
+        "classic" => Some(UiTheme::Classic),
+        "nativeDark" => Some(UiTheme::NativeDark),
+        "native" => Some(UiTheme::Native),
+        _ => None,
+    }
+}
+
 /// 壳的全部持久化设置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,11 +56,12 @@ pub struct ShellConfig {
     /// 旧配置没有这个键，取默认 0 = 现有行为。
     #[serde(default)]
     pub light_delay_secs: u64,
-    /// 界面主题的 Rust 侧镜像（JSON 键 `uiTheme`，classic|nativeDark|native）。
-    /// 主题本体在 WebView 的 localStorage；这里只为开窗时定窗口装饰——
-    /// 等页面挂载完再切会先闪一帧自绘标题栏，所以必须由 Rust 在建窗前读到。
+    /// 界面主题的 Rust 侧镜像（JSON 键 `uiTheme`，枚举见 UiTheme）。
+    /// 开窗前由 Rust 读它定窗口装饰——等页面挂载完再切会先闪一帧自绘标题栏。
+    /// 手改成不认识的值会让整份配置解析失败、镜像落空（按 classic 兜底），
+    /// 界面下次启动会写回合法值。
     #[serde(default)]
-    pub ui_theme: Option<String>,
+    pub ui_theme: Option<UiTheme>,
 }
 
 impl Default for ShellConfig {

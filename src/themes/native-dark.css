@@ -53,7 +53,9 @@
 /* ---- 2. 窗口底与标题栏 ---------------------------------------------------- */
 
 body {
-  /* I 的窗口底色（common.css:657）；正式界面的兜底色 #0a1c38 一并交给它。 */
+  /* I 的窗口底色（common.css:657）；正式界面的兜底色 #0a1c38 一并交给它。
+     这个 #202020 同时是三处「暗色首帧底」之一：index.html 的预着色、
+     src-tauri/src/lib.rs webview_base_color（webview 底）都用同值，改色三处同步。 */
   background-color: #202020;
   color: var(--j-fg);
 }

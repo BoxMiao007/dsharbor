@@ -307,7 +307,8 @@ function escapeHtml(text: string): string {
 /** 界面主题。 */
 type ThemeId = "classic" | "nativeDark" | "native";
 
-/** 主题记在 localStorage（折叠状态 dsharbor.ui.cardCollapsed 也是这么存的）。 */
+/** 主题记在 localStorage（折叠状态 dsharbor.ui.cardCollapsed 也是这么存的）。
+ *  index.html 的内联脚本复写了这个键名（静态脚本没法 import），改键名/主题名两处同步。 */
 const THEME_KEY = "dsharbor.ui.theme";
 
 const THEME_CHOICES: ReadonlyArray<{ value: ThemeId; label: string }> = [
