@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dsharbor_core::launch::{
-    build_plugin_plan, LaunchConfig, LaunchMode, LaunchPlan, PluginOp, PROFILE_NAME,
+    build_plugin_plan, LaunchConfig, LaunchPlan, PluginOp, Runtime, PROFILE_NAME,
 };
 use dsharbor_core::paths::windows_path_to_wsl;
 use serde::Serialize;
@@ -49,11 +49,13 @@ pub enum Target {
 
 impl Target {
     pub fn of(config: &LaunchConfig) -> Target {
-        match &config.mode {
-            LaunchMode::Wsl { distro, .. } => Target::Wsl {
+        // 看运行环境而不是启动方式：官方 npx 与自定义命令都能跑在发行版里，
+        // 插件要装到 DSH 真正运行的那一侧文件系统。
+        match &config.runtime {
+            Runtime::Wsl { distro } => Target::Wsl {
                 distro: distro.clone(),
             },
-            _ => Target::Host,
+            Runtime::Default => Target::Host,
         }
     }
 

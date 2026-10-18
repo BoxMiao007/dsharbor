@@ -435,6 +435,18 @@ input::placeholder {
   color: var(--j-fg-dim);
 }
 
+/* 新增的「运行环境 / 渠道」字段标题用 span（`<label for>` 必须指向真实控件，自绘下拉框是一整块 div）。 */
+.fields .field-label {
+  color: var(--j-fg-dim);
+}
+
+/* 渠道占位项（「正在读取…」「未检测到 WSL 发行版」）同样不可选。 */
+.picker-option.disabled,
+.picker-option.disabled:hover {
+  background: none;
+  color: var(--j-fg-mute);
+}
+
 /* ---- 9. 端口：I 的 NumberBox（common.css:823–859 ＋ i-native.html:150–172） -
 
    原版这里是「一个文本框 + 右侧一枚徽章」，没有上下箭头。I 的 NumberBox 带箭头，

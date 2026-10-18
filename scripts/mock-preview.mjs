@@ -42,6 +42,24 @@ const state = {
   dshVersion: "0.2.1-rc.2",
   /** 端口提示的假数据：改它就能预览「跟随 DSH 配置」与「没读到配置」两种分支。 */
   portHint: { host: "127.0.0.1", port: 3080, source: "managed" },
+  /** WSL 发行版探测结果（`wsl_distro_info`）：改 hasNode 可预览「未检测到 Node.js」提示。 */
+  distros: [
+    { distro: "Ubuntu", hasNode: true },
+    { distro: "Debian", hasNode: false },
+  ],
+  /** 官方版本列表（`query_dsh_versions`）：改成 null 可预览读取失败 / 断网时的分支。 */
+  registry: {
+    distTags: { latest: "0.2.0-rc.2", next: "0.2.1-rc.2", alpha: "0.2.1-alpha.5" },
+    rc: ["0.2.1-rc.2", "0.2.1-rc.1", "0.2.0-rc.2", "0.2.0-rc.1"],
+    alpha: ["0.2.1-alpha.5", "0.2.1-alpha.4", "0.2.1-alpha.3"],
+  },
+  /** 已保存的启动配置：改它并刷新页面就能预览各种保存/回填分支（如存了已下架的版本）。 */
+  savedLaunch: {
+    mode: { kind: "npx", channel: "latest", version: null },
+    runtime: { kind: "default" },
+    extraArgs: [],
+    port: null,
+  },
   counter: 0,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
@@ -92,7 +110,7 @@ window.__mockUnimplemented = [];
       logs_dir: "C:\\\\Users\\\\me\\\\.dsh\\\\logs",
     }),
     load_shell_config: () => ({
-      launch: { mode: { kind: "npx" }, extraArgs: [], port: null },
+      launch: JSON.parse(JSON.stringify(S.savedLaunch)),
       trayClick: "launcher",
     }),
     save_shell_config: () => null,
@@ -112,7 +130,13 @@ window.__mockUnimplemented = [];
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
     profile_port_hint: () => S.portHint,
-    list_wsl_distros: () => ["Ubuntu", "Debian"],
+    // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
+    wsl_distro_info: () => S.distros,
+    // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 重新读取按钮」。
+    query_dsh_versions: () => {
+      if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
+      return S.registry;
+    },
     start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; return status(); },
     stop_dsh: () => { seen("stop_dsh"); S.counter += 1; S.session = "stopped"; return status(); },
     restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; return status(); },

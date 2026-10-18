@@ -42,19 +42,39 @@ interface AppInfo {
   logs_dir: string;
 }
 
+/** npm dist-tag 渠道。rc / alpha 不是标签而是版本范围，靠下面的版本下拉定具体版本。 */
+type Channel = "latest" | "next" | "rc" | "alpha";
+
+/** 运行环境：Windows 宿主，或某个 WSL 发行版里。与 Rust 侧 `launch::Runtime` 对应。 */
+type LaunchRuntime = { kind: "default" } | { kind: "wsl"; distro: string };
+
 /** 与 Rust 侧 `launch::LaunchMode`（serde tag = kind）一一对应。 */
 type LaunchMode =
-  | { kind: "npx" }
+  | { kind: "npx"; channel: Channel; version: string | null }
   | { kind: "system" }
   | { kind: "binary"; path: string }
-  | { kind: "custom"; command: string }
-  | { kind: "wsl"; distro: string; inner: string };
+  | { kind: "custom"; command: string };
 
 interface LaunchConfig {
   mode: LaunchMode;
+  /** 在哪个环境里执行（只有官方 npx / 自定义命令两块用得到，其余两种固定 Windows）。 */
+  runtime: LaunchRuntime;
   extraArgs: string[];
   /** 端口覆盖：null = 跟随 DSH 自身配置；数字 = 壳注入 launcher 层覆盖。 */
   port: number | null;
+}
+
+/** 与 Rust 侧 `registry::RegistryInfo` 对应：dist-tag 与按渠道分好组的版本（都从新到旧）。 */
+interface RegistryInfo {
+  distTags: { latest: string | null; next: string | null; alpha: string | null };
+  rc: string[];
+  alpha: string[];
+}
+
+/** 与 Rust 侧 `wsl::DistroInfo` 对应：发行版名 + 里面有没有 node/npm。 */
+interface DistroInfo {
+  distro: string;
+  hasNode: boolean;
 }
 
 /** 与 Rust 侧 `settings::TrayClick` 对应：托盘单击打开哪个窗口。 */
@@ -112,7 +132,48 @@ interface BridgeOutcome {
   backupDir: string;
 }
 
-const WSL_DEFAULT_INNER = "npx --yes @deepseek-ai/dsh web";
+/** 渠道候选：中文名在前、npm 标签在后；圆点靠 CSS 画（emoji 在 WebView2 里会渲染成黑白方块）。 */
+const CHANNEL_CHOICES: PickerChoice[] = [
+  { value: "latest", label: "稳定版（latest）", dot: "latest" },
+  { value: "next", label: "最新尝鲜版（next）", dot: "next" },
+  { value: "rc", label: "尝鲜版历史版本（rc）", dot: "rc" },
+  { value: "alpha", label: "内测版（alpha）", dot: "alpha" },
+];
+
+/** 运行环境下拉的「默认」项：value 与 Rust 侧 Runtime::Default 的语义名一致。 */
+const RUNTIME_DEFAULT = "default";
+
+/** 渠道徽章：latest / next 显示 dist-tag 指的版本，rc / alpha 换成版本下拉。 */
+const BADGE_CHANNELS: Channel[] = ["latest", "next"];
+
+/**
+ * 取某个渠道该给哪些版本：rc / alpha 由后端按后缀分好组，这里只做兜底排序后的原样展示。
+ * 返回空数组表示「还没读到」（渠道本身合法，不是错误）。
+ */
+function channelVersions(registry: RegistryInfo | null, channel: Channel): string[] {
+  if (!registry) {
+    return [];
+  }
+  return channel === "rc" ? registry.rc : channel === "alpha" ? registry.alpha : [];
+}
+
+/** 徽章里的版本号：latest / next 读 dist-tag；没读到就显示 —。 */
+function channelTagVersion(registry: RegistryInfo | null, channel: Channel): string | null {
+  if (!registry || !BADGE_CHANNELS.includes(channel)) {
+    return null;
+  }
+  return channel === "latest" ? registry.distTags.latest : registry.distTags.next;
+}
+
+/**
+ * 官方 npx 命令的拼装（只用于界面上的实时预览；真正下发的命令由 Rust 侧 `build_spawn_plan` 拼）。
+ * 保留 `--yes`：壳的子进程没有终端，npx 首次下载时的交互确认会直接把启动卡住。
+ */
+function npxCommandOf(channel: Channel, version: string | null): string {
+  const suffix = channel === "latest" ? "" : channel === "next" ? "@next" : version ? `@${version}` : "@<版本>";
+  return `npx --yes @deepseek-ai/dsh${suffix} web --no-open`;
+}
+
 /**
  * 「自定义命令」输入框的默认值：官方 next 标签，覆盖「想用别的版本 / 别的包管理器」的场景。
  * 保留 `--yes`：壳的子进程没有终端，npx 首次下载时的交互确认会直接把启动卡住。
@@ -137,12 +198,15 @@ const MODE_LABELS: Record<string, string> = {
   system: "系统全局命令",
   binary: "指定程序路径",
   custom: "自定义命令",
-  wsl: "通过 WSL 启动",
 };
 
 interface PickerChoice {
   value: string;
   label: string;
+  /** 行首的彩色圆点（渠道用），值同时是 CSS 类名后缀。 */
+  dot?: string;
+  /** 占位提示项（如「正在读取…」）：可见但点不动，键盘也会跳过。 */
+  disabled?: boolean;
 }
 
 /**
@@ -196,11 +260,11 @@ class Picker {
     this.renderOptions();
   }
 
-  /** 重设候选列表；当前选中项不在新列表里时退回第一项。 */
+  /** 重设候选列表；当前选中项不在新列表里时退回第一个可选项。 */
   setChoices(choices: PickerChoice[]): void {
     this.choices = choices.slice();
     if (!this.choices.some((choice) => choice.value === this.selected)) {
-      this.selected = this.choices[0]?.value ?? "";
+      this.selected = (this.choices.find((choice) => !choice.disabled) ?? this.choices[0])?.value ?? "";
     }
     this.renderLabel();
     this.renderOptions();
@@ -212,14 +276,21 @@ class Picker {
 
   private renderLabel(): void {
     const current = this.choices.find((choice) => choice.value === this.selected);
-    this.label.textContent = current?.label ?? "（未选择）";
+    this.label.innerHTML = current
+      ? `${Picker.dotHtml(current)}<span class="picker-label-text">${escapeHtml(current.label)}</span>`
+      : "（未选择）";
+  }
+
+  /** 彩色圆点用 CSS 画：emoji 在 WebView2 里会变成黑白方块。 */
+  private static dotHtml(choice: PickerChoice): string {
+    return choice.dot ? `<span class="picker-dot picker-dot-${choice.dot}"></span>` : "";
   }
 
   private renderOptions(): void {
     this.list.innerHTML = this.choices
       .map((choice, index) => {
         const selected = choice.value === this.selected;
-        return `<li class="picker-option${index === this.activeIndex ? " active" : ""}" role="option" data-index="${index}" aria-selected="${selected}"><span class="tick">${selected ? "✓" : ""}</span><span class="text">${escapeHtml(choice.label)}</span></li>`;
+        return `<li class="picker-option${index === this.activeIndex ? " active" : ""}${choice.disabled ? " disabled" : ""}" role="option" data-index="${index}" aria-selected="${selected}" aria-disabled="${choice.disabled === true}"><span class="tick">${selected ? "✓" : ""}</span>${Picker.dotHtml(choice)}<span class="text">${escapeHtml(choice.label)}</span></li>`;
       })
       .join("");
     for (const option of Array.from(this.list.querySelectorAll<HTMLElement>(".picker-option"))) {
@@ -228,6 +299,16 @@ class Picker {
         this.commit(index);
       });
     }
+  }
+
+  /** 从 index 往 step 方向找下一个可选项；全都不可选时回到原位。 */
+  private stepFrom(index: number, step: number): number {
+    for (let next = index + step; next >= 0 && next < this.choices.length; next += step) {
+      if (!this.choices[next]?.disabled) {
+        return next;
+      }
+    }
+    return index;
   }
 
   private open(): void {
@@ -258,7 +339,7 @@ class Picker {
 
   private commit(index: number): void {
     const choice = this.choices[index];
-    if (!choice) {
+    if (!choice || choice.disabled) {
       return;
     }
     const changed = choice.value !== this.selected;
@@ -286,7 +367,7 @@ class Picker {
         return;
       }
       const step = event.key === "ArrowDown" ? 1 : -1;
-      this.activeIndex = Math.min(this.choices.length - 1, Math.max(0, this.activeIndex + step));
+      this.activeIndex = this.stepFrom(this.activeIndex, step);
       this.renderOptions();
       this.list.querySelector<HTMLElement>(".picker-option.active")?.scrollIntoView({ block: "nearest" });
       return;
@@ -584,9 +665,20 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <input type="radio" name="mode" value="npx" checked />
       <span>
         <b>${MODE_LABELS.npx}</b>
-        <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）<br />执行 <code>npx --yes @deepseek-ai/dsh web --no-open</code></small>
+        <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）<br />执行 <code id="npx-command-preview">${npxCommandOf("latest", null)}</code></small>
       </span>
     </label>
+    <div id="npx-fields" class="fields hidden">
+      <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行，桥接插件也装到那个发行版里。">!</span></span>
+      <div class="picker" id="npx-runtime-picker"></div>
+      <span class="field-label">渠道 <span class="info-dot" role="img" tabindex="0" aria-label="渠道说明" data-tip="稳定版 / 最新尝鲜版对应 npm 的 latest / next 标签，右侧徽章显示标签当前指向的版本；尝鲜版历史版本 / 内测版是版本范围，需要再选一个具体版本。">!</span></span>
+      <div class="control-line">
+        <div class="picker" id="npx-channel-picker"></div>
+        <span id="npx-channel-badge" class="badge badge-version"></span>
+        <div class="picker hidden" id="npx-version-picker"></div>
+      </div>
+      <div id="npx-versions-hint" class="hint hidden"></div>
+    </div>
     <label class="mode">
       <input type="radio" name="mode" value="system" />
       <span>
@@ -616,19 +708,10 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       </span>
     </label>
     <div id="custom-fields" class="fields hidden">
+      <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行这条命令。">!</span></span>
+      <div class="picker" id="custom-runtime-picker"></div>
       <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
       <p class="hint">写整条启动命令（末尾保留 <code>web</code> 子命令）；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。</p>
-    </div>
-    <label class="mode">
-      <input type="radio" name="mode" value="wsl" />
-      <span>
-        <b>${MODE_LABELS.wsl}</b>
-        <small>Windows 壳启动 WSL 发行版里的 DSH</small>
-      </span>
-    </label>
-    <div id="wsl-fields" class="fields hidden">
-      <div class="picker" id="wsl-distro-picker"></div>
-      <input id="wsl-inner" type="text" value="${WSL_DEFAULT_INNER}" />
     </div>
   `;
   // 端口控件：原生两主题用候选 I 的 NumberBox（带上下箭头），原版是纯文本框（id 一样，绑定代码共用）。
@@ -641,7 +724,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <div class="subcard">
       <div class="grid-2">
         <div class="fields">
-          <label for="extra-args">附加参数 <span class="info-dot" role="img" tabindex="0" aria-label="附加参数说明" data-tip="追加到该启动方式的命令末尾（WSL 模式下追加到发行版内部命令）。仅允许字母数字与 - _ . / : = @ + 和空格；壳始终自动追加 --no-open（不自动弹浏览器），需要时用上面的「浏览器打开」。">!</span></label>
+          <label for="extra-args">附加参数 <span class="info-dot" role="img" tabindex="0" aria-label="附加参数说明" data-tip="追加到该启动方式的命令末尾（运行环境选 WSL 时追加到发行版内的命令后面）。仅允许字母数字与 - _ . / : = @ + 和空格；壳始终自动追加 --no-open（不自动弹浏览器），需要时用上面的「浏览器打开」。">!</span></label>
           <input id="extra-args" type="text" placeholder="例如 --port 3081 --no-open" />
         </div>
         <div class="fields">
@@ -687,7 +770,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   `;
   const aboutTail = `
     <p id="about-note" class="hint hidden"></p>
-    <p class="hint">DSH 版本在每次成功启动后自动读取；配置目录放壳设置与桥接备份，日志目录放 DSH 的启动日志（WSL 模式下日志在发行版内的 <code>~/.dsh/logs</code>）。</p>
+    <p class="hint">DSH 版本在每次成功启动后自动读取；配置目录放壳设置与桥接备份，日志目录放 DSH 的启动日志（运行环境选 WSL 时日志在发行版内的 <code>~/.dsh/logs</code>）。</p>
   `;
   // 主题三把两条托盘设置搬到「关于」里并排（维护者要求），说明改到 ⓘ 气泡里。
   const aboutSettingsRow = `
@@ -849,7 +932,10 @@ async function main(): Promise<void> {
     const binaryBrowse = $<HTMLButtonElement>("binary-browse");
     const binaryError = $<HTMLParagraphElement>("binary-error");
     const customCommand = $<HTMLInputElement>("custom-command");
-    const innerInput = $<HTMLInputElement>("wsl-inner");
+    const npxCommandPreview = $<HTMLElement>("npx-command-preview");
+    const npxVersionRoot = $<HTMLElement>("npx-version-picker");
+    const npxChannelBadge = $<HTMLSpanElement>("npx-channel-badge");
+    const npxVersionsHint = $<HTMLDivElement>("npx-versions-hint");
     const portInput = $<HTMLInputElement>("port");
     const portReset = $<HTMLButtonElement>("port-reset");
     const portInfoEl = $<HTMLSpanElement>("port-info");
@@ -876,11 +962,213 @@ async function main(): Promise<void> {
       { value: "300", label: "5 分钟" },
     ];
     lightDelayPicker.setChoices(LIGHT_DELAY_CHOICES);
-    const distroPicker = new Picker("wsl-distro-picker", () => {
+    // 运行环境是壳级选择：官方 npx 命令与自定义命令共用同一份值，两个下拉框互相同步。
+    let runtime: LaunchRuntime = { kind: "default" };
+    /** null = 还没读到；读取失败时也是 null，靠 distrosError 区分「加载中」与「失败」。 */
+    let distroInfos: DistroInfo[] | null = null;
+    let distrosError: string | null = null;
+    /** 官方版本列表：按运行环境分别读；Rust 侧有 10 分钟缓存，这里不再叠一层。 */
+    let registry: RegistryInfo | null = null;
+    let registryError: string | null = null;
+    let registryLoading = false;
+    /** 保存过但还没等版本列表回来回填的具体版本。 */
+    let pendingVersion: string | null = null;
+
+    const runtimeValue = (value: LaunchRuntime): string =>
+      value.kind === "wsl" ? `wsl:${value.distro}` : RUNTIME_DEFAULT;
+
+    const runtimeOf = (value: string): LaunchRuntime =>
+      value.startsWith("wsl:") ? { kind: "wsl", distro: value.slice(4) } : { kind: "default" };
+
+    /** 发行版列表就绪前先占位的禁用项（value 为空，选不到）。 */
+    function runtimeChoices(): PickerChoice[] {
+      const choices: PickerChoice[] = [{ value: RUNTIME_DEFAULT, label: "默认" }];
+      if (distroInfos === null) {
+        choices.push({
+          value: "",
+          label: distrosError === null ? "（正在读取发行版列表…）" : "（读取发行版列表失败）",
+          disabled: true,
+        });
+        return choices;
+      }
+      for (const info of distroInfos) {
+        // 装了 WSL 但没有 node/npm 的发行版仍然可选，只在文字上标一下，让用户自己决定。
+        choices.push({
+          value: `wsl:${info.distro}`,
+          label: info.hasNode ? `WSL - ${info.distro}` : `WSL - ${info.distro}（未检测到 Node.js）`,
+        });
+      }
+      if (distroInfos.length === 0) {
+        choices.push({ value: "", label: "（未检测到 WSL 发行版）", disabled: true });
+      }
+      // 存过但发行版已经没了：仍列出来（让用户看见存的是什么），改选「默认」就清掉。
+      if (runtime.kind === "wsl") {
+        const saved = runtime.distro;
+        if (!distroInfos.some((info) => info.distro === saved)) {
+          choices.push({ value: `wsl:${saved}`, label: `WSL - ${saved}（发行版已不存在）` });
+        }
+      }
+      return choices;
+    }
+
+    function syncRuntimePickers(): void {
+      const choices = runtimeChoices();
+      const value = runtimeValue(runtime);
+      for (const picker of [npxRuntimePicker, customRuntimePicker]) {
+        picker.setChoices(choices);
+        picker.setValue(value);
+      }
+    }
+
+    function onRuntimeChange(value: string): void {
+      runtime = runtimeOf(value);
+      syncRuntimePickers();
       void persistConfigQuiet();
       void refreshPortHint();
+      void refreshBridgeState();
+      // 先清掉上一个环境的清单，否则换发行版后到新清单回来之前，版本下拉里
+      // 还挂着另一个环境（另一个 npm registry 视图）的版本号。
+      // 当前选中的具体版本先存进 pendingVersion，新清单回来后 loadRegistry 会回填。
+      if (!BADGE_CHANNELS.includes(currentChannel())) {
+        pendingVersion = npxVersionPicker.value.trim() || null;
+      }
+      registry = null;
+      registryError = null;
+      void loadRegistry();
+    }
+
+    const npxRuntimePicker = new Picker("npx-runtime-picker", onRuntimeChange);
+    npxRuntimePicker.setChoices([{ value: RUNTIME_DEFAULT, label: "默认" }]);
+    const customRuntimePicker = new Picker("custom-runtime-picker", onRuntimeChange);
+    customRuntimePicker.setChoices([{ value: RUNTIME_DEFAULT, label: "默认" }]);
+
+    const currentChannel = (): Channel => {
+      const value = npxChannelPicker.value;
+      return value === "next" || value === "rc" || value === "alpha" ? value : "latest";
+    };
+
+    /** 当前选定的具体版本；latest / next 靠 dist-tag 定位，不存版本号。 */
+    const currentVersion = (): string | null =>
+      BADGE_CHANNELS.includes(currentChannel()) ? null : npxVersionPicker.value.trim() || null;
+
+    /** 版本候选；保存过/选过但官方列表已经没有的版本仍然列出来，标一句「已不在官方列表」。 */
+    function versionChoices(channel: Channel): PickerChoice[] {
+      const versions = channelVersions(registry, channel);
+      if (registryLoading && versions.length === 0) {
+        return [{ value: "", label: "（正在读取版本列表…）", disabled: true }];
+      }
+      const choices: PickerChoice[] = versions.map((version) => ({ value: version, label: version }));
+      const kept = pendingVersion ?? (npxVersionPicker.value.trim() || null);
+      if (kept !== null && !versions.includes(kept)) {
+        choices.push({ value: kept, label: `${kept}（已不在官方列表）` });
+      }
+      return choices;
+    }
+
+    function registryHint(channel: Channel): string {
+      if (registryLoading) {
+        return "正在读取官方版本列表…";
+      }
+      if (registryError !== null) {
+        if (runtime.kind === "wsl") {
+          const distro = runtime.distro;
+          const info = distroInfos?.find((item) => item.distro === distro);
+          if (info && !info.hasNode) {
+            return `${distro} 里没有 node/npm，读不到版本列表；要先在该发行版里装 Node.js。稳定版（latest）同理也需要。`;
+          }
+        }
+        return "读不到官方版本列表（npm view 失败或断网）。稳定版（latest）仍可直接启动。";
+      }
+      if (!BADGE_CHANNELS.includes(channel) && channelVersions(registry, channel).length === 0) {
+        return "官方列表里还没有这一渠道的版本。";
+      }
+      return "";
+    }
+
+    function renderChannelUI(): void {
+      const channel = currentChannel();
+      const isBadge = BADGE_CHANNELS.includes(channel);
+      npxChannelBadge.classList.toggle("hidden", !isBadge);
+      npxVersionRoot.classList.toggle("hidden", isBadge);
+      if (isBadge) {
+        const version = channelTagVersion(registry, channel);
+        npxChannelBadge.textContent = version ?? "—";
+        npxChannelBadge.title = version
+          ? `npm 的 ${channel} 标签当前指向 ${version}`
+          : "还没读到 npm 标签信息";
+      } else {
+        npxVersionPicker.setChoices(versionChoices(channel));
+      }
+      npxCommandPreview.textContent = npxCommandOf(channel, currentVersion());
+      const hint = registryHint(channel);
+      npxVersionsHint.classList.toggle("hidden", hint === "" && registryError === null);
+      npxVersionsHint.innerHTML =
+        registryError === null
+          ? escapeHtml(hint)
+          : `${escapeHtml(hint)} <button type="button" id="npx-versions-retry" class="port-reset" title="重新执行 npm view 读取版本列表">重新读取</button>`;
+    }
+
+    async function loadDistros(): Promise<void> {
+      try {
+        distroInfos = await invoke<DistroInfo[]>("wsl_distro_info");
+        distrosError = null;
+      } catch (err) {
+        distroInfos = null;
+        distrosError = String(err);
+        console.error("读取 WSL 发行版失败:", err);
+      }
+      syncRuntimePickers();
+    }
+
+    async function loadRegistry(): Promise<void> {
+      registryLoading = true;
+      registryError = null;
+      renderChannelUI();
+      try {
+        registry = await invoke<RegistryInfo>("query_dsh_versions", { runtime });
+      } catch (err) {
+        registry = null;
+        registryError = String(err);
+        console.error("读取官方版本列表失败:", err);
+      } finally {
+        registryLoading = false;
+      }
+      // 保存过的具体版本要等列表回来才能回填（否则 setChoices 会把它退回第一项）。
+      if (pendingVersion !== null) {
+        const channel = currentChannel();
+        if (!BADGE_CHANNELS.includes(channel)) {
+          npxVersionPicker.setChoices(versionChoices(channel));
+          npxVersionPicker.setValue(pendingVersion);
+        }
+        pendingVersion = null;
+      }
+      renderChannelUI();
+    }
+
+    const npxChannelPicker = new Picker("npx-channel-picker", () => {
+      const channel = currentChannel();
+      if (!BADGE_CHANNELS.includes(channel)) {
+        const versions = channelVersions(registry, channel);
+        npxVersionPicker.setChoices(versionChoices(channel));
+        // 换到版本渠道时默认选最新的那个。
+        if (versions.length > 0) {
+          npxVersionPicker.setValue(versions[0]);
+        }
+      }
+      renderChannelUI();
+      void persistConfigQuiet();
     });
-    distroPicker.setChoices([{ value: "", label: "（正在读取发行版列表…）" }]);
+    npxChannelPicker.setChoices(CHANNEL_CHOICES);
+    const npxVersionPicker = new Picker("npx-version-picker", () => {
+      renderChannelUI();
+      void persistConfigQuiet();
+    });
+    npxVersionPicker.setChoices([]);
+    npxVersionsHint.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement | null)?.id === "npx-versions-retry") {
+        void loadRegistry();
+      }
+    });
     const themePicker = new Picker("theme-picker", (value) => {
       if (isThemeId(value)) {
         void switchTheme(value);
@@ -889,7 +1177,15 @@ async function main(): Promise<void> {
     themePicker.setChoices(THEME_CHOICES.map((choice) => ({ value: choice.value, label: choice.label })));
     themePicker.setValue(theme);
     // 重建界面时旧实例要 dispose（它们各自挂着 document 监听）。
-    livePickers = [trayPicker, lightDelayPicker, distroPicker, themePicker];
+    livePickers = [
+      trayPicker,
+      lightDelayPicker,
+      npxRuntimePicker,
+      customRuntimePicker,
+      npxChannelPicker,
+      npxVersionPicker,
+      themePicker,
+    ];
     const modesSummary = $<HTMLSpanElement>("modes-summary");
     const bridgeSummary = $<HTMLSpanElement>("bridge-summary");
     const btnCopyLog = $<HTMLButtonElement>("btn-copy-log");
@@ -1048,9 +1344,9 @@ async function main(): Promise<void> {
       return null;
     }
 
-    /** 端口说明写进标签后的 ⓘ 气泡：动态状态 + 原来那行小字里「四个方式共用这两个字段」的固定说明。 */
+    /** 端口说明写进标签后的 ⓘ 气泡：动态状态 + 原来那行小字里「所有启动方式共用这两个字段」的固定说明。 */
     function setPortTip(text: string): void {
-      portInfoEl.dataset.tip = `${text}四种启动方式共用这两个字段，WSL 模式同样生效（壳注入的端口覆盖层会经 /mnt 路径送进发行版）。配置改完自动保存，重开壳后保留。`;
+      portInfoEl.dataset.tip = `${text}四种启动方式共用这两个字段，运行环境选 WSL 时同样生效（壳注入的端口覆盖层会经 /mnt 路径送进发行版）。配置改完自动保存，重开壳后保留。`;
     }
 
     /** 附加参数里的 `--port` / `--host`：它们会盖掉 profile 的 webserver 配置，提示里要说清。 */
@@ -1139,17 +1435,13 @@ async function main(): Promise<void> {
     const currentMode = (): string => modeRadios().find((r) => r.checked)?.value ?? "npx";
 
     function syncModeFields(): void {
+      $("npx-fields").classList.toggle("hidden", currentMode() !== "npx");
       $("binary-fields").classList.toggle("hidden", currentMode() !== "binary");
       $("custom-fields").classList.toggle("hidden", currentMode() !== "custom");
-      $("wsl-fields").classList.toggle("hidden", currentMode() !== "wsl");
       // 卡片收起后靠这个徽章显示当前启动方式（展开时徽章隐藏，见 CSS）。
       const mode = currentMode();
       modesSummary.textContent = MODE_LABELS[mode] ?? "启动方式";
-      if (mode === "wsl") {
-        // 发行版列表原先是下拉框获得焦点时才读；自绘下拉框没有这个时机，改成切到 WSL 模式就读。
-        void ensureDistros();
-      }
-      // 桥接插件与端口提示都跟随启动方式（Windows 宿主 / WSL 发行版），换模式就刷新。
+      // 桥接插件与端口提示都跟随运行环境（Windows 宿主 / WSL 发行版），换模式就刷新。
       void refreshBridgeState();
       void refreshPortHint();
     }
@@ -1161,33 +1453,13 @@ async function main(): Promise<void> {
     }
     syncModeFields();
 
-    // 发行版列表按需读取一次即可。
-    let distrosLoaded = false;
-    async function ensureDistros(): Promise<void> {
-      if (distrosLoaded) {
-        return;
-      }
-      distrosLoaded = true;
-      try {
-        const distros = await invoke<string[]>("list_wsl_distros");
-        if (distros.length === 0) {
-          distroPicker.setChoices([{ value: "", label: "（未检测到 WSL 发行版）" }]);
-          return;
-        }
-        distroPicker.setChoices(distros.map((distro) => ({ value: distro, label: distro })));
-      } catch (err) {
-        distroPicker.setChoices([{ value: "", label: "（读取失败）" }]);
-        console.error("读取 WSL 发行版失败:", err);
-      }
-    }
-
     function collectConfig(): LaunchConfig {
       const extraArgs = extraInput.value.trim().split(/\s+/).filter(Boolean);
       const raw = portInput.value.trim();
       // 端口输入非法时调用方（启动/保存）会先报错拦截；这里兜底按 null 处理。
       const parsed = raw === "" ? null : Number.parseInt(raw, 10);
       const port = parsed !== null && Number.isFinite(parsed) ? parsed : null;
-      const base = { extraArgs, port };
+      const base = { runtime, extraArgs, port };
       switch (currentMode()) {
         case "system":
           return { ...base, mode: { kind: "system" } };
@@ -1195,16 +1467,14 @@ async function main(): Promise<void> {
           return { ...base, mode: { kind: "binary", path: binaryPath.value.trim() } };
         case "custom":
           return { ...base, mode: { kind: "custom", command: customCommand.value.trim() } };
-        case "wsl":
-          return { ...base, mode: { kind: "wsl", distro: distroPicker.value.trim(), inner: innerInput.value.trim() } };
         default:
-          return { ...base, mode: { kind: "npx" } };
+          return { ...base, mode: { kind: "npx", channel: currentChannel(), version: currentVersion() } };
       }
     }
 
     // 配置自动保存：任一字段变更后尝试写盘（当前不合法时不写、不打扰；启动时会再校验）。
-    // 两个自绘下拉框（托盘单击打开 / WSL 发行版）的回调在构造时已接进 persistConfigQuiet。
-    for (const input of [extraInput, binaryPath, customCommand, innerInput, portInput]) {
+    // 自绘下拉框（托盘单击打开 / 运行环境 / 渠道 / 版本）的回调在构造时已接进 persistConfigQuiet。
+    for (const input of [extraInput, binaryPath, customCommand, portInput]) {
       input.addEventListener("change", () => void persistConfigQuiet());
     }
     // 附加参数里可能写了 --port / --host，改完立刻刷新端口气泡里的「以它为准」提示。
@@ -1705,10 +1975,13 @@ async function main(): Promise<void> {
       if (launch.mode.kind === "custom") {
         customCommand.value = launch.mode.command;
       }
-      if (launch.mode.kind === "wsl") {
-        await ensureDistros();
-        distroPicker.setValue(launch.mode.distro);
-        innerInput.value = launch.mode.inner;
+      // 运行环境：旧配置没有 runtime 字段就是 default（后端 fallback 也是这个值）。
+      runtime = launch.runtime ?? { kind: "default" };
+      syncRuntimePickers();
+      if (launch.mode.kind === "npx") {
+        npxChannelPicker.setValue(launch.mode.channel ?? "latest");
+        // 具体版本要等版本列表回来再回填，否则会被 setChoices 退回第一项。
+        pendingVersion = launch.mode.version ?? null;
       }
       extraInput.value = launch.extraArgs.join(" ");
       if (launch.port !== null && launch.port !== undefined) {
@@ -1720,11 +1993,13 @@ async function main(): Promise<void> {
       lightDelayPicker.setValue(LIGHT_DELAY_CHOICES.some((choice) => choice.value === lightDelay) ? lightDelay : "0");
       syncModeFields();
       renderPortHint();
+      renderChannelUI();
     }
 
     await loadSavedConfig();
-    // 发行版列表提前读好，切到 WSL 模式即可选。
-    void ensureDistros();
+    // 运行环境候选与官方版本列表都提前读好，展开卡片即可选。
+    await loadDistros();
+    await loadRegistry();
     await refreshPortHint();
     await refresh();
     void refreshBridgeState();

@@ -8,7 +8,10 @@
 | 壳 / 外壳 | shell | 本项目交付的 Windows 桌面应用（Tauri 2 + Rust 系统 WebView2），负责拉起 DSH、取登录链接、托盘与轻量模式。 |
 | 核心库 | `dsharbor-core` | 与界面、系统 API 无关的纯逻辑 crate（启动命令构造、输入校验、链接解析、覆盖层文本处理、轻量模式状态机等）；开发机可全自动 `cargo test`。 |
 | 启动器 | launcher | 壳里按「启动方式」拉起 DSH 进程、维护状态与停止的部分（含取链接线程）。 |
-| 启动方式 | `LaunchMode` | 四种之一：官方 npx 命令 / 系统全局命令（`dsh web`）/ 指定二进制路径 / WSL 跨系统；配置界面可选。 |
+| 启动方式 | `LaunchMode` | 四种之一：官方 npx 命令 / 系统全局命令（`dsh web`）/ 指定二进制路径 / 自定义命令；配置界面可选。 |
+| 运行环境 | `Runtime` | 启动方式在哪儿执行：`默认`（Windows 宿主）或某个 WSL 发行版（`wsl:<发行版>`）；只对官方 npx 与自定义命令生效，跨启动方式共用一份选择。 |
+| 渠道 | `Channel` | DSH 的发版通道，官方 npx 命令可选：稳定版（`latest`）/ 最新尝鲜版（`next`）/ 尝鲜版历史版本（`rc`）/ 内测版（`alpha`）。前两者跟 npm dist-tag，后两者要选具体版本号。 |
+| 版本清单 | `RegistryInfo` | 从 `npm view @deepseek-ai/dsh dist-tags versions --json` 现查并缓存的版本数据（外壳侧 10 分钟）；读不到时界面退回空列表提示，不阻塞启动。 |
 | DSH 会话 | DSH session | 壳拉起的这一次 DSH 进程树（cmd/npx/node 等）。 |
 | 登录链接 / 认证链接 | authenticated URL | `http://<host>:<端口>/?token=<一次性 token>`，`<host>` 跟随 webserver 的绑定地址（回环或具体网卡 IP）；DSH 每次启动随机生成、进程内存驻留，浏览器凭它换持久 Cookie。 |
 | 访问端点 | endpoint | 壳用来探活、连桥接的 `host:port`，由 `profile` 的 webserver 块 + 端口优先级算出（`dsharbor_core::endpoint`）。 |

@@ -4,7 +4,7 @@
 
 ## 项目是什么
 
-DSH(DeepSeek Harness)Web 版的桌面壳:安装包尽量小、关掉界面时释放内存但 DSH 后端照常跑、自动拿到每次启动动态生成的登录链接、支持四种启动方式(官方 npx 命令 / 系统全局命令 / 指定二进制路径 / WSL 跨系统)。
+DSH(DeepSeek Harness)Web 版的桌面壳:安装包尽量小、关掉界面时释放内存但 DSH 后端照常跑、自动拿到每次启动动态生成的登录链接、支持四种启动方式(官方 npx 命令 / 系统全局命令 / 指定二进制路径 / 自定义命令)与独立的运行环境选择(Windows 宿主 / 某个 WSL 发行版)。
 
 v1 只做 Windows;开发在 WSL2、运行在 Windows。功能拆解与进度见需求单 #1(https://github.com/BoxMiao007/dsharbor/issues/1)。
 

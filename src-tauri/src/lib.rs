@@ -8,6 +8,7 @@ mod detect;
 mod launcher;
 mod plugin;
 mod profile;
+mod registry;
 mod settings;
 mod tray;
 mod wsl;
@@ -471,16 +472,28 @@ async fn dsh_status(
     Ok(status)
 }
 
-/// 枚举 WSL 发行版（配置界面的下拉框）。
+/// 枚举 WSL 发行版并标注里面有没有 node/npm（配置界面的运行环境下拉框）。
 ///
-/// async 命令：wsl.exe 首次要拉起整个 WSL 子系统（秒级），同步命令会让切到
-/// 「通过 WSL 启动」时整个窗口发僵。
+/// async 命令：wsl.exe 首次要拉起整个 WSL 子系统（秒级），同步命令会让窗口发僵。
 #[tauri::command]
-async fn list_wsl_distros() -> Result<Vec<String>, String> {
-    let distros = tauri::async_runtime::spawn_blocking(wsl::list_distros)
+async fn wsl_distro_info() -> Result<Vec<wsl::DistroInfo>, String> {
+    let distros = tauri::async_runtime::spawn_blocking(wsl::distro_info)
         .await
         .map_err(|err| format!("后台枚举 WSL 发行版失败：{err}"))??;
     Ok(distros)
+}
+
+/// 查 npm 上的 DSH 渠道 / 版本清单（带 10 分钟缓存）。
+///
+/// async 命令：要拉起 npm（WSL 下还要先起 wsl.exe），同步命令会把主线程堵住。
+/// 查询失败就返回错误字符串，界面自己降级成「稳定版 + 默认环境」继续可用。
+#[tauri::command]
+async fn query_dsh_versions(
+    runtime: launch::Runtime,
+) -> Result<dsharbor_core::registry::RegistryInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime))
+        .await
+        .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }
 
 /// 打开（或刷新）DSH 界面窗口——界面与托盘的「应用内打开」。
@@ -1230,7 +1243,8 @@ pub fn run() {
             restart_dsh,
             stop_dsh,
             dsh_status,
-            list_wsl_distros,
+            wsl_distro_info,
+            query_dsh_versions,
             open_dsh_window,
             open_dsh_in_browser,
             bridge_install,
