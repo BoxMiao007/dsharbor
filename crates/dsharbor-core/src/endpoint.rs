@@ -47,6 +47,34 @@ impl fmt::Display for Endpoint {
 
 pub const LOOPBACK: &str = "127.0.0.1";
 
+/// 是否是通配绑定（`0.0.0.0` / `::`，意为「所有网卡」）。
+///
+/// 单列出来是因为通配地址有两副面孔：DSH 0.2.1-rc.2 起直接拒绝它（配置和
+/// `--host` 都一样），而老版本的 profile 里到处是它。壳需要区别对待：
+/// 探测时换成具体网卡地址、生成端口覆盖层时换成具体网卡地址，都不能照抄。
+pub fn is_wildcard(host: &str) -> bool {
+    host.trim()
+        .parse::<std::net::IpAddr>()
+        .map(|addr| addr.is_unspecified())
+        .unwrap_or(false)
+}
+
+/// 本机第一块网卡的 IPv4（用于把通配绑定变成能连的地址）。
+///
+/// 用一个绑在 `0.0.0.0:0` 的 UDP socket「连」到一个保留地址，让系统按路由表
+/// 选出出口网卡——UDP connect 不发任何包，断网时也能立即返回。取不到就返回 None
+/// （调用方退回回环）。
+pub fn primary_local_ipv4() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    // 192.0.2.0/24 是 TEST-NET-1，永远不是真实目的地址，这里只借它选路。
+    socket.connect("192.0.2.1:9").ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        return None;
+    }
+    Some(ip.to_string())
+}
+
 /// 把 profile 里写的 host 归一成「壳能连的地址」。
 ///
 /// - WSL 目标：Windows 侧只能通过 localhost 转发访问发行版内的回环监听，固定回环。
@@ -74,6 +102,22 @@ pub fn resolve_host(configured: Option<&str>, via_wsl: bool) -> String {
         },
         std::net::IpAddr::V4(v4) => v4.to_string(),
     }
+}
+
+/// 通配绑定（`0.0.0.0` / `::`）时壳该连哪个地址：本机网卡 IP，取不到再退回回环。
+///
+/// 与 `resolve_host` 分开是因为这条要探网卡（带 IO），而 `resolve_host` 保持纯函数。
+/// 为什么值得多这一步：老版本 DSH 与第三方插件（remote-web-ui）常把 host 写成
+/// `0.0.0.0` 表示「所有网卡」；此时 DSH 实际在每块网卡上都能连通，用回环探测
+/// 只能验证「壳本机能连」，而用网卡 IP 探测才与用户实际访问的地址一致。
+/// 端口覆盖层也用这个结果，避免把 `0.0.0.0` 交给新版 DSH（它会直接拒绝并起不来）。
+pub fn resolve_reachable_host(configured: Option<&str>, via_wsl: bool) -> String {
+    if !via_wsl && configured.map(is_wildcard).unwrap_or(false) {
+        if let Some(ip) = primary_local_ipv4() {
+            return ip;
+        }
+    }
+    resolve_host(configured, via_wsl)
 }
 
 #[cfg(test)]
@@ -108,6 +152,44 @@ mod tests {
     fn ipv6_mapped_is_reduced_to_ipv4() {
         assert_eq!(resolve_host(Some("::ffff:127.0.0.1"), false), LOOPBACK);
         assert_eq!(resolve_host(Some("::1"), false), "::1");
+    }
+
+    #[test]
+    fn wildcard_is_recognized() {
+        assert!(is_wildcard("0.0.0.0"));
+        assert!(is_wildcard("::"));
+        assert!(is_wildcard(" 0.0.0.0 "));
+        assert!(!is_wildcard("127.0.0.1"));
+        assert!(!is_wildcard("192.168.1.7"));
+        assert!(!is_wildcard("localhost"));
+        assert!(!is_wildcard(""));
+    }
+
+    #[test]
+    fn reachable_host_matches_resolve_host_off_wildcard() {
+        // 非通配配置不必探网卡：结果应与纯函数完全一致。
+        assert_eq!(
+            resolve_reachable_host(Some("192.168.1.7"), false),
+            resolve_host(Some("192.168.1.7"), false)
+        );
+        assert_eq!(
+            resolve_reachable_host(Some("localhost"), false),
+            resolve_host(Some("localhost"), false)
+        );
+        assert_eq!(
+            resolve_reachable_host(None, false),
+            resolve_host(None, false)
+        );
+    }
+
+    #[test]
+    fn reachable_host_never_keeps_wildcard() {
+        // 通配地址绝不能原样交出去（DSH 会拒绝、探测也连不上）。
+        for via_wsl in [false, true] {
+            let host = resolve_reachable_host(Some("0.0.0.0"), via_wsl);
+            assert!(!is_wildcard(&host), "通配地址未归一：{host}");
+            assert!(!host.is_empty());
+        }
     }
 
     #[test]

@@ -11,7 +11,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 use dsharbor_core::endpoint::{self, Endpoint};
-use dsharbor_core::launch::LaunchConfig;
+use dsharbor_core::launch::{self, LaunchConfig};
 
 use crate::plugin::Target;
 use crate::profile;
@@ -27,18 +27,48 @@ const MAX_SNIFF_BYTES: usize = 16 * 1024;
 /// 真实 DSH 对未登录的 `GET /` 就回这一句，页面标题要登录后才拿得到。
 const UNAUTHORIZED_MARK: &str = "dsh web authentication required";
 
-/// 纯逻辑：启动端口的优先级（壳覆盖 > profile 托管 > DSH 默认），单独拆出便于无 IO 测试。
-fn resolved_port(override_port: Option<u16>, managed_port: Option<u16>) -> u16 {
-    override_port.or(managed_port).unwrap_or(DSH_DEFAULT_PORT)
+/// 纯逻辑：启动端口的优先级（壳覆盖 > profile 托管 > 附加参数 --port > DSH 默认）。
+///
+/// 「壳覆盖」= 界面里填的自定义端口，它经 launcher 层 patch 注入、优先级最高。
+/// 之后是 profile 里写死的 webserver 端口：**实测它压过 DSH 自己的 `--port`**
+/// （真机：profile 写 3080 + `--port 3097` 启动，仍监听 3080），所以附加参数
+/// 排在它后面。`--port` 只在 profile 没写端口时才生效。
+fn resolved_port(
+    override_port: Option<u16>,
+    managed_port: Option<u16>,
+    flag_port: Option<u16>,
+) -> u16 {
+    override_port
+        .or(managed_port)
+        .or(flag_port)
+        .unwrap_or(DSH_DEFAULT_PORT)
 }
 
-/// 本次启动真正会落到哪个地址：host 跟随 profile 的 webserver 配置（WSL 固定回环），
+/// 纯逻辑：启动地址上 host 的来源。
+///
+/// profile 里写死的 webserver host 压过 `--host` 旗标（真机实测：profile 写
+/// 192.168.1.7 时 `--host 127.0.0.1` 不生效）。只有 profile 没写 host 时
+/// 才轮到 `--host`——包括壳自定义端口的情况：这时覆盖层不带 host 行，
+/// `--host` 依然有效。
+fn resolved_host_source(managed_host: Option<String>, flag_host: Option<String>) -> Option<String> {
+    managed_host.or(flag_host)
+}
+
+/// 本次启动真正会落到哪个地址：host 跟随 profile / 附加参数（WSL 固定回环），
 /// 端口按上面的优先级。
 pub fn effective_endpoint(config: &LaunchConfig) -> Endpoint {
     let hint = profile::port_hint(config).ok();
-    let port = resolved_port(config.port, hint.as_ref().and_then(|hint| hint.port));
+    let managed_port = hint.as_ref().and_then(|hint| hint.port);
+    let managed_host = hint.and_then(|hint| hint.host);
+    let flag_port = launch::extract_configured_port(&config.extra_args);
+    let flag_host = launch::extract_configured_host(&config.extra_args);
+
+    let port = resolved_port(config.port, managed_port, flag_port);
     let via_wsl = matches!(Target::of(config), Target::Wsl { .. });
-    let host = endpoint::resolve_host(hint.and_then(|hint| hint.host).as_deref(), via_wsl);
+    let host = endpoint::resolve_reachable_host(
+        resolved_host_source(managed_host, flag_host).as_deref(),
+        via_wsl,
+    );
     Endpoint::new(host, port)
 }
 
@@ -127,10 +157,35 @@ mod tests {
     }
 
     #[test]
-    fn resolved_port_prefers_override_over_managed_over_default() {
-        assert_eq!(resolved_port(Some(3099), Some(3080)), 3099);
-        assert_eq!(resolved_port(None, Some(3080)), 3080);
-        assert_eq!(resolved_port(None, None), DSH_DEFAULT_PORT);
+    fn resolved_port_prefers_override_over_managed_over_flag_over_default() {
+        assert_eq!(
+            resolved_port(Some(3099), Some(3080), Some(3098)),
+            3099,
+            "界面端口最优先（经 launcher 层覆盖注入）"
+        );
+        assert_eq!(
+            resolved_port(None, Some(3080), Some(3098)),
+            3080,
+            "profile 写死的 webserver 端口压过 --port（真机实测：profile 3080 + --port 3097 仍监听 3080）"
+        );
+        assert_eq!(
+            resolved_port(None, None, Some(3098)),
+            3098,
+            "profile 没写端口时才轮到 --port"
+        );
+        assert_eq!(resolved_port(None, None, None), DSH_DEFAULT_PORT);
+    }
+
+    #[test]
+    fn host_source_follows_what_actually_wins() {
+        let managed = || Some("192.168.1.7".to_string());
+        let flag = || Some("10.0.0.5".to_string());
+        // profile 有 host：它压过 --host（真机实测 profile 192.168.1.7 时 --host 127.0.0.1 不生效）。
+        assert_eq!(resolved_host_source(managed(), flag()), managed());
+        // profile 没写 host：才轮到 --host。
+        assert_eq!(resolved_host_source(None, flag()), flag());
+        // 都没有：交给 resolve_host 兜回环。
+        assert_eq!(resolved_host_source(None, None), None);
     }
 
     #[test]

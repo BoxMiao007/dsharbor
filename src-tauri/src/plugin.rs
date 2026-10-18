@@ -438,23 +438,40 @@ fn plugin_command(config: &LaunchConfig, op: &PluginOp) -> Result<Command, Strin
 /// 暂存目录：pnpm 会把含空格的 `file:` 规格在空格处截断（`file:D:\Program` → 当包名
 /// 去 registry 查 → 404），而默认安装目录 `D:\Program Files\DSHarbor` 就含空格，
 /// 所以插件包必须先复制到一个不含空格的路径再安装。
+///
+/// 候选按「用户可写程度」排序：应用数据目录（最正常）→ 用户 TEMP → 系统
+/// ProgramData（用户名本身带空格时，前两个都会含空格）→ 系统盘根目录兜底。
+/// 都不可写才报错，避免「用户名是 John Doe 就装不了插件」。
 fn staging_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut candidates = vec![crate::app_data_root(app)?.join("cache")];
     if let Ok(temp) = std::env::var("TEMP") {
         candidates.push(PathBuf::from(temp).join("dsharbor-cache"));
     }
-    for dir in candidates {
-        if !dir.to_string_lossy().contains(' ') {
-            std::fs::create_dir_all(&dir)
-                .map_err(|err| format!("创建暂存目录失败（{}）：{err}", dir.display()))?;
-            return Ok(dir);
-        }
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        candidates.push(PathBuf::from(program_data).join("DSHarbor").join("cache"));
     }
-    Err(
-        "找不到不含空格的暂存目录：pnpm 无法解析含空格的插件包路径，\
-         请把 DSHarbor 安装到不含空格的目录（或把 TEMP 指向无空格目录）后重试。"
-            .to_string(),
-    )
+    if let Ok(system_drive) = std::env::var("SystemDrive") {
+        candidates.push(PathBuf::from(format!("{system_drive}\\")).join("DSHarborCache"));
+    }
+    let mut tried: Vec<String> = Vec::new();
+    for dir in candidates {
+        let display = dir.display().to_string();
+        if display.contains(' ') {
+            tried.push(format!("{display}（路径含空格）"));
+            continue;
+        }
+        // 目录存在还不够：真正卡住用户的是「写不进去」，所以这里就试着建目录。
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            tried.push(format!("{display}（{err}）"));
+            continue;
+        }
+        return Ok(dir);
+    }
+    Err(format!(
+        "找不到可写且不含空格的暂存目录（pnpm 无法解析含空格的插件包路径）。\
+         已尝试：{}。可把 TEMP 指向不含空格的目录后重试。",
+        tried.join("；")
+    ))
 }
 
 /// 把桥接插件包暂存到无空格位置，返回可交给 `pnpm add file:` 的路径

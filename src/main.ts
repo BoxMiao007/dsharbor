@@ -1034,6 +1034,16 @@ async function main(): Promise<void> {
       portInfoEl.dataset.tip = `${text}四种启动方式共用这两个字段，WSL 模式同样生效（壳注入的端口覆盖层会经 /mnt 路径送进发行版）。配置改完自动保存，重开壳后保留。`;
     }
 
+    /** 附加参数里的 `--port` / `--host`：它们会盖掉 profile 的 webserver 配置，提示里要说清。 */
+    function extraArgFlag(name: string): string | null {
+      const args = extraInput.value.trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < args.length; i += 1) {
+        if (args[i] === name) return args[i + 1] ?? "";
+        if (args[i].startsWith(`${name}=`)) return args[i].slice(name.length + 1);
+      }
+      return null;
+    }
+
     function renderPortHint(): void {
       const raw = portInput.value.trim();
       // 输入框提示显示 DSH 配置里的真实端口（读不到就显示默认 3080）：只是提示文字，
@@ -1042,15 +1052,31 @@ async function main(): Promise<void> {
       portInput.placeholder = String(managedPort ?? 3080);
       // 空 = 本来就跟配置走，没有可还原的东西。
       portReset.disabled = raw === "";
+      const flagPort = extraArgFlag("--port");
+      const flagHost = extraArgFlag("--host");
+      // 谁真正生效：profile 里写死的 webserver 块压过 DSH 的 --port / --host（真机实测：
+      // profile 写 3080 + `--port 3097` 仍监听 3080，profile 写 192.168.1.7 时
+      // `--host 127.0.0.1` 也不生效）；只有 profile 没写那项时附加参数才轮得到。
+      const managedHost = portHint !== null && portHint.source === "managed" ? portHint.host : null;
+      const overridden: string[] = [];
+      if (flagPort !== null && managedPort !== null) overridden.push("--port");
+      if (flagHost !== null && managedHost !== null) overridden.push("--host");
+      const wins: string[] = [];
+      if (flagPort !== null && managedPort === null) wins.push(`--port ${flagPort || "（缺值）"}`);
+      if (flagHost !== null && managedHost === null) wins.push(`--host ${flagHost || "（缺值）"}`);
+      const flagNote =
+        overridden.length > 0 || wins.length > 0
+          ? `${overridden.length > 0 ? `注意：附加参数里的 ${overridden.join(" / ")} 不生效——DSH 配置的 webserver 块已写死，优先级更高。` : ""}${wins.length > 0 ? `注意：附加参数里的 ${wins.join("、")} 会盖掉下面的配置。` : ""}`
+          : "";
       if (!portHint) {
-        setPortTip("正在读取 DSH 配置…");
+        setPortTip(flagNote || "正在读取 DSH 配置…");
         return;
       }
       if (portHint.source === "managed" && portHint.port !== null) {
         const host = portHint.host ? `host ${portHint.host}，` : "";
-        setPortTip(`当前生效值：${portHint.port}（来自 DSH 配置的 webserver 块，${host}留空时不动它；自定义端口会保留 host）。`);
+        setPortTip(`${flagNote}当前生效值：${portHint.port}（来自 DSH 配置的 webserver 块，${host}留空时不动它；自定义端口会保留 host）。`);
       } else {
-        setPortTip("未读到 DSH 端口配置（默认 3080）；留空则完全不干预。");
+        setPortTip(`${flagNote}未读到 DSH 端口配置（默认 3080）；留空则完全不干预。`);
       }
     }
 
@@ -1159,6 +1185,8 @@ async function main(): Promise<void> {
     for (const input of [extraInput, binaryPath, innerInput, portInput]) {
       input.addEventListener("change", () => void persistConfigQuiet());
     }
+    // 附加参数里可能写了 --port / --host，改完立刻刷新端口气泡里的「以它为准」提示。
+    extraInput.addEventListener("input", () => renderPortHint());
     // 「指定程序路径」：点「浏览…」弹系统「打开文件」框（默认只列可执行文件），选完写入输入框并
     // 即时校验；手打/粘贴的路径在失焦时校验。红字只是提前提醒，不拦启动（启动时后端仍会校验）。
     binaryBrowse.addEventListener("click", () => void pickBinaryPath());

@@ -14,7 +14,7 @@ mod wsl;
 
 use std::sync::Mutex;
 
-use dsharbor_core::launch::LaunchConfig;
+use dsharbor_core::launch::{self, LaunchConfig};
 use dsharbor_core::lifecycle::{ShellAction, ShellEvent, ShellMachine, ShellState};
 use dsharbor_core::links::{navigation_decision, NavigationDecision};
 use launcher::{SessionHandle, SessionStatus};
@@ -157,12 +157,21 @@ fn spawn_session(
         // 是别的程序占着端口 → 给出明确的占用提示，代替原先干巴巴的退出代码。
         // 地址跟随 profile 的 host：DSH 可以只绑在网卡 IP 上，探回环会漏判。
         let endpoint = detect::effective_endpoint(config);
+        let tls_requested = launch::has_tls_args(&config.extra_args);
         if detect::port_alive(&endpoint) {
             if detect::dsh_fingerprint(&endpoint) == Some(true) {
                 if let Ok(mut slot) = state.external_port.lock() {
                     *slot = Some(endpoint);
                 }
                 Ok(())
+            } else if tls_requested {
+                // 开了 TLS 的 DSH 用明文连不上，指纹必然取不到；这时若还按
+                // 「被别的程序占用」报错，用户会一头雾水（那可能就是他自己的 DSH）。
+                Err(format!(
+                    "{endpoint} 上有服务在听，但本壳的探测走明文 HTTP，读不出它是不是 DSH——\
+                     你启用了 DSH 的 TLS（--tls-cert / --tls-key），壳暂不支持加密连接。\
+                     请先结束该进程，或删掉这两个参数后重试；TLS 场景请直接用浏览器访问。"
+                ))
             } else {
                 Err(format!(
                     "检测到 {endpoint} 已被其他程序占用，没有启动新进程；可更换端口或结束占用它的程序后再试。"

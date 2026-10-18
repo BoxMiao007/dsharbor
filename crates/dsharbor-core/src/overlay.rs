@@ -135,9 +135,10 @@ pub fn build_port_overlay(block: Option<&WebserverBlock>, port: u16) -> String {
                     // DSH 0.2.1-rc.2 起 webserver 的 host 必须是具体 IP 字面量：通配地址
                     // （0.0.0.0 / ::，官方 remote-web-ui 就写这个）会被直接拒绝、整只
                     // DSH 起不来，主机名（localhost）同样不合法。照抄旧块会把用户带进
-                    // 这个坑里，所以这里归一成可用的具体地址。
+                    // 这个坑里，所以这里归一成可用的具体地址：通配地址换成这块网卡的
+                    // IP（保住局域网访问），其余情况见 resolve_host 的规则。
                     let indent = &line[..line.len() - t.len()];
-                    let host = endpoint::resolve_host(Some(&value), false);
+                    let host = endpoint::resolve_reachable_host(Some(&value), false);
                     out.push_str(&format!("{indent}host: '{host}'\n"));
                 } else {
                     out.push_str(line);
@@ -213,9 +214,22 @@ mod tests {
         let yaml = build_port_overlay(Some(&block), 3099);
         assert!(yaml.contains("- id: webserver"));
         assert!(yaml.contains("name: '@deepseek-ai/dsh-host-webserver'"));
-        // 旧块的通配 host 被归一成具体地址：DSH 0.2.1-rc.2 会拒绝 0.0.0.0。
-        assert!(yaml.contains("host: '127.0.0.1'"));
+        // 旧块的通配 host 被归一成具体地址（DSH 0.2.1-rc.2 会拒绝 0.0.0.0）。
+        // 具体取值取决于本机网卡：有可用网卡时取网卡 IP（保住局域网访问），
+        // 否则退回回环——两种都不能是通配地址。
         assert!(!yaml.contains("0.0.0.0"));
+        let host_line = yaml
+            .lines()
+            .find(|line| line.trim_start().starts_with("host:"))
+            .expect("覆盖层必须带 host");
+        let host = host_line
+            .split_once(':')
+            .map(|(_, value)| value.trim().trim_matches('\''))
+            .unwrap_or_default();
+        assert!(
+            host.parse::<std::net::IpAddr>().is_ok(),
+            "host 应是具体 IP 字面量：{host}"
+        );
         assert!(yaml.contains("compression: gzip"));
         assert!(yaml.contains("port: 3099"));
         assert!(!yaml.contains("port: 3080"));

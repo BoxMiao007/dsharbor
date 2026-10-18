@@ -39,7 +39,9 @@ const state = {
   session: "stopped", // stopped | running | starting | failed
   /** true = 运行中但登录链接还没就绪（真实的「启动中」：running + 无登录链接）。 */
   loginPending: false,
-  dshVersion: "0.2.0-rc.2",
+  dshVersion: "0.2.1-rc.2",
+  /** 端口提示的假数据：改它就能预览「跟随 DSH 配置」与「没读到配置」两种分支。 */
+  portHint: { host: "127.0.0.1", port: 3080, source: "managed" },
   counter: 0,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
@@ -109,7 +111,7 @@ window.__mockUnimplemented = [];
     "plugin:dialog|open": () => (S.dialogPick === undefined ? "D:\\\\tools\\\\dsh.cmd" : S.dialogPick),
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
-    profile_port_hint: () => ({ port: 3080, source: "来自 DSH 配置的 webserver 块", hint: "" }),
+    profile_port_hint: () => S.portHint,
     list_wsl_distros: () => ["Ubuntu", "Debian"],
     start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; return status(); },
     stop_dsh: () => { seen("stop_dsh"); S.counter += 1; S.session = "stopped"; return status(); },

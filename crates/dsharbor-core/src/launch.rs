@@ -494,6 +494,37 @@ pub fn extract_configured_port(args: &[String]) -> Option<u16> {
     None
 }
 
+/// 从附加参数里找用户显式指定的绑定地址（`--host 192.168.1.7` 或 `--host=…`）。
+///
+/// 为什么壳要看它：DSH 的 `--host` 会覆盖 profile 里的 webserver 绑定地址，
+/// 壳若只按 profile 探测就会探错地址、误判端口空闲（重复拉起仍是 EADDRINUSE）。
+pub fn extract_configured_host(args: &[String]) -> Option<String> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--host" {
+            if let Some(value) = iter.next() {
+                return Some(value.to_string());
+            }
+        } else if let Some(value) = arg.strip_prefix("--host=") {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// 附加参数里是否要求了 TLS（`--tls-cert` / `--tls-key`）。
+///
+/// 壳的探测与桥接都是明文 HTTP；一旦开了 TLS 就连不上、只能给用户一句
+/// 「本壳暂不支持 TLS」的明确提示，而不是含糊的「端口被其他程序占用」。
+pub fn has_tls_args(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        arg == "--tls-cert"
+            || arg == "--tls-key"
+            || arg.starts_with("--tls-cert=")
+            || arg.starts_with("--tls-key=")
+    })
+}
+
 /// 从 DSH 输出的 URL 中解析端口（形如 `http://127.0.0.1:3080/?token=...`）。
 pub fn extract_port(line: &str) -> Option<u16> {
     let scheme = line.find("://")? + 3;
@@ -1052,6 +1083,28 @@ mod tests {
         assert_eq!(extract_configured_port(&args(&["--port=3082"])), Some(3082));
         assert_eq!(extract_configured_port(&args(&["--no-open"])), None);
         assert_eq!(extract_configured_port(&args(&["--port", "abc"])), None);
+    }
+
+    #[test]
+    fn extracts_configured_host() {
+        let args = |raw: &[&str]| raw.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            extract_configured_host(&args(&["--host", "192.168.1.7"])),
+            Some("192.168.1.7".to_string())
+        );
+        assert_eq!(
+            extract_configured_host(&args(&["--host=10.0.0.5"])),
+            Some("10.0.0.5".to_string())
+        );
+        assert_eq!(extract_configured_host(&args(&["--no-open"])), None);
+    }
+
+    #[test]
+    fn detects_tls_args() {
+        let args = |raw: &[&str]| raw.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(has_tls_args(&args(&["--tls-cert", "a.pem"])));
+        assert!(has_tls_args(&args(&["--tls-key=b.pem"])));
+        assert!(!has_tls_args(&args(&["--no-open", "--port", "3099"])));
     }
 
     #[test]

@@ -26,13 +26,18 @@ pub fn windows_path_to_wsl(path: &str) -> Option<String> {
     Some(out)
 }
 
-/// 单个 PATH 条目是否可安全注入（`/mnt` 挂载点、空白、引号、反斜杠、非 ASCII 一律丢弃）。
+/// 单个 PATH 条目是否可安全注入（`/mnt` 挂载点、空白、引号、反斜杠一律丢弃）。
+///
+/// 非 ASCII **不**丢：实测 `wsl.exe … env PATH=/home/用户名/.local/bin:…` 会把
+/// 原样 UTF-8 字节递进发行版（`printenv` 读回无变化），中文用户名下的 pnpm 目录
+/// 正靠它才能注入。真正会坏事的是空白与引号（`env` 后面是 shell 命令行，实测
+/// 带 `"` 或 `'` 的条目会让 bash 报 `unexpected EOF`）与反斜杠（会被当转义）。
 fn safe_entry(entry: &str) -> bool {
     !entry.is_empty()
         && !entry.starts_with("/mnt/")
-        && entry
+        && !entry
             .chars()
-            .all(|c| c.is_ascii() && !c.is_whitespace() && c != '"' && c != '\'' && c != '\\')
+            .any(|c| c.is_whitespace() || c == '"' || c == '\'' || c == '\\')
 }
 
 /// 清理从 WSL 侧取得的 PATH，供 `wsl.exe … env PATH=<clean>` 显式注入。
@@ -41,9 +46,10 @@ fn safe_entry(entry: &str) -> bool {
 /// `/mnt/c/…` 形式混进发行版 PATH；发行版里没有的工具（如 pnpm 装在
 /// `~/.local/share/pnpm/bin`）会误用 Windows 版同名二进制。
 ///
-/// 为什么剔除规则这么严：清理结果要作为 `env PATH=…` 的单个 argv 传给
-/// wsl.exe——实测 wsl.exe 会破坏参数里的引号，含空白/引号/反斜杠/非 ASCII 的
-/// PATH 条目可能把参数改坏，宁可丢掉这类条目。
+/// 为什么剔除规则这么严：清理结果要作为 `env PATH=…` 的单个 argv 交给
+/// wsl.exe——实测 wsl.exe 会破坏参数里的引号（含 `"` 或 `'` 的条目会让 bash 报
+/// `unexpected EOF`），含空白或反斜杠的条目也可能把参数改坏，宁可丢掉这类条目。
+/// 非 ASCII 目录名（中文用户名）是安全的、必须保留。
 pub fn sanitize_wsl_path(path: &str) -> String {
     path.split(':')
         .filter(|entry| safe_entry(entry))
@@ -119,10 +125,16 @@ mod tests {
             sanitize_wsl_path("/mnt/d/IT/Scoop/nodejs:/usr/local/bin:/usr/bin:/bin"),
             "/usr/local/bin:/usr/bin:/bin"
         );
-        // 含空格/引号/非 ASCII 的条目丢掉（argv 传递不安全）。
+        // 空白/引号/反斜杠的条目丢掉（argv 传递会被 shell 改坏）；非 ASCII 保留
+        // ——实测中文目录名经 env PATH=… 能原样递进发行版。
         assert_eq!(
             sanitize_wsl_path("/opt/my tools:/usr/bin:/数据:/opt/quo\"te"),
-            "/usr/bin"
+            "/usr/bin:/数据"
+        );
+        // 中文用户名下的 pnpm 目录必须留下（否则 pnpm 找不到）。
+        assert_eq!(
+            sanitize_wsl_path("/home/张三/.local/share/pnpm/bin:/usr/bin"),
+            "/home/张三/.local/share/pnpm/bin:/usr/bin"
         );
         // 全是 /mnt 时返回空串（调用方视为失败）。
         assert_eq!(sanitize_wsl_path("/mnt/c/a:/mnt/d/b"), "");
