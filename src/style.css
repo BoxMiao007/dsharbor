@@ -909,8 +909,10 @@ input[type="text"] {
 /* 两个例外：内容天然很长、必须撑满整行。用 id 选择器，特指度高于元素选择器与 .picker，
    不受声明顺序影响。
    #binary-path「指定程序路径」：可能是 D:\tools\dsh.cmd 这样的长路径，260px 看不全；
+   #custom-command「自定义命令」：整条启动命令行，比路径更长；
    #wsl-inner「发行版内命令」：默认值就是一条完整命令行，260px 同样看不全。 */
 #binary-path,
+#custom-command,
 #wsl-inner {
   width: 100%;
 }

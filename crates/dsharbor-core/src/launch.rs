@@ -49,6 +49,10 @@ pub enum LaunchMode {
     System,
     /// 指定可执行文件/脚本的绝对路径。
     Binary { path: String },
+    /// 自定义命令：整条启动命令行由用户自己写（例如 `npx @deepseek-ai/dsh@next web`）。
+    /// 适合官方 npx / 系统命令两种内置写法覆盖不到的场景（指定版本标签、包管理器
+    /// 不同、包装脚本等）。壳仍会在末尾追加附加参数与 `--no-open`。
+    Custom { command: String },
     /// 通过 wsl.exe 在 WSL 发行版内部启动（Windows 壳启动 WSL 里的 DSH）。
     Wsl { distro: String, inner: String },
 }
@@ -218,6 +222,18 @@ pub fn validate(config: &LaunchConfig) -> Result<(), String> {
     match &config.mode {
         LaunchMode::Npx | LaunchMode::System => Ok(()),
         LaunchMode::Binary { path } => validate_binary_path(path),
+        LaunchMode::Custom { command } => {
+            let tokens = split_line(command);
+            if tokens.is_empty() {
+                return Err("自定义命令不能为空".into());
+            }
+            // 与附加参数同一套白名单：不许引号、管道、重定向等 shell 元字符，
+            // 这条命令会经 cmd /C 执行，留口子等于把注入面交给用户输入。
+            for token in &tokens {
+                validate_argument(token)?;
+            }
+            Ok(())
+        }
         LaunchMode::Wsl { distro, inner } => {
             validate_distro(distro)?;
             let tokens = split_line(inner);
@@ -337,6 +353,14 @@ pub fn build_spawn_plan_with_launcher_args(
                 }
             }
         }
+        LaunchMode::Custom { command } => {
+            let mut tokens = split_line(command);
+            tokens.extend(extra.iter().cloned());
+            SpawnPlan::ShellLine {
+                line: join_shell_line(&tokens),
+                wrap: ShellWrap::Cmd,
+            }
+        }
         LaunchMode::Wsl { distro, inner } => {
             let mut tokens = split_line(inner);
             tokens.extend(extra.iter().cloned());
@@ -433,8 +457,16 @@ pub fn build_plugin_plan(config: &LaunchConfig, op: &PluginOp) -> Result<SpawnPl
                 }
             }
         }
+        LaunchMode::Custom { command } => {
+            let mut tokens = plugin_prefix(command);
+            tokens.extend(args);
+            SpawnPlan::ShellLine {
+                line: join_shell_line(&tokens),
+                wrap: ShellWrap::Cmd,
+            }
+        }
         LaunchMode::Wsl { distro, inner } => {
-            let mut tokens = wsl_plugin_prefix(inner);
+            let mut tokens = plugin_prefix(inner);
             tokens.extend(args);
             SpawnPlan::Wsl {
                 distro: distro.clone(),
@@ -444,9 +476,12 @@ pub fn build_plugin_plan(config: &LaunchConfig, op: &PluginOp) -> Result<SpawnPl
     })
 }
 
-/// WSL 内部命令去掉尾部的 `web` 子命令，得到插件管理前缀。
-/// 默认 inner 是 `npx --yes @deepseek-ai/dsh web`，也有用户写 `dsh web`。
-fn wsl_plugin_prefix(inner: &str) -> Vec<String> {
+/// 去掉尾部的 `web` 子命令，得到插件管理前缀。
+///
+/// 自定义命令与 WSL 内部命令都遵循 DSH 的 `<启动器> web [参数]` 写法
+/// （界面上的默认值与示例都是），所以换个子命令就能复用同一个启动器：
+/// 版本标签（`@next`）、包管理器、发行版内的 PATH 全部保持不变。
+fn plugin_prefix(inner: &str) -> Vec<String> {
     let mut tokens = split_line(inner);
     if tokens.last().map(|token| token == "web").unwrap_or(false) {
         tokens.pop();
@@ -624,6 +659,87 @@ mod tests {
             SpawnPlan::Script {
                 program: "C:\\Program Files\\dsh.cmd".into(),
                 args: vec!["web".into(), "--no-open".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn custom_command_plan() {
+        // 用户示例：固定版本标签的启动命令，壳在末尾补 --no-open。
+        let plan = build_spawn_plan(&cfg(
+            LaunchMode::Custom {
+                command: "npx @deepseek-ai/dsh@next web".into(),
+            },
+            &[],
+        ))
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "npx @deepseek-ai/dsh@next web --no-open".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+    }
+
+    #[test]
+    fn custom_command_keeps_extra_args_and_rejects_injection() {
+        let plan = build_spawn_plan(&cfg(
+            LaunchMode::Custom {
+                command: "pnpm dlx @deepseek-ai/dsh web".into(),
+            },
+            &["--port", "3081"],
+        ))
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "pnpm dlx @deepseek-ai/dsh web --port 3081 --no-open".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+        // 自定义命令同样要过白名单：引号、管道、重定向一律拒绝。
+        for bad in ["npx dsh web; rm -rf /", "npx dsh \"web\"", "npx dsh | more"] {
+            assert!(
+                build_spawn_plan(&cfg(
+                    LaunchMode::Custom {
+                        command: bad.into()
+                    },
+                    &[]
+                ))
+                .is_err(),
+                "应被拒绝: {bad:?}"
+            );
+        }
+        assert!(build_spawn_plan(&cfg(
+            LaunchMode::Custom {
+                command: "   ".into()
+            },
+            &[]
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn custom_command_plugin_plan_swaps_web_subcommand() {
+        // 插件管理复用同一启动器：只把末尾的 web 换成 plugin --profile web add。
+        let plan = build_plugin_plan(
+            &cfg(
+                LaunchMode::Custom {
+                    command: "npx @deepseek-ai/dsh@next web".into(),
+                },
+                &[],
+            ),
+            &PluginOp::Install {
+                package: "file:C:/tmp/x.tgz".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "npx @deepseek-ai/dsh@next plugin --profile web add file:C:/tmp/x.tgz".into(),
+                wrap: ShellWrap::Cmd
             }
         );
     }

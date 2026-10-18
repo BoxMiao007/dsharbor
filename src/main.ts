@@ -47,6 +47,7 @@ type LaunchMode =
   | { kind: "npx" }
   | { kind: "system" }
   | { kind: "binary"; path: string }
+  | { kind: "custom"; command: string }
   | { kind: "wsl"; distro: string; inner: string };
 
 interface LaunchConfig {
@@ -112,6 +113,11 @@ interface BridgeOutcome {
 }
 
 const WSL_DEFAULT_INNER = "npx --yes @deepseek-ai/dsh web";
+/**
+ * 「自定义命令」输入框的默认值：官方 next 标签，覆盖「想用别的版本 / 别的包管理器」的场景。
+ * 保留 `--yes`：壳的子进程没有终端，npx 首次下载时的交互确认会直接把启动卡住。
+ */
+const CUSTOM_DEFAULT_COMMAND = "npx --yes @deepseek-ai/dsh@next web";
 
 /** 版本徽章里的两个四角星图标（取自 DeepSeek Harness 官网，路径原样保留）。 */
 const SPARKLE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -130,6 +136,7 @@ const MODE_LABELS: Record<string, string> = {
   npx: "官方 npx 命令",
   system: "系统全局命令",
   binary: "指定程序路径",
+  custom: "自定义命令",
   wsl: "通过 WSL 启动",
 };
 
@@ -602,6 +609,17 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <p id="binary-error" class="error field-error hidden"></p>
     </div>
     <label class="mode">
+      <input type="radio" name="mode" value="custom" />
+      <span>
+        <b>${MODE_LABELS.custom}</b>
+        <small>自己写整条启动命令，例如 <code>npx @deepseek-ai/dsh@next web</code>（换版本标签、换包管理器、包一层脚本都行）</small>
+      </span>
+    </label>
+    <div id="custom-fields" class="fields hidden">
+      <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
+      <p class="hint">写整条启动命令（末尾保留 <code>web</code> 子命令）；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。</p>
+    </div>
+    <label class="mode">
       <input type="radio" name="mode" value="wsl" />
       <span>
         <b>${MODE_LABELS.wsl}</b>
@@ -830,6 +848,7 @@ async function main(): Promise<void> {
     const binaryPath = $<HTMLInputElement>("binary-path");
     const binaryBrowse = $<HTMLButtonElement>("binary-browse");
     const binaryError = $<HTMLParagraphElement>("binary-error");
+    const customCommand = $<HTMLInputElement>("custom-command");
     const innerInput = $<HTMLInputElement>("wsl-inner");
     const portInput = $<HTMLInputElement>("port");
     const portReset = $<HTMLButtonElement>("port-reset");
@@ -1121,6 +1140,7 @@ async function main(): Promise<void> {
 
     function syncModeFields(): void {
       $("binary-fields").classList.toggle("hidden", currentMode() !== "binary");
+      $("custom-fields").classList.toggle("hidden", currentMode() !== "custom");
       $("wsl-fields").classList.toggle("hidden", currentMode() !== "wsl");
       // 卡片收起后靠这个徽章显示当前启动方式（展开时徽章隐藏，见 CSS）。
       const mode = currentMode();
@@ -1173,6 +1193,8 @@ async function main(): Promise<void> {
           return { ...base, mode: { kind: "system" } };
         case "binary":
           return { ...base, mode: { kind: "binary", path: binaryPath.value.trim() } };
+        case "custom":
+          return { ...base, mode: { kind: "custom", command: customCommand.value.trim() } };
         case "wsl":
           return { ...base, mode: { kind: "wsl", distro: distroPicker.value.trim(), inner: innerInput.value.trim() } };
         default:
@@ -1182,7 +1204,7 @@ async function main(): Promise<void> {
 
     // 配置自动保存：任一字段变更后尝试写盘（当前不合法时不写、不打扰；启动时会再校验）。
     // 两个自绘下拉框（托盘单击打开 / WSL 发行版）的回调在构造时已接进 persistConfigQuiet。
-    for (const input of [extraInput, binaryPath, innerInput, portInput]) {
+    for (const input of [extraInput, binaryPath, customCommand, innerInput, portInput]) {
       input.addEventListener("change", () => void persistConfigQuiet());
     }
     // 附加参数里可能写了 --port / --host，改完立刻刷新端口气泡里的「以它为准」提示。
@@ -1679,6 +1701,9 @@ async function main(): Promise<void> {
       }
       if (launch.mode.kind === "binary") {
         binaryPath.value = launch.mode.path;
+      }
+      if (launch.mode.kind === "custom") {
+        customCommand.value = launch.mode.command;
       }
       if (launch.mode.kind === "wsl") {
         await ensureDistros();
