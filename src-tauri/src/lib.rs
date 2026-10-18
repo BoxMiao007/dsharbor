@@ -874,6 +874,13 @@ fn save_ui_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     settings::save(&app, &config)
 }
 
+/// 「指定程序路径」的即时校验：选完文件或输入框失焦后由界面调用。
+/// 复用启动时的格式校验（文案一致）并补文件存在性检查；只做提示，不拦启动。
+#[tauri::command]
+fn check_binary_path(path: String) -> Result<(), String> {
+    dsharbor_core::launch::check_binary_path(&path)
+}
+
 /// 轻量模式状态机的副作用执行器（托盘点击、关窗事件、测试钩子都走这里）。
 pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
     let Some(state) = app.try_state::<AppState>() else {
@@ -1148,6 +1155,8 @@ pub fn run() {
                 eprintln!("单实例：切回主窗口失败（无法调度到主线程）");
             }
         }))
+        // 文件对话框：「指定程序路径」的「浏览…」（权限见 capabilities/default.json）。
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .setup(|app| {
             // 主窗口不在 tauri.conf.json 里声明：conf 的装饰/底色是写死的，暗色主题
@@ -1218,6 +1227,7 @@ pub fn run() {
             open_external,
             set_caption_color,
             save_ui_theme,
+            check_binary_path,
             open_shell_dir
         ])
         .build(tauri::generate_context!())

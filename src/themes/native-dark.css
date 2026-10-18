@@ -270,10 +270,11 @@ button.primary:hover:not(:disabled) {
   color: var(--j-on-accent);
 }
 
-/* 条目内的小按钮（关于卡片、桥接卡片）与端口「还原」：
+/* 条目内的小按钮（关于卡片、桥接卡片）、端口「还原」与「指定程序路径」的「浏览…」：
    都归到 I 的小按钮形状（common.css:309–314，高 28px、圆角 5px、字号 12.5px）。 */
 .kv-action,
-.port-reset {
+.port-reset,
+.path-browse {
   height: 28px;
   padding: 0 11px;
   border-radius: var(--j-r-combo);
@@ -303,6 +304,7 @@ button.primary:hover:not(:disabled) {
 
 .log-copy:hover:not(:disabled),
 .kv-action:hover:not(:disabled),
+.path-browse:hover:not(:disabled),
 .port-reset:hover:not(:disabled) {
   color: var(--j-fg);
   background: var(--j-panel-hi);

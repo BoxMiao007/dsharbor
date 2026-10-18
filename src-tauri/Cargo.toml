@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 # 单实例：重复启动时切回已有实例（官方插件，Windows 上经命名互斥体实现）。
 tauri-plugin-single-instance = "2"
+# 文件对话框：「指定程序路径」的「浏览…」按钮（官方插件，Windows 上弹系统「打开文件」框）。
+tauri-plugin-dialog = "2"
 serde = { workspace = true }
 serde_json = "1"
 dsharbor-core = { path = "../crates/dsharbor-core" }

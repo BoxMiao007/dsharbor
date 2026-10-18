@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import logoUrl from "./assets/logo.png";
 import "./style.css";
 // 主题样式放在独立文件里，用 ?inline 读成字符串：切换主题只是改 <style> 的内容，
@@ -594,7 +595,11 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       </span>
     </label>
     <div id="binary-fields" class="fields hidden">
-      <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" />
+      <div class="path-row">
+        <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" />
+        <button type="button" id="binary-browse" class="path-browse" title="选择 dsh.exe / dsh.cmd / dsh.bat">浏览…</button>
+      </div>
+      <p id="binary-error" class="error field-error hidden"></p>
     </div>
     <label class="mode">
       <input type="radio" name="mode" value="wsl" />
@@ -823,6 +828,8 @@ async function main(): Promise<void> {
     const btnRestart = $<HTMLButtonElement>("btn-restart");
     const extraInput = $<HTMLInputElement>("extra-args");
     const binaryPath = $<HTMLInputElement>("binary-path");
+    const binaryBrowse = $<HTMLButtonElement>("binary-browse");
+    const binaryError = $<HTMLParagraphElement>("binary-error");
     const innerInput = $<HTMLInputElement>("wsl-inner");
     const portInput = $<HTMLInputElement>("port");
     const portReset = $<HTMLButtonElement>("port-reset");
@@ -1151,6 +1158,57 @@ async function main(): Promise<void> {
     // 两个自绘下拉框（托盘单击打开 / WSL 发行版）的回调在构造时已接进 persistConfigQuiet。
     for (const input of [extraInput, binaryPath, innerInput, portInput]) {
       input.addEventListener("change", () => void persistConfigQuiet());
+    }
+    // 「指定程序路径」：点「浏览…」弹系统「打开文件」框（默认只列可执行文件），选完写入输入框并
+    // 即时校验；手打/粘贴的路径在失焦时校验。红字只是提前提醒，不拦启动（启动时后端仍会校验）。
+    binaryBrowse.addEventListener("click", () => void pickBinaryPath());
+    binaryPath.addEventListener("blur", () => void checkBinaryPath());
+
+    async function pickBinaryPath(): Promise<void> {
+      let picked: string | string[] | null;
+      try {
+        picked = await openFileDialog({
+          multiple: false,
+          directory: false,
+          filters: [
+            { name: "可执行文件", extensions: ["exe", "cmd", "bat"] },
+            { name: "所有文件", extensions: ["*"] },
+          ],
+        });
+      } catch (err) {
+        // 弹框失败（多半是缺少 dialog 权限）也要说清楚，不能静默。
+        showBinaryError(`打开文件对话框失败：${String(err)}`);
+        return;
+      }
+      if (typeof picked !== "string") return; // 用户取消：输入框保持原样
+      binaryPath.value = picked;
+      void persistConfigQuiet();
+      await checkBinaryPath();
+    }
+
+    /** 校验「指定程序路径」并在字段下方显示/清除红字；空值当作「还没填」，不提示。 */
+    async function checkBinaryPath(): Promise<void> {
+      const path = binaryPath.value.trim();
+      if (!path) {
+        hideBinaryError();
+        return;
+      }
+      try {
+        await invoke("check_binary_path", { path });
+        hideBinaryError();
+      } catch (err) {
+        showBinaryError(String(err));
+      }
+    }
+
+    function showBinaryError(message: string): void {
+      binaryError.textContent = message;
+      binaryError.classList.remove("hidden");
+    }
+
+    function hideBinaryError(): void {
+      binaryError.textContent = "";
+      binaryError.classList.add("hidden");
     }
     // 端口：输入即刷新提示与「还原」按钮（不含程序化赋值）；失焦再刷新一次保证同步。
     portInput.addEventListener("input", renderPortHint);

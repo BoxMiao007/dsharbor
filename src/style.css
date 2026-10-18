@@ -791,8 +791,10 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 端口「还原」按钮（原来是显示当前状态的徽章）：点一下清空端口输入框 = 回到
-   「跟随 DSH 配置」；框里本来就空时禁用（disabled 的半透明由通用 button:disabled 给）。 */
-.port-reset {
+   「跟随 DSH 配置」；框里本来就空时禁用（disabled 的半透明由通用 button:disabled 给）。
+   「指定程序路径」的「浏览…」共用这套小按钮外观。 */
+.port-reset,
+.path-browse {
   flex: none;
   white-space: nowrap;
   height: var(--badge-height);
@@ -804,8 +806,27 @@ button.primary:hover:not(:disabled) {
   color: #9fb2d8;
 }
 
-.port-reset:hover:not(:disabled) {
+.port-reset:hover:not(:disabled),
+.path-browse:hover:not(:disabled) {
   color: #eef2fa;
+}
+
+/* 「指定程序路径」行：输入框 + 「浏览…」按钮同一行。输入框在上方的 #binary-path
+   例外里是 width:100%，这里让它可收缩，按钮永远不换行。 */
+.path-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.path-row > input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 字段下方的即时校验红字（比顶部错误条小一号，与字段同级）。 */
+.field-error {
+  font-size: 12px;
 }
 
 .mode {

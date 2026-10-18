@@ -195,6 +195,17 @@ fn validate_binary_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 界面「浏览…」选完文件、或输入框失焦时的即时校验：先走启动时那套格式校验（文案一致），
+/// 再确认文件存在且不是目录。启动流程仍会独立校验一次，这里只是把反馈提前。
+pub fn check_binary_path(path: &str) -> Result<(), String> {
+    validate_binary_path(path)?;
+    let meta = std::fs::metadata(path).map_err(|_| format!("找不到该文件：{path}"))?;
+    if meta.is_dir() {
+        return Err(format!("这是一个目录，不是可执行文件：{path}"));
+    }
+    Ok(())
+}
+
 /// 校验整个启动配置。
 pub fn validate(config: &LaunchConfig) -> Result<(), String> {
     for arg in &config.extra_args {
@@ -716,6 +727,28 @@ mod tests {
             &[]
         ))
         .is_err());
+    }
+
+    #[test]
+    fn check_binary_path_reports_missing_dir_and_file() {
+        let dir = std::env::temp_dir().join("dsharbor-check-binary-path");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("dsh.exe");
+        std::fs::write(&file, b"stub").unwrap();
+        // 存在的普通文件：通过。
+        assert!(check_binary_path(file.to_str().unwrap()).is_ok());
+        // 目录：形状合法（.exe 结尾）但不是文件。
+        let dir_like_file = dir.join("dsh-dir.exe");
+        std::fs::create_dir_all(&dir_like_file).unwrap();
+        let err = check_binary_path(dir_like_file.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("目录"), "意外文案：{err}");
+        // 不存在的文件。
+        let err = check_binary_path(dir.join("nope.exe").to_str().unwrap()).unwrap_err();
+        assert!(err.contains("找不到"), "意外文案：{err}");
+        // 格式不合规（非绝对路径）沿用启动时的同一套文案。
+        let err = check_binary_path("dsh.exe").unwrap_err();
+        assert!(err.contains("完整路径"), "意外文案：{err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

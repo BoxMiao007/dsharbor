@@ -94,6 +94,19 @@ window.__mockUnimplemented = [];
       trayClick: "launcher",
     }),
     save_shell_config: () => null,
+    // 「指定程序路径」的即时校验：只看格式与「不存在」两种，用来预览字段下方红字。
+    // 抛字符串而不是 Error：真实 invoke 被拒时前端拿到的是纯文案，预览要跟真机一致。
+    check_binary_path: (a) => {
+      const p = (a && a.path) || "";
+      if (!/^[A-Za-z]:\\\\.+\.(exe|cmd|bat)$/i.test(p)) {
+        throw "请填写完整路径（如 D:\\\\tools\\\\dsh.cmd）：" + p;
+      }
+      if (/missing/i.test(p)) throw "找不到该文件：" + p;
+      return null;
+    },
+    // 系统「打开文件」框：预览里没有原生对话框，直接返回 __MOCK_STATE__.dialogPick
+    // （设成 null 模拟「用户取消」）。
+    "plugin:dialog|open": () => (S.dialogPick === undefined ? "D:\\\\tools\\\\dsh.cmd" : S.dialogPick),
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
     profile_port_hint: () => ({ port: 3080, source: "来自 DSH 配置的 webserver 块", hint: "" }),
