@@ -60,8 +60,8 @@ struct AppState {
     spawn_error: Mutex<Option<String>>,
     /// 最近一次成功启动的 DSH 版本号；随状态轮询回给界面（取不到时保持 None）。
     dsh_version: Mutex<Option<String>>,
-    /// 壳外检测：目标端口上已有 DSH Web 在听（不是壳的子进程）时记下端口；消失即清。
-    external_port: Mutex<Option<u16>>,
+    /// 壳外检测：目标地址上已有 DSH Web 在听（不是壳的子进程）时记下它；消失即清。
+    external_port: Mutex<Option<dsharbor_core::endpoint::Endpoint>>,
     /// 已把保存的启动配置懒加载进 last_config（壳刚打开还没有启动过时，外部检测照常要端口）。
     last_config_loaded: std::sync::atomic::AtomicBool,
     /// 延迟销毁主窗口的世代号：每次重新计时或撤销计时都自增，
@@ -152,26 +152,27 @@ fn spawn_session(
             }
         }
         *guard = None;
-        // 壳外检测：目标端口已有服务在听就不盲目拉起第二个进程。
+        // 壳外检测：目标地址已有服务在听就不盲目拉起第二个进程。
         // 确认是 DSH（多半是上次壳异常退出的残留，或用户自己起的）→ 按外部运行中报送；
         // 是别的程序占着端口 → 给出明确的占用提示，代替原先干巴巴的退出代码。
-        let port = detect::effective_port(config);
-        if detect::port_alive(port) {
-            if detect::dsh_fingerprint(port) == Some(true) {
+        // 地址跟随 profile 的 host：DSH 可以只绑在网卡 IP 上，探回环会漏判。
+        let endpoint = detect::effective_endpoint(config);
+        if detect::port_alive(&endpoint) {
+            if detect::dsh_fingerprint(&endpoint) == Some(true) {
                 if let Ok(mut slot) = state.external_port.lock() {
-                    *slot = Some(port);
+                    *slot = Some(endpoint);
                 }
                 Ok(())
             } else {
                 Err(format!(
-                    "检测到端口 {port} 已被其他程序占用，没有启动新进程；可更换端口或结束占用它的程序后再试。"
+                    "检测到 {endpoint} 已被其他程序占用，没有启动新进程；可更换端口或结束占用它的程序后再试。"
                 ))
             }
         } else {
             if let Ok(mut slot) = state.external_port.lock() {
                 *slot = None;
             }
-            match launcher::spawn(config, launcher_args) {
+            match launcher::spawn(config, launcher_args, endpoint) {
                 Ok(session) => {
                     *guard = Some(session);
                     spawned_child = true;
@@ -319,11 +320,15 @@ fn stop_session(state: &AppState) {
 async fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
     // 壳外检测到的 DSH 不是壳的子进程，代为结束既做不到也越权：
     // 明确说明，而不是让「停止」看起来按了没反应。
-    let external = state.external_port.lock().ok().and_then(|slot| *slot);
-    if let Some(port) = external {
-        if detect::port_alive(port) {
+    let external = state
+        .external_port
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone());
+    if let Some(endpoint) = external {
+        if detect::port_alive(&endpoint) {
             return Err(format!(
-                "127.0.0.1:{port} 上的 DSH 不是本壳启动的，无法代为结束；请自行结束该进程后再试。"
+                "{endpoint} 上的 DSH 不是本壳启动的，无法代为结束；请自行结束该进程后再试。"
             ));
         }
         if let Ok(mut slot) = state.external_port.lock() {
@@ -343,14 +348,14 @@ async fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
 
 /// 壳外 DSH 按「运行中」报送时的状态：进程不是壳的子进程，PID 未知；
 /// 来龙去脉写进日志区说明，不假装报错、也不假装停止/重启对它有效。
-fn external_status(port: u16) -> SessionStatus {
+fn external_status(endpoint: &dsharbor_core::endpoint::Endpoint) -> SessionStatus {
     SessionStatus {
         state: launcher::SessionState::Running,
         pid: None,
-        port: Some(port),
+        port: Some(endpoint.port),
         error: None,
         log_tail: vec![format!(
-            "检测到 127.0.0.1:{port} 已有 DSH Web 在运行（不是本壳启动的，可能是上次壳异常退出留下的）。为避免端口冲突没有重复拉起新进程；要由本壳管理（登录链接 / 停止 / 重启），请先结束该进程再点「启动 DSH」。"
+            "检测到 {endpoint} 已有 DSH Web 在运行（不是本壳启动的，可能是上次壳异常退出留下的）。为避免端口冲突没有重复拉起新进程；要由本壳管理（登录链接 / 停止 / 重启），请先结束该进程再点「启动 DSH」。"
         )],
         login_ready: false,
         login_channel: None,
@@ -362,10 +367,10 @@ fn external_status(port: u16) -> SessionStatus {
 /// 无会话时的壳外检测：外部标记还活着就继续报送；没有标记就用「最近一次启动配置（否则读一次已保存配置）」的目标端口探一下，探到 DSH 就记标记。
 fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option<SessionStatus> {
     if let Ok(mut slot) = state.external_port.lock() {
-        match *slot {
-            Some(port) => {
-                if detect::port_alive(port) {
-                    return Some(external_status(port));
+        match slot.clone() {
+            Some(endpoint) => {
+                if detect::port_alive(&endpoint) {
+                    return Some(external_status(&endpoint));
                 }
                 *slot = None;
             }
@@ -386,12 +391,14 @@ fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option
                     guard.clone()
                 };
                 if let Some(config) = config {
-                    let port = detect::effective_port(&config);
-                    if detect::port_alive(port) && detect::dsh_fingerprint(port) == Some(true) {
+                    let endpoint = detect::effective_endpoint(&config);
+                    if detect::port_alive(&endpoint)
+                        && detect::dsh_fingerprint(&endpoint) == Some(true)
+                    {
                         // 用外层 slot 守卫直接写：Mutex 不可重入，这里再 lock() 一把会永久卡死
                         // dsh_status（真实事故：探到壳外 DSH 就整只壳停在初始停止态）。
-                        *slot = Some(port);
-                        return Some(external_status(port));
+                        *slot = Some(endpoint.clone());
+                        return Some(external_status(&endpoint));
                     }
                 }
             }
@@ -1193,7 +1200,8 @@ pub fn run() {
                         let state = app.state::<AppState>();
                         let launcher_args =
                             profile::port_overlay_args(app.handle(), &config).unwrap_or_default();
-                        match launcher::spawn(&config, &launcher_args) {
+                        let endpoint = detect::effective_endpoint(&config);
+                        match launcher::spawn(&config, &launcher_args, endpoint) {
                             Ok(session) => {
                                 if let Ok(mut guard) = state.session.lock() {
                                     *guard = Some(session);

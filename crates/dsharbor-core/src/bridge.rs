@@ -6,12 +6,18 @@
 //!
 //! 协议（插件侧见 plugins/dsharbor-bridge/lib/index.js）：
 //! `GET /dsharbor-bridge/url?nonce=<nonce>` →
-//!   200 `{"url":"http://127.0.0.1:<port>/?token=…","port":…,"channel":"bridge"}`
-//!   403 nonce 不匹配 / 503 插件未启用（无 nonce 启动）/ 405 非 GET
+//!   200 `{"url":"http://<host>:<port>/?token=…","port":…,"channel":"bridge"}`
+//!   403 nonce 不匹配 / 503 插件未启用（无 nonce 启动）或服务未就绪 / 405 非 GET
+//!
+//! 连接目标与返回 URL 的校验都用 `Endpoint`：DSH 可以把 webserver 绑在具体网卡
+//! IP 上（局域网能访问界面），那时回环根本连不进去，写死 127.0.0.1 只会一直
+//! 取不到链接（实测 DSH 0.2.1-rc.2 + 用户 profile 绑 192.168.1.7 就降级成了日志兜底）。
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
+
+use crate::endpoint::Endpoint;
 
 /// 桥接插件注册的接口路径。
 pub const ROUTE_PATH: &str = "/dsharbor-bridge/url";
@@ -61,17 +67,17 @@ impl BridgeError {
     }
 }
 
-/// 桥接客户端（一端口一实例；nonce 由壳持有）。
+/// 桥接客户端（一目标一实例；nonce 由壳持有）。
 pub struct BridgeClient {
-    port: u16,
+    endpoint: Endpoint,
     nonce: String,
     timeout: Duration,
 }
 
 impl BridgeClient {
-    pub fn new(port: u16, nonce: String) -> Self {
+    pub fn new(endpoint: Endpoint, nonce: String) -> Self {
         Self {
-            port,
+            endpoint,
             nonce,
             timeout: Duration::from_millis(800),
         }
@@ -79,16 +85,15 @@ impl BridgeClient {
 
     /// 取一次登录链接。
     pub fn fetch(&self) -> Result<String, BridgeError> {
-        let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
-        let mut stream = TcpStream::connect_timeout(&addr, self.timeout).map_err(|err| {
-            BridgeError::NotListening(format!("连接 127.0.0.1:{} 失败：{err}", self.port))
-        })?;
+        let authority = self.endpoint.authority();
+        let mut stream = connect(&self.endpoint, self.timeout)
+            .map_err(|err| BridgeError::NotListening(format!("连接 {authority} 失败：{err}")))?;
         let _ = stream.set_read_timeout(Some(self.timeout));
         let _ = stream.set_write_timeout(Some(self.timeout));
 
         let request = format!(
-            "GET {ROUTE_PATH}?nonce={} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-            self.nonce, self.port
+            "GET {ROUTE_PATH}?nonce={} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n",
+            self.nonce
         );
         stream
             .write_all(request.as_bytes())
@@ -100,12 +105,33 @@ impl BridgeClient {
 
         let (status, body) = parse_http_response(&raw)?;
         match status {
-            200 => parse_url_json(&body),
+            200 => parse_url_json(&body, &self.endpoint),
             403 => Err(BridgeError::Forbidden),
-            503 => Err(BridgeError::Disabled(
-                String::from_utf8_lossy(&body).trim().to_string(),
-            )),
+            503 => {
+                let detail = String::from_utf8_lossy(&body).trim().to_string();
+                // 插件两种 503 必须区别对待：
+                // - 「disabled … NONCE is not set」= 这个 DSH 进程没带 nonce，永远不会好，终态；
+                // - 「bridge not ready …」= connection 服务晚于路由注册就绪，启动早期很常见，
+                //   必须可重试。实测 DSH 0.2.1-rc.2 上第一次请求就会撞上它，若当终态就
+                //   一次早到把桥接永久降级成日志兜底（用户名下的真实日志里就是这样）。
+                if detail.contains("not ready") {
+                    Err(BridgeError::NotListening(detail))
+                } else {
+                    Err(BridgeError::Disabled(detail))
+                }
+            }
             other => Err(BridgeError::HttpStatus(other)),
+        }
+    }
+}
+
+/// 连目标地址：IP 字面量走 `connect_timeout`（能设超时），主机名先解析再连。
+fn connect(endpoint: &Endpoint, timeout: Duration) -> std::io::Result<TcpStream> {
+    match endpoint.host.parse::<std::net::IpAddr>() {
+        Ok(ip) => TcpStream::connect_timeout(&SocketAddr::new(ip, endpoint.port), timeout),
+        Err(_) => {
+            let addr = format!("{}:{}", endpoint.host, endpoint.port);
+            TcpStream::connect(addr.as_str())
         }
     }
 }
@@ -203,25 +229,47 @@ fn dechunk(body: &[u8]) -> Result<Vec<u8>, BridgeError> {
     Ok(out)
 }
 
-/// 从 200 响应体里取 url 字段，并做本机回环防御校验。
-fn parse_url_json(body: &[u8]) -> Result<String, BridgeError> {
+/// 从 200 响应体里取 url 字段，并把主机改写成「壳刚连上的那个端点」，端口保持
+/// 响应里报的值。
+///
+/// 为什么要改写主机：插件可能跑在 WSL 里、或按 bind 地址给出 `http://0.0.0.0:3080/`
+/// 这类不可达写法；壳知道真正连得通的地址（Endpoint）。端口不能改成壳算出来的值：
+/// DSH 可能没按请求的端口起（端口被占时自己换、或 profile 里另有配置），
+/// 响应里的端口才是它实际在听的那个。
+fn parse_url_json(body: &[u8], endpoint: &Endpoint) -> Result<String, BridgeError> {
     let text = String::from_utf8_lossy(body);
     let value: serde_json::Value = serde_json::from_str(&text)
         .map_err(|err| BridgeError::Io(format!("响应不是合法 JSON：{err}")))?;
-    let url = value
+    let raw = value
         .get("url")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    if url.is_empty() {
+    if raw.is_empty() {
         return Err(BridgeError::Io("响应 JSON 缺少 url 字段".into()));
     }
-    // 防御：只接受本机回环地址，避免把新窗口导向意外的目标。
-    if !(url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")) {
+    let mut url = url::Url::parse(raw)
+        .map_err(|err| BridgeError::Io(format!("响应里的 url 无法解析（{raw}）：{err}")))?;
+    if url.scheme() != "http" {
         return Err(BridgeError::Io(format!(
-            "响应里的 url 不是本机回环地址：{url}"
+            "响应里的 url 不是 http 地址：{url}"
         )));
     }
+    url.set_host(Some(&host_with_brackets(&endpoint.host)))
+        .map_err(|_| BridgeError::Io(format!("无法把 url 的主机改成 {}：{url}", endpoint.host)))?;
+    if url.port().is_none() {
+        url.set_port(Some(endpoint.port)).map_err(|_| {
+            BridgeError::Io(format!("无法把 url 的端口改成 {}：{url}", endpoint.port))
+        })?;
+    }
     Ok(url.to_string())
+}
+
+/// `Url::set_host` 对 IPv6 要求带方括号。
+fn host_with_brackets(host: &str) -> String {
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(addr)) => format!("[{addr}]"),
+        _ => host.to_string(),
+    }
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -268,8 +316,9 @@ mod tests {
         );
         let response = http_response("HTTP/1.1 200 OK", &headers, body);
         let (port, requests) = spawn_stub(response);
-        let client = BridgeClient::new(port, "feedface".into());
+        let client = BridgeClient::new(Endpoint::loopback(port), "feedface".into());
         let url = client.fetch().expect("应取回 URL");
+        // 主机归一成本次连接的端点，端口与 token 保留响应里的值。
         assert_eq!(url, "http://127.0.0.1:3080/?token=STUB");
         let request = requests.recv().expect("应收到请求");
         assert!(request.starts_with("GET /dsharbor-bridge/url?nonce=feedface HTTP/1.1"));
@@ -293,7 +342,7 @@ mod tests {
             body.as_bytes(),
         );
         let (port, _requests) = spawn_stub(response);
-        let client = BridgeClient::new(port, "aa".into());
+        let client = BridgeClient::new(Endpoint::loopback(port), "aa".into());
         assert_eq!(
             client.fetch().expect("chunked 也应取回"),
             "http://127.0.0.1:3090/?token=CHUNKED"
@@ -304,7 +353,7 @@ mod tests {
     fn forbidden_nonce_is_terminal() {
         let response = http_response("HTTP/1.1 403 Forbidden", "Content-Length: 0", b"");
         let (port, _requests) = spawn_stub(response);
-        let client = BridgeClient::new(port, "aa".into());
+        let client = BridgeClient::new(Endpoint::loopback(port), "aa".into());
         let err = client.fetch().unwrap_err();
         assert_eq!(err, BridgeError::Forbidden);
         assert!(!err.retriable());
@@ -316,7 +365,7 @@ mod tests {
         let headers = format!("Content-Length: {}", body.len());
         let response = http_response("HTTP/1.1 503 Service Unavailable", &headers, body);
         let (port, _requests) = spawn_stub(response);
-        let client = BridgeClient::new(port, "aa".into());
+        let client = BridgeClient::new(Endpoint::loopback(port), "aa".into());
         let err = client.fetch().unwrap_err();
         assert!(matches!(err, BridgeError::Disabled(_)));
         assert!(!err.retriable());
@@ -324,15 +373,46 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_loopback_url() {
-        let body = br#"{"url":"http://evil.example/?token=X"}"#;
+    fn not_ready_503_is_retriable() {
+        // 实测 DSH 0.2.1-rc.2：路由先就绪、connection 服务后到，第一次请求就会
+        // 拿到这个 503。当终态处理会让桥接一次早到就永久降级。
+        let body = br#"{"error":"bridge not ready: web server or connection service unavailable"}"#;
+        let headers = format!("Content-Length: {}", body.len());
+        let response = http_response("HTTP/1.1 503 Service Unavailable", &headers, body);
+        let (port, _requests) = spawn_stub(response);
+        let client = BridgeClient::new(Endpoint::loopback(port), "aa".into());
+        let err = client.fetch().unwrap_err();
+        assert!(matches!(err, BridgeError::NotListening(_)));
+        assert!(err.retriable());
+    }
+
+    #[test]
+    fn rewrites_url_host_to_the_endpoint_we_connected_to() {
+        // 插件在 WSL 里、或按 bind 地址给出 0.0.0.0 时，链接主机必须换成本次真正
+        // 连得上的端点；路径与 token 原样保留（否则登录态会丢）。
+        let body = br#"{"url":"http://0.0.0.0:3099/?token=KEEP","port":3099}"#;
+        // 主机换成实际连通的 LAN 地址，端口用响应里报的 3099。
+        let url = parse_url_json(body, &Endpoint::new("192.168.1.7", 3099)).unwrap();
+        assert_eq!(url, "http://192.168.1.7:3099/?token=KEEP");
+    }
+
+    #[test]
+    fn rewrite_keeps_ipv6_brackets() {
+        let body = br#"{"url":"http://127.0.0.1:3099/?token=X"}"#;
+        let url = parse_url_json(body, &Endpoint::new("::1", 3080)).unwrap();
+        assert_eq!(url, "http://[::1]:3099/?token=X");
+    }
+
+    #[test]
+    fn rejects_non_http_url() {
+        let body = br#"{"url":"https://evil.example/?token=X"}"#;
         let headers = format!("Content-Length: {}", body.len());
         let response = http_response("HTTP/1.1 200 OK", &headers, body);
         let (port, _requests) = spawn_stub(response);
-        let client = BridgeClient::new(port, "aa".into());
+        let client = BridgeClient::new(Endpoint::loopback(port), "aa".into());
         let err = client.fetch().unwrap_err();
         assert!(matches!(err, BridgeError::Io(_)));
-        assert!(err.message().contains("回环"));
+        assert!(err.message().contains("http"));
     }
 
     #[test]
@@ -341,7 +421,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let client = BridgeClient::new(port, "aa".into());
+        let client = BridgeClient::new(Endpoint::loopback(port), "aa".into());
         let err = client.fetch().unwrap_err();
         assert!(matches!(err, BridgeError::NotListening(_)));
         assert!(err.retriable());

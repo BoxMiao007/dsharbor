@@ -7,6 +7,7 @@
 
 pub mod bridge;
 pub mod console;
+pub mod endpoint;
 pub mod launch;
 pub mod lifecycle;
 pub mod links;

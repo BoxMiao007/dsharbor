@@ -10,7 +10,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { apply, createHandler, nonceMatches, ROUTE_PATH } from '../lib/index.js';
+import { apply, createHandler, formatHost, nonceMatches, ROUTE_PATH } from '../lib/index.js';
 
 const NONCE = 'a'.repeat(32);
 
@@ -76,6 +76,36 @@ test('带正确 nonce 时取回带 token 的登录链接', () => {
   assert.equal(res.json.port, 3100);
   assert.equal(res.json.channel, 'bridge');
   assert.match(res.headers['cache-control'], /no-store/);
+});
+
+test('链接基地址跟随 webserver 绑定的 host（LAN 绑定不回环）', () => {
+  const webServer = { ...stubWebServer(3080), host: '192.168.1.7' };
+  const connection = { authenticatedUrl: (base) => `${base}?token=LAN` };
+  const handler = createHandler(() => webServer, () => connection, NONCE);
+  const res = fakeRes();
+  handler(fakeReq('GET', `${ROUTE_PATH}?nonce=${NONCE}`), res);
+  assert.equal(res.status, 200);
+  assert.equal(res.json.url, 'http://192.168.1.7:3080/?token=LAN');
+});
+
+test('DSH 提供 getOrigin() 时优先采用它', () => {
+  const webServer = {
+    ...stubWebServer(3080),
+    host: '192.168.1.7',
+    getOrigin: () => 'http://192.168.1.7:3080',
+  };
+  const connection = { authenticatedUrl: (base) => `${base}?token=ORIGIN` };
+  const handler = createHandler(() => webServer, () => connection, NONCE);
+  const res = fakeRes();
+  handler(fakeReq('GET', `${ROUTE_PATH}?nonce=${NONCE}`), res);
+  assert.equal(res.json.url, 'http://192.168.1.7:3080/?token=ORIGIN');
+});
+
+test('IPv6 绑定时给 URL 里的主机加方括号', () => {
+  assert.equal(formatHost('::1'), '[::1]');
+  assert.equal(formatHost('[::1]'), '[::1]');
+  assert.equal(formatHost('127.0.0.1'), '127.0.0.1');
+  assert.equal(formatHost(undefined), '127.0.0.1');
 });
 
 test('nonce 缺失（壳没注入环境变量）时回 503，作为降级信号', () => {

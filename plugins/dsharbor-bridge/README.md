@@ -14,7 +14,8 @@ DSHarbor 桌面壳的桥接插件：把 DSH Host 进程本次启动的**带 toke
 
 `GET /dsharbor-bridge/url?nonce=<nonce>`
 
-- `200 {"url": "http://127.0.0.1:<port>/?token=...", "port": <port>, "channel": "bridge"}`
+- `200 {"url": "http://<webserver 绑定的 host>:<port>/?token=...", "port": <port>, "channel": "bridge"}`
+  （host 取自 `webServer.getOrigin()`，DSH 绑在网卡 IP 上时就是那个 IP；壳侧会把主机名统一改写成本次连通的地址）
 - `403` nonce 不匹配；`503` 未启用/未就绪；`405` 非 GET。
 
 ## 安装 / 卸载（官方插件机制）

@@ -22,6 +22,7 @@ use dsharbor_core::bridge::{
     fetch_with_retry, generate_nonce, BridgeClient, BridgeError, NONCE_ENV,
 };
 use dsharbor_core::console::ConsoleDecoder;
+use dsharbor_core::endpoint::Endpoint;
 use dsharbor_core::launch::{
     build_launch_plan, extract_configured_port, extract_port, LaunchConfig, LaunchPlan, ShellWrap,
     SpawnPlan,
@@ -335,7 +336,11 @@ impl SessionHandle {
 ///
 /// `launcher_args`：壳内部追加的启动器层参数（如端口覆盖的 `--patch <文件>`），
 /// 由 lib.rs 在启动前准备好；没有时传空数组。
-pub fn spawn(config: &LaunchConfig, launcher_args: &[String]) -> Result<SessionHandle, String> {
+pub fn spawn(
+    config: &LaunchConfig,
+    launcher_args: &[String],
+    bridge_endpoint: Endpoint,
+) -> Result<SessionHandle, String> {
     // 每次启动现生成 nonce，经环境变量注入 DSH 进程；桥接插件在运行时从
     // process.env 读取它（见插件的 dsh.bundle.patch.yml）。nonce 不落盘。
     let nonce = generate_nonce()?;
@@ -363,7 +368,12 @@ pub fn spawn(config: &LaunchConfig, launcher_args: &[String]) -> Result<SessionH
     }
     let configured_port = extract_configured_port(&config.extra_args);
     let shared_for_login = shared.clone();
-    std::thread::spawn(move || acquire_login(shared_for_login, nonce, configured_port));
+    // 桥接探测地址跟随 profile 的 host（LAN 绑定时回环连不进去）。
+    let endpoint = Endpoint::new(
+        bridge_endpoint.host,
+        configured_port.unwrap_or(bridge_endpoint.port),
+    );
+    std::thread::spawn(move || acquire_login(shared_for_login, nonce, endpoint));
     Ok(SessionHandle {
         child,
         pid,
@@ -378,7 +388,7 @@ pub fn spawn(config: &LaunchConfig, launcher_args: &[String]) -> Result<SessionH
 /// 公告里解析出端口与链接。桥接一旦可用就用它（官方接口、不依赖日志格式）；
 /// 桥接被判定不可用（503 未注入 nonce / 403 端口被旧进程占用）立即降级；
 /// 桥接迟迟没有结果时，公告出现 5 秒宽限后也降级——保证界面最终拿得到链接。
-fn acquire_login(shared: Arc<Shared>, nonce: String, configured_port: Option<u16>) {
+fn acquire_login(shared: Arc<Shared>, nonce: String, endpoint: Endpoint) {
     const OVERALL_TIMEOUT: Duration = Duration::from_secs(90);
     const BRIDGE_GRACE: Duration = Duration::from_secs(5);
     const POLL: Duration = Duration::from_millis(250);
@@ -398,35 +408,35 @@ fn acquire_login(shared: Arc<Shared>, nonce: String, configured_port: Option<u16
 
         // 1) 桥接尝试（每次最多 ~1.2 秒的短重试，启动早期的瞬时失败自愈）。
         if !bridge_unusable {
-            if let Some(port) = shared.port().or(configured_port) {
-                if grace_deadline.is_none() {
-                    grace_deadline = Some(Instant::now() + BRIDGE_GRACE);
+            // 端口优先用日志里解析出的实际端口（npx 默认可能不是 3080），host 跟着 profile 走。
+            let target = Endpoint::new(&endpoint.host, shared.port().unwrap_or(endpoint.port));
+            if grace_deadline.is_none() {
+                grace_deadline = Some(Instant::now() + BRIDGE_GRACE);
+            }
+            let client = BridgeClient::new(target, nonce.clone());
+            match fetch_with_retry(
+                || client.fetch(),
+                std::thread::sleep,
+                6,
+                Duration::from_millis(200),
+            ) {
+                Ok(url) => {
+                    shared.push_note("已通过桥接插件取到登录链接");
+                    shared.set_login(url, LoginChannel::Bridge);
+                    return;
                 }
-                let client = BridgeClient::new(port, nonce.clone());
-                match fetch_with_retry(
-                    || client.fetch(),
-                    std::thread::sleep,
-                    6,
-                    Duration::from_millis(200),
-                ) {
-                    Ok(url) => {
-                        shared.push_note("已通过桥接插件取到登录链接");
-                        shared.set_login(url, LoginChannel::Bridge);
-                        return;
-                    }
-                    Err(BridgeError::Disabled(reason)) => {
-                        bridge_unusable = true;
-                        shared.push_note(&format!("桥接插件未启用（{reason}），改用日志解析兜底"));
-                    }
-                    Err(err) if !err.retriable() => {
-                        bridge_unusable = true;
-                        shared.push_note(&format!(
-                            "桥接通道不可用（{}），改用日志解析兜底",
-                            err.message()
-                        ));
-                    }
-                    Err(_) => {}
+                Err(BridgeError::Disabled(reason)) => {
+                    bridge_unusable = true;
+                    shared.push_note(&format!("桥接插件未启用（{reason}），改用日志解析兜底"));
                 }
+                Err(err) if !err.retriable() => {
+                    bridge_unusable = true;
+                    shared.push_note(&format!(
+                        "桥接通道不可用（{}），改用日志解析兜底",
+                        err.message()
+                    ));
+                }
+                Err(_) => {}
             }
         }
 

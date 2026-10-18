@@ -38,12 +38,17 @@ export function nonceMatches(expected, provided) {
   return timingSafeEqual(a, b);
 }
 
-function respond(res, status, body) {
-  res.writeHead(status, {
+function respond(res, status, body) {  res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
   });
   res.end(JSON.stringify(body));
+}
+
+/** IPv6 字面量在 URL 里必须带方括号。 */
+export function formatHost(host) {
+  if (typeof host !== 'string' || host === '') return '127.0.0.1';
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
 
 /** 供测试直接调用的处理函数；生产路径由 apply 注册到 webServer。 */
@@ -72,7 +77,15 @@ export function createHandler(getWebServer, getConnection, nonce) {
       }
       // 与 `dsh web` 启动公告同一机制：authenticatedUrl 把 launchToken 作为
       // ?token= 拼到本机 URL 上；token 每次启动都不同。
-      const base = `http://127.0.0.1:${String(webServer.port)}/`;
+      //
+      // 基地址必须跟着 webserver 实际绑定的地址走：DSH 支持绑在具体网卡 IP 上
+      // （局域网访问），这时回环地址根本连不进去，壳拿到的链接会打不开。
+      // 优先用官方 getOrigin()（0.2.1-rc.2 起提供，按 bind host + 实际端口拼）；
+      // 老版本没有这个方法时退回按 bind host 拼，最后才用回环。
+      const origin = typeof webServer.getOrigin === 'function'
+        ? webServer.getOrigin()
+        : `http://${formatHost(webServer.host)}:${String(webServer.port)}`;
+      const base = origin.endsWith('/') ? origin : `${origin}/`;
       const loginUrl = connection.authenticatedUrl(base);
       respond(res, 200, { url: loginUrl, port: webServer.port, channel: 'bridge' });
     } catch (error) {

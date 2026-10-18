@@ -14,6 +14,8 @@
 //! 没有可用的现有块时按出厂模板的形状兜底（host 跟随 webStartup，
 //! compression 保持与出厂一致，不硬编码 host）。
 
+use crate::endpoint;
+
 /// 从 profile patch 文本里提取的 webserver 行信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebserverBlock {
@@ -129,6 +131,14 @@ pub fn build_port_overlay(block: Option<&WebserverBlock>, port: u16) -> String {
                     let indent = &line[..line.len() - t.len()];
                     out.push_str(&format!("{indent}port: {port}\n"));
                     replaced = true;
+                } else if let Some(value) = scalar_of(line, "host:") {
+                    // DSH 0.2.1-rc.2 起 webserver 的 host 必须是具体 IP 字面量：通配地址
+                    // （0.0.0.0 / ::，官方 remote-web-ui 就写这个）会被直接拒绝、整只
+                    // DSH 起不来，主机名（localhost）同样不合法。照抄旧块会把用户带进
+                    // 这个坑里，所以这里归一成可用的具体地址。
+                    let indent = &line[..line.len() - t.len()];
+                    let host = endpoint::resolve_host(Some(&value), false);
+                    out.push_str(&format!("{indent}host: '{host}'\n"));
                 } else {
                     out.push_str(line);
                     out.push('\n');
@@ -203,10 +213,21 @@ mod tests {
         let yaml = build_port_overlay(Some(&block), 3099);
         assert!(yaml.contains("- id: webserver"));
         assert!(yaml.contains("name: '@deepseek-ai/dsh-host-webserver'"));
-        assert!(yaml.contains("host: '0.0.0.0'"));
+        // 旧块的通配 host 被归一成具体地址：DSH 0.2.1-rc.2 会拒绝 0.0.0.0。
+        assert!(yaml.contains("host: '127.0.0.1'"));
+        assert!(!yaml.contains("0.0.0.0"));
         assert!(yaml.contains("compression: gzip"));
         assert!(yaml.contains("port: 3099"));
         assert!(!yaml.contains("port: 3080"));
+    }
+
+    #[test]
+    fn overlay_keeps_concrete_lan_host() {
+        let text = "- id: webserver\n  config:\n    host: '192.168.1.7'\n    port: 3080\n";
+        let block = find_webserver_block(text).unwrap();
+        let yaml = build_port_overlay(Some(&block), 3099);
+        assert!(yaml.contains("host: '192.168.1.7'"));
+        assert!(yaml.contains("port: 3099"));
     }
 
     #[test]
@@ -215,7 +236,7 @@ mod tests {
         let block = find_webserver_block(text).unwrap();
         assert_eq!(block.port, None);
         let yaml = build_port_overlay(Some(&block), 3100);
-        assert!(yaml.contains("host: 127.0.0.1"));
+        assert!(yaml.contains("host: '127.0.0.1'"));
         assert!(yaml.contains("port: 3100"));
     }
 

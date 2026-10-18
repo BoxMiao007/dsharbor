@@ -10,7 +10,8 @@
 | 启动器 | launcher | 壳里按「启动方式」拉起 DSH 进程、维护状态与停止的部分（含取链接线程）。 |
 | 启动方式 | `LaunchMode` | 四种之一：官方 npx 命令 / 系统全局命令（`dsh web`）/ 指定二进制路径 / WSL 跨系统；配置界面可选。 |
 | DSH 会话 | DSH session | 壳拉起的这一次 DSH 进程树（cmd/npx/node 等）。 |
-| 登录链接 / 认证链接 | authenticated URL | `http://127.0.0.1:<端口>/?token=<一次性 token>`；DSH 每次启动随机生成、进程内存驻留，浏览器凭它换持久 Cookie。 |
+| 登录链接 / 认证链接 | authenticated URL | `http://<host>:<端口>/?token=<一次性 token>`，`<host>` 跟随 webserver 的绑定地址（回环或具体网卡 IP）；DSH 每次启动随机生成、进程内存驻留，浏览器凭它换持久 Cookie。 |
+| 访问端点 | endpoint | 壳用来探活、连桥接的 `host:port`，由 `profile` 的 webserver 块 + 端口优先级算出（`dsharbor_core::endpoint`）。 |
 | 桥接插件 | `dsharbor-bridge` | 随壳分发的 DSH 插件（tgz）；装进 DSH 后，壳经它现场铸造登录链接。 |
 | 桥接通道 | bridge channel | 经桥接插件接口（`GET /dsharbor-bridge/url?nonce=…`）取登录链接的首选通道。 |
 | 日志兜底 | log fallback | 从 DSH 启动日志解析 `dsh web: <url> (LAN: <url>)` 的降级通道；日志格式属实现细节、无稳定性承诺。 |
