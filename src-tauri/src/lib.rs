@@ -9,6 +9,7 @@ mod launcher;
 mod npxcache;
 mod patch;
 mod plugin;
+mod plugin_switch;
 mod profile;
 mod profile_ops;
 mod proxy;
@@ -1299,6 +1300,47 @@ async fn patch_backups(
         .map_err(|err| format!("后台读取补丁层备份失败：{err}"))?
 }
 
+/// 列出某个环境当前加载的插件（带启用状态、是否桥接、是否可开关）。
+///
+/// 只读：要读环境的 `package.json` 与各插件的 bundle 补丁文件，WSL 目标还要经
+/// `wsl.exe`，所以放后台线程。
+#[tauri::command]
+async fn plugin_list(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+) -> Result<Vec<dsharbor_core::plugin_switch::PluginItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || plugin_switch::items(&app, &config, &name))
+        .await
+        .map_err(|err| format!("后台读取插件清单失败：{err}"))?
+}
+
+/// 开关某个环境里的一个插件（作用在补丁层的禁用表达上，不是卸载）。
+///
+/// 会写 DSH 自己加载的配置文件，所以要求会话已停止：运行中的 DSH 同时读它，
+/// 谁后写谁赢。
+#[tauri::command]
+async fn plugin_toggle(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+    plugin: String,
+    enabled: bool,
+) -> Result<plugin_switch::ToggleOutcome, String> {
+    let action = if enabled {
+        "打开插件开关"
+    } else {
+        "关闭插件开关"
+    };
+    ensure_session_stopped(&state, action, &name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_switch::toggle(&app, &config, &name, &plugin, enabled)
+    })
+    .await
+    .map_err(|err| format!("后台切换插件开关失败：{err}"))?
+}
+
 /// 记录界面主题（Rust 侧镜像）。
 ///
 /// 主题本体记在 WebView 的 localStorage，Rust 读不到；但窗口装饰（主题 3 换系统
@@ -1687,6 +1729,8 @@ pub fn run() {
             patch_backup,
             patch_restore,
             patch_backups,
+            plugin_list,
+            plugin_toggle,
             open_external,
             set_caption_color,
             save_ui_theme,
