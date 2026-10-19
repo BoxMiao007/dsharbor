@@ -8,6 +8,7 @@ mod detect;
 mod launcher;
 mod plugin;
 mod profile;
+mod profile_ops;
 mod registry;
 mod settings;
 mod shellpath;
@@ -980,6 +981,96 @@ async fn list_profiles(
         .map_err(|err| format!("后台枚举环境失败：{err}"))?
 }
 
+/// 新建一个空白环境（只写骨架文件，不装依赖）。
+///
+/// async 命令：WSL 目标下每个动作都要经 wsl.exe 来回（秒级），同步命令会让窗口发僵
+/// （同 list_profiles）。
+#[tauri::command]
+async fn create_profile(
+    config: LaunchConfig,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || profile_ops::create(&config, &name))
+        .await
+        .map_err(|err| format!("后台新建环境失败：{err}"))?
+}
+
+/// 复制一份环境（不搬依赖目录与锁文件）。
+#[tauri::command]
+async fn copy_profile(
+    config: LaunchConfig,
+    source: String,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || profile_ops::copy(&config, &source, &name))
+        .await
+        .map_err(|err| format!("后台复制环境失败：{err}"))?
+}
+
+/// 重命名环境：目录与清单里的名字一起改；改的是当前启动用的环境时同步改配置。
+///
+/// 配置更新放在返回之前做：界面拿到成功结果后会重新读配置，顺序反了会读到旧名字。
+#[tauri::command]
+async fn rename_profile(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    old_name: String,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    let (outcome, config_error) = tauri::async_runtime::spawn_blocking(move || {
+        let outcome = profile_ops::rename(&config, &old_name, &name)?;
+        // 选中态存在配置文件里（不是内存里），改名成功后必须跟着改，否则下次启动
+        // 会去找一个已经不存在的老名字。配置写失败不算动作失败（目录已经搬完了），
+        // 但要带回去告诉用户。
+        let mut shell = settings::load(&app);
+        let mut error = None;
+        if shell.prefs.profile == old_name {
+            shell.prefs.profile = name.clone();
+            if let Err(err) = settings::save(&app, &shell) {
+                error = Some(format!("环境已改名，但启动用环境没跟着改：{err}"));
+            }
+        }
+        Ok::<_, String>((outcome, error))
+    })
+    .await
+    .map_err(|err| format!("后台重命名环境失败：{err}"))??;
+    let mut outcome = outcome;
+    if let Some(error) = config_error {
+        outcome.ok = false;
+        outcome.message = format!("{}\n{error}", outcome.message);
+    }
+    Ok(outcome)
+}
+
+/// 删除环境：当前启动用的环境与官方桌面端目录会被拒绝（守卫在核心库）。
+#[tauri::command]
+async fn delete_profile(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let current = settings::load(&app).prefs.profile;
+        profile_ops::delete(&config, &current, &name)
+    })
+    .await
+    .map_err(|err| format!("后台删除环境失败：{err}"))?
+}
+
+/// 给某个环境安装依赖（新建/复制出来的环境都缺这一步）。
+///
+/// 异步命令且可能跑几分钟：`dsh plugin ... install` 要拉几百 MB，期间界面靠
+/// 按钮的忙碌态提示，不能阻塞主线程。
+#[tauri::command]
+async fn install_profile_deps(
+    config: LaunchConfig,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || profile_ops::install_deps(&config, &name))
+        .await
+        .map_err(|err| format!("后台安装依赖失败：{err}"))?
+}
+
 /// 记录界面主题（Rust 侧镜像）。
 ///
 /// 主题本体记在 WebView 的 localStorage，Rust 读不到；但窗口装饰（主题 3 换系统
@@ -1356,6 +1447,11 @@ pub fn run() {
             save_shell_config,
             profile_port_hint,
             list_profiles,
+            create_profile,
+            copy_profile,
+            rename_profile,
+            delete_profile,
+            install_profile_deps,
             open_external,
             set_caption_color,
             save_ui_theme,

@@ -605,6 +605,9 @@ pub enum PluginOp {
     Install { package: String },
     /// 卸载一个已安装的包（按包名）。
     Uninstall { name: String },
+    /// 安装该环境声明的全部依赖（`dsh plugin --profile <名字> install`）。
+    /// 新建 / 复制出来的环境没有依赖，靠它补齐。
+    InstallDeps,
 }
 
 /// 构造插件管理命令：复用当前启动方式的前缀，但把环境名位置参数换成
@@ -631,6 +634,8 @@ pub fn build_plugin_plan(
             args.push("remove".into());
             args.push(name.clone());
         }
+        // `dsh plugin` 把参数转发给 pnpm，所以 `install` 就是 pnpm 的安装。
+        PluginOp::InstallDeps => args.push("install".into()),
     }
     Ok(match &config.mode {
         LaunchMode::Npx { channel, version } => {
@@ -1492,6 +1497,38 @@ mod tests {
             }
         );
         assert_eq!(legacy.runtime, wsl("Debian"));
+    }
+
+    #[test]
+    fn plugin_install_deps_plan() {
+        let plan = build_plugin_plan(&cfg(LaunchMode::System, &[]), "lab", &PluginOp::InstallDeps)
+            .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "dsh plugin --profile lab install".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+        // 自定义命令模式同样复用启动器前缀（末 token 是当前环境名时去掉）。
+        let plan = build_plugin_plan(
+            &cfg(
+                LaunchMode::Custom {
+                    command: "npx dsh lab".into(),
+                },
+                &[],
+            ),
+            "lab",
+            &PluginOp::InstallDeps,
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "npx dsh plugin --profile lab install".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
     }
 
     #[test]

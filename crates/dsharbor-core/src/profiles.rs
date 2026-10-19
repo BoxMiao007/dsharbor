@@ -69,9 +69,21 @@ pub struct ProfileSummary {
     pub bridge_installed: bool,
     /// 是否登记了网页应用 bundle（决定它能不能起 DSH Web）。
     pub web_capable: bool,
+    /// 依赖是否装过（环境目录里有没有 `node_modules`）。
+    ///
+    /// 新建与复制出来的环境都没有依赖：能起网页但启动会因为没有依赖而失败，
+    /// 所以界面要能一眼看出来并给出「安装依赖」。这个事实只能读盘得知，
+    /// 因此由枚举清单的一方标上，`summarize` 只看文本时一律按「没装」处理。
+    pub deps_installed: bool,
 }
 
 impl ProfileSummary {
+    /// 补上「依赖装过没」这个只有读盘才知道的事实。
+    pub fn with_deps(mut self, deps_installed: bool) -> Self {
+        self.deps_installed = deps_installed;
+        self
+    }
+
     /// 能不能出现在「启动用」下拉里。
     pub fn is_selectable(&self) -> bool {
         self.web_capable && !is_reserved(&self.name)
@@ -112,22 +124,33 @@ pub fn summarize(name: &str, package_json: &str) -> Result<ProfileSummary, Strin
         plugins: bundles.len(),
         bridge_installed: bundles.contains(&BRIDGE_PLUGIN),
         web_capable: bundles.contains(&WEB_APP_BUNDLE),
+        // 目录里有没有 node_modules 从 package.json 看不出来，见 `with_deps`。
+        deps_installed: false,
     })
 }
 
-/// 解析「一行一个环境」的清单文本：`名字<TAB>package.json 的单行内容`。
+/// 解析「一行一个环境」的清单文本：`名字<TAB>依赖标记<TAB>package.json 的单行内容`。
 ///
 /// 宿主直连与 WSL 两条读盘路径都先把目录内容拼成这种文本，再用同一套规则解析，
-/// 于是「哪个环境能列出来」只在这里判一次。坏行（缺 tab、名字非法、JSON 坏掉）
-/// 直接跳过：一份坏环境不该让整个下拉变成空的。
+/// 于是「哪个环境能列出来」只在这里判一次。依赖标记是 `1`（装过）/`0`（没装）。
+/// 两列的旧格式（没有依赖标记）照样认，按「没装」处理——这只是为了让格式演进
+/// 不必两侧同时上线，正常运行时两栏一定都在。
+/// 坏行（缺 tab、名字非法、JSON 坏掉）直接跳过：一份坏环境不该让整个下拉变成空的。
 pub fn parse_listing(text: &str) -> Vec<ProfileSummary> {
     let mut profiles: Vec<ProfileSummary> = text
         .lines()
         .filter_map(|line| {
-            let (name, package_json) = line.split_once('\t')?;
-            let name = name.trim();
+            let mut parts = line.splitn(3, '\t');
+            let name = parts.next()?.trim();
+            let second = parts.next()?;
+            let (deps_installed, package_json) = match parts.next() {
+                Some(package_json) => (second.trim() == "1", package_json),
+                None => (false, second),
+            };
             validate_name(name).ok()?;
-            summarize(name, package_json).ok()
+            summarize(name, package_json)
+                .ok()
+                .map(|summary| summary.with_deps(deps_installed))
         })
         .collect();
     profiles.sort_by(|a, b| a.name.cmp(&b.name));
@@ -243,7 +266,7 @@ mod tests {
     #[test]
     fn listing_keeps_good_lines_and_skips_broken_ones() {
         let text = format!(
-            "web\t{}\n\nlab\t{{oops\n../etc\t{{}}\nbroken-line-without-tab\nheadless\t{}\n",
+            "web\t1\t{}\n\nlab\t1\t{{oops\n../etc\t1\t{{}}\nbroken-line-without-tab\nheadless\t0\t{}\n",
             manifest(&[WEB_APP_BUNDLE, BRIDGE_PLUGIN]),
             manifest(&["@deepseek-ai/dsh-base"])
         );
@@ -252,6 +275,28 @@ mod tests {
         assert_eq!(names, vec!["headless", "web"]);
         assert!(profiles[1].is_selectable());
         assert!(!profiles[0].is_selectable());
+    }
+
+    #[test]
+    fn listing_reports_whether_dependencies_are_installed() {
+        let text = format!(
+            "web\t1\t{}\nfresh\t0\t{}\n",
+            manifest(&[WEB_APP_BUNDLE]),
+            manifest(&[WEB_APP_BUNDLE])
+        );
+        let profiles = parse_listing(&text);
+        assert_eq!(profiles[0].name, "fresh");
+        assert!(!profiles[0].deps_installed, "复制出来的环境没有依赖");
+        assert!(profiles[1].deps_installed);
+    }
+
+    #[test]
+    fn listing_without_a_dependency_column_reads_as_not_installed() {
+        let text = format!("web\t{}\n", manifest(&[WEB_APP_BUNDLE]));
+        let profiles = parse_listing(&text);
+        assert_eq!(profiles.len(), 1);
+        assert!(!profiles[0].deps_installed);
+        assert_eq!(profiles[0].plugins, 1, "旧格式的内容照样解析");
     }
 
     #[test]

@@ -176,20 +176,29 @@ fn read_listing(target: &Target) -> Result<String, String> {
                     continue;
                 };
                 // 清单一行一个环境：压成一行的 JSON 才能按行切回来。
+                // 中间一列是「依赖装过没」——新建/复制出来的环境没有 node_modules，
+                // 界面靠它标「依赖未安装」，不需要为每个环境再跑一趟 IPC。
+                let deps = if path.join("node_modules").is_dir() {
+                    "1"
+                } else {
+                    "0"
+                };
                 let one_line = package_json.replace(['\n', '\r'], " ");
-                listing.push_str(&format!("{name}\t{one_line}\n"));
+                listing.push_str(&format!("{name}\t{deps}\t{one_line}\n"));
             }
             Ok(listing)
         }
         Target::Wsl { distro } => {
             let home = wsl_dsh_home(distro)?;
-            // 逐目录拼 `名字<TAB>内容`；用 bash 的 glob 而不是 find，避免为不存在的目录报错。
+            // 逐目录拼 `名字<TAB>依赖标记<TAB>内容`；用 bash 的 glob 而不是 find，
+            // 避免为不存在的目录报错。
             let script = format!(
                 "for d in '{home}'/profiles/*/; do \
                  [ -d \"$d\" ] || continue; \
                  p=\"$d/package.json\"; \
                  [ -f \"$p\" ] || continue; \
-                 printf '%s\\t%s\\n' \"$(basename \"$d\")\" \"$(tr '\\n' ' ' < \"$p\")\"; \
+                 deps=0; [ -d \"$d/node_modules\" ] && deps=1; \
+                 printf '%s\\t%s\\t%s\\n' \"$(basename \"$d\")\" \"$deps\" \"$(tr '\\n' ' ' < \"$p\")\"; \
                  done"
             );
             wsl_run(distro, &script, Duration::from_secs(30))
@@ -205,6 +214,10 @@ fn join_path(target: &Target, dir: &str, name: &str) -> String {
 }
 
 /// 在 WSL 发行版里跑一条 bash 脚本并返回 stdout+stderr。
+pub(crate) fn wsl_script(distro: &str, script: &str, timeout: Duration) -> Result<String, String> {
+    wsl_run(distro, script, timeout)
+}
+
 fn wsl_run(distro: &str, script: &str, timeout: Duration) -> Result<String, String> {
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "--", "bash", "-lc", script]);
@@ -231,7 +244,7 @@ pub(crate) fn read_file(target: &Target, path: &str) -> Result<String, String> {
 }
 
 /// 写文件（跨目标环境；WSL 经 stdin 送内容，避免命令行长度与转义问题）。
-fn write_file(target: &Target, path: &str, content: &str) -> Result<(), String> {
+pub(crate) fn write_file(target: &Target, path: &str, content: &str) -> Result<(), String> {
     match target {
         Target::Host => {
             std::fs::write(path, content).map_err(|err| format!("写入 {path} 失败：{err}"))
@@ -494,7 +507,11 @@ fn is_installed(target: &Target, profile: &str) -> Result<bool, String> {
     Ok(in_bundles)
 }
 
-fn plugin_command(config: &LaunchConfig, profile: &str, op: &PluginOp) -> Result<Command, String> {
+pub(crate) fn plugin_command(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &PluginOp,
+) -> Result<Command, String> {
     let spawn = build_plugin_plan(config, profile, op)?;
     Ok(command_for_plan(&LaunchPlan {
         spawn,

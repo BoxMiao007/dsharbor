@@ -52,6 +52,16 @@ pub fn is_lock_file(name: &str) -> bool {
     LOCK_FILES.contains(&name)
 }
 
+/// 复制时该跳过的顶层条目（宿主与 WSL 两条路径都按同一份清单拼过滤规则）。
+pub fn skipped_entries() -> Vec<&'static str> {
+    vec![
+        NODE_MODULES_DIR,
+        PLUGIN_MANAGER_DIR,
+        LOCK_FILES[0],
+        LOCK_FILES[1],
+    ]
+}
+
 /// 复制时的总判定：目录看目录规则，文件看文件规则。
 pub fn should_copy(name: &str, is_dir: bool) -> bool {
     if is_dir {
@@ -247,6 +257,26 @@ mod tests {
         assert!(!should_copy(".plugin-manager", true));
         assert!(!should_copy("pnpm-lock.yaml", false));
         assert!(!should_copy("package.json.lock", false));
+    }
+
+    #[test]
+    fn skipped_entries_lists_both_kinds() {
+        let skipped = skipped_entries();
+        assert_eq!(
+            skipped,
+            vec![
+                NODE_MODULES_DIR,
+                PLUGIN_MANAGER_DIR,
+                LOCK_FILES[0],
+                LOCK_FILES[1]
+            ]
+        );
+        for dir in [NODE_MODULES_DIR, PLUGIN_MANAGER_DIR] {
+            assert!(!should_copy(dir, true), "{dir}");
+        }
+        for lock in LOCK_FILES {
+            assert!(!should_copy(lock, false), "{lock}");
+        }
     }
 
     #[test]
