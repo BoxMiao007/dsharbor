@@ -58,10 +58,13 @@ pub fn port_overlay_args(
     let target = Target::of(config);
     // 尽量照抄现有 webserver 块的字段（保留 host / compression 等）；
     // 读不到块就按出厂形状兜底（见核心库 overlay.rs 的注释）。
+    // WSL 目标下 host 要归一成发行版内的回环：发行版里连不到 Windows 侧网卡地址，
+    // 沿用旧块的 host 会让发行版内的 DSH 绑不上、整只起不来。
+    let via_wsl = matches!(&target, Target::Wsl { .. });
     let block = read_profile_patch(&target)
         .as_deref()
         .and_then(find_webserver_block);
-    let yaml = build_port_overlay(block.as_ref(), port);
+    let yaml = build_port_overlay(block.as_ref(), port, via_wsl);
     let dir = crate::app_data_root(app)?.join("runtime");
     std::fs::create_dir_all(&dir).map_err(|err| format!("创建运行目录失败：{err}"))?;
     let path = dir.join("port-overlay.yml");
