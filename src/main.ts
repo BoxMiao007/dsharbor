@@ -80,11 +80,63 @@ interface DistroInfo {
 /** 与 Rust 侧 `settings::TrayClick` 对应：托盘单击打开哪个窗口。 */
 type TrayClick = "launcher" | "dsh";
 
-/** 可折叠的两张卡片：「启动方式」与「桥接插件」。 */
-type CardKey = "session" | "modes" | "common" | "bridge" | "about";
+/** 可折叠的卡片：会话、启动方式、通用设置、桥接插件、环境、网络、集成、关于。 */
+type CardKey = "session" | "modes" | "common" | "bridge" | "profiles" | "network" | "integrations" | "about";
 
-/** 与 Rust 侧 `settings::ShellConfig` 对应（整份壳设置）。 */
-interface ShellConfig {
+/** 与 Rust 侧 `dsharbor_core::prefs::DownloadSource` 对应：从哪儿取 DSH 包。 */
+type DownloadSource = "inherit" | "mirror" | "official";
+
+/** 与 Rust 侧 `dsharbor_core::prefs::ProxyMode` 对应：网络代理怎么走。 */
+type ProxyMode = "system" | "manual" | "off";
+
+/** 与 Rust 侧 `dsharbor_core::prefs::ShellPrefs` 对应：三张新卡承载的六个字段。
+    这一版只做承载（读写、往返、默认值），各字段的实际作用由后续版本逐个接管。 */
+interface ShellPrefs {
+  /** 当前环境名（DSH 的 profile 名），默认 `web`。 */
+  profile: string;
+  /** 下载源：沿用 npm 全局配置 / 镜像源 / 官方源。 */
+  downloadSource: DownloadSource;
+  /** 代理模式：跟随系统 / 手动填写 / 不走代理。 */
+  proxyMode: ProxyMode;
+  /** 代理地址（proxyMode 为 manual 时有意义），默认空串。 */
+  proxyAddress: string;
+  /** 命令行集成开关，默认关闭。 */
+  cliIntegration: boolean;
+  /** 缓存清理开关，默认关闭。 */
+  cacheCleanup: boolean;
+}
+
+/** 六个新字段的默认值：与 Rust 侧 `ShellPrefs::default()` 保持一致。 */
+const DEFAULT_PREFS: ShellPrefs = {
+  profile: "web",
+  downloadSource: "inherit",
+  proxyMode: "system",
+  proxyAddress: "",
+  cliIntegration: false,
+  cacheCleanup: false,
+};
+
+/** 后端返回的偏好可能缺字段或带未知枚举值（旧配置、手改坏了）：逐字段兜底，
+    不让一个坏值毁掉整份配置。与 Rust 侧宽容读取的语义一致。 */
+function normalizePrefs(raw: Partial<ShellPrefs> | undefined | null): ShellPrefs {
+  const prefs = raw ?? {};
+  const source = String(prefs.downloadSource);
+  const proxy = String(prefs.proxyMode);
+  return {
+    profile: typeof prefs.profile === "string" && prefs.profile.trim() ? prefs.profile : DEFAULT_PREFS.profile,
+    downloadSource:
+      source === "mirror" || source === "official" ? (source as DownloadSource) : DEFAULT_PREFS.downloadSource,
+    proxyMode: proxy === "manual" || proxy === "off" ? (proxy as ProxyMode) : DEFAULT_PREFS.proxyMode,
+    proxyAddress: typeof prefs.proxyAddress === "string" ? prefs.proxyAddress : DEFAULT_PREFS.proxyAddress,
+    cliIntegration: prefs.cliIntegration === true,
+    cacheCleanup: prefs.cacheCleanup === true,
+  };
+}
+
+/** 与 Rust 侧 `settings::ShellConfig` 对应（整份壳设置）。
+    六个新字段在 Rust 侧是 `#[serde(flatten)]` 平铺的，JSON 里与 launch / trayClick 平级，
+    所以这里也平铺；写成可选是因为旧配置里没有它们。 */
+interface ShellConfig extends Partial<ShellPrefs> {
   launch: LaunchConfig;
   trayClick: TrayClick;
   /** 关闭窗口后延迟多少秒释放界面内存；0 = 立即。 */
@@ -556,7 +608,7 @@ function themeCss(theme: ThemeId): string {
   return isNativeLayout(theme) ? `${nativeDarkCss}\n${nativeLayoutCss}` : nativeDarkCss;
 }
 
-/** 折叠分组头：原生排版里每个分组都用它，原版只有「启动方式」「桥接插件」用。 */
+/** 折叠分组头：原生排版里每个分组都用它，原版只有「启动方式」「桥接插件」「环境」「网络」「集成」用。 */
 function foldHead(key: string, title: string, summary = ""): string {
   return `<h2 class="card-head">
     <button id="card-toggle-${key}" class="card-toggle" aria-expanded="true"><span class="chev">▸</span>${title}${summary}</button>
@@ -660,6 +712,21 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   const bridgeSummary = `
     <span id="bridge-summary" class="badge badge-stopped card-summary">读取中…</span>
   `;
+  // 「环境」「网络」「集成」三张卡本轮只铺承载：标题、折叠头、摘要徽章与一行占位说明。
+  // 卡片的具体内容（环境列表 / 下载源与代理 / 命令行与缓存）由后续版本逐张接入，
+  // 字段本身已经在读写链路上，不再变动。摘要徽章先给占位文案，免得收起后一片空白。
+  const placeholderCard = (key: CardKey, title: string, note: string): string =>
+    cardSection(
+      foldHead(key, title, `\n    <span id="${key}-summary" class="badge badge-stopped card-summary">未设置</span>\n  `),
+      `<p class="hint">${note}</p>`,
+    );
+  const profilesSection = placeholderCard("profiles", "环境", "当前使用哪一份 DSH 环境、装了哪些插件，将在后续版本显示在这里。");
+  const networkSection = placeholderCard("network", "网络", "下载源与代理设置的选项，将在后续版本显示在这里。");
+  const integrationsSection = placeholderCard(
+    "integrations",
+    "集成",
+    "命令行集成与缓存清理的开关，将在后续版本显示在这里。",
+  );
   const modesBody = `
     <label class="mode">
       <input type="radio" name="mode" value="npx" checked />
@@ -809,7 +876,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     : `<header class="head">${titleAndTagline}</header>`;
 
   // 主题三：状态、提示、动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
-  // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色维持四张卡片的老样子。
+  // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色里会话、启动方式、桥接插件三张卡片照旧。
   // hero 卡片：标题区 + 提示 + 状态徽章行 + 按钮行（三个主题同一套排版）+ 最近输出。
   const heroSection = nativeLayout
     ? `<section class="card hero-card">
@@ -846,6 +913,9 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   ${sessionSection}
   ${modesSection}
   ${bridgeSection}
+  ${profilesSection}
+  ${networkSection}
+  ${integrationsSection}
   ${aboutSection}`;
 }
 
@@ -875,6 +945,9 @@ async function main(): Promise<void> {
   }
 
   let theme: ThemeId = readStoredTheme();
+  // 六个新字段的当前值：后端读回来之后换成它。本版只做承载，没有界面控件改它，
+  // 但保存链路上必须原样带上，否则界面上任何一次保存都会把用户已改的值抹回默认。
+  let prefs: ShellPrefs = { ...DEFAULT_PREFS };
   let livePickers: Picker[] = [];
   // 界面重建时 DOM 与绑定全部重来，挂在 window 上的监听不能跟着重来：
   // 这三处跨重建的东西只注册一次，通过钩子指向当前这套界面。
@@ -1211,7 +1284,7 @@ async function main(): Promise<void> {
     const btnAboutConfig = $<HTMLButtonElement>("btn-about-config");
     const btnAboutLogs = $<HTMLButtonElement>("btn-about-logs");
 
-    // 卡片折叠（「启动方式」「桥接插件」）：默认展开；用户点出来的折叠状态记在 localStorage，
+    // 卡片折叠（所有带折叠头的分组，含「环境」「网络」「集成」）：默认展开；用户点出来的折叠状态记在 localStorage，
     // 壳重启、轻量模式重建窗口后沿用（维护者要求）。不放 config.json：那是整份回写的设置文件，
     // 折叠只是界面偏好，丢了不影响功能。
     const CARD_COLLAPSE_KEY = "dsharbor.ui.cardCollapsed";
@@ -1252,10 +1325,11 @@ async function main(): Promise<void> {
 
     const expandCard = (key: CardKey): void => setCardCollapsed(key, false, false);
 
-    for (const key of ["session", "modes", "common", "bridge", "about"] as const) {
+    const CARD_KEYS = ["session", "modes", "common", "bridge", "profiles", "network", "integrations", "about"] as const;
+    for (const key of CARD_KEYS) {
       const toggle = cardToggle(key);
       if (!toggle) {
-        continue; // 原版只有两个折叠分组，其余分组没有折叠头
+        continue; // 「会话」与「关于」没有折叠头（原生排版里「关于」有，会话永远没有）
       }
       toggle.addEventListener("click", () => {
         setCardCollapsed(key, cardCollapsed[key] !== true, true);
@@ -1419,6 +1493,9 @@ async function main(): Promise<void> {
           // 主题镜像一致即可；写进 save_shell_config 会被整份串行化，若不一致也顺手对齐
           // （正常路径由 switchTheme 单独走 save_ui_theme）。
           uiTheme: theme,
+          // 三张新卡的六个字段本版没有界面控件，但必须原样带上：整份回写会把漏掉的键
+          // 抹回默认值。值来自后端读回（缺字段时为 normalizePrefs 补的默认）。
+          ...prefs,
         };
         await invoke("save_shell_config", { config: shell });
         // 配置已回到合法状态：把之前因非法输入显示的错误消掉。
@@ -1971,6 +2048,9 @@ async function main(): Promise<void> {
         return;
       }
       const launch = saved.launch;
+      // 环境 / 网络 / 集成的六个字段：缺键、坏值在这里统一兜底成默认（与 Rust 侧宽容读取同语义），
+      // 以后每次保存都按这份值原样回写。
+      prefs = normalizePrefs(saved);
       const radio = modeRadios().find((r) => r.value === launch.mode.kind);
       if (radio) {
         radio.checked = true;
