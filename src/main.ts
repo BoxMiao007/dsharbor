@@ -945,6 +945,19 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         </div>
         <div id="patch-backup-list" class="patch-backup-list"></div>
       </div>
+      <div id="profile-plugins" class="patch-panel hidden">
+        <span class="subcard-title">插件</span>
+        <p class="hint">开关改的是补丁层里的禁用表达，<b>不会卸载插件包</b>：关掉后重启 DSH 才不再加载它，重新打开也不需要重新下载。每次开关前会自动备份一份补丁层（每个环境保留最近 5 份）；改完要重启 DSH 才生效，所以操作前请先停止 DSH。</p>
+        <div id="plugin-list" class="plugin-list"></div>
+        <div id="plugin-empty" class="plugin-empty hidden">
+          <p class="hint">这个环境还没有装任何插件。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
+          <div class="actions">
+            <button id="btn-plugin-deps" class="ghost">去安装依赖</button>
+          </div>
+        </div>
+        <p id="plugin-note" class="hint hidden"></p>
+        <p id="plugin-warning" class="hint plugin-warning hidden"></p>
+      </div>
       <p id="profile-manage-note" class="hint hidden"></p>
       <p id="profile-manage-error" class="error hidden"></p>
       <details class="log-box" id="manage-output-box">
@@ -2695,6 +2708,44 @@ async function main(): Promise<void> {
     /** 已拉取备份清单的那个环境；换环境才重新拉，避免每次渲染都打一趟后端。 */
     let patchLoadedFor: string | null = null;
 
+    // ---- 管理环境：插件开关 ------------------------------------------------------
+    // 哪些插件、现在开没开、该往补丁层写什么，规则全在后端
+    // （dsharbor_core::plugin_switch）。界面只负责：列出来、发开关命令、把后端
+    // 那句中文说明与提醒原文贴出来。
+    const profilePluginPanel = $<HTMLElement>("profile-plugins");
+    const pluginList = $<HTMLElement>("plugin-list");
+    const pluginEmpty = $<HTMLElement>("plugin-empty");
+    const pluginNote = $<HTMLParagraphElement>("plugin-note");
+    const pluginWarning = $<HTMLParagraphElement>("plugin-warning");
+    const btnPluginDeps = $<HTMLButtonElement>("btn-plugin-deps");
+
+    /** 与 Rust 侧 `plugin_switch::PluginItem` 对应。 */
+    interface PluginItem {
+      name: string;
+      entries: string[];
+      enabled: boolean;
+      bridge: boolean;
+      manual: boolean;
+      switchable: boolean;
+    }
+
+    /** 与 Rust 侧 `plugin_switch::ToggleOutcome` 对应。 */
+    interface ToggleOutcome {
+      message: string;
+      backup: string;
+      warning: string | null;
+      items: PluginItem[];
+    }
+
+    /** 当前选中环境实际加载的插件（后端顺序，与 package.json 里登记的顺序一致）。 */
+    let pluginItems: PluginItem[] = [];
+    /** 插件清单是否已拉过（未拉到时不能把空数组当成「零插件」画空状态）。 */
+    let pluginLoaded = false;
+    /** 已为哪个环境拉过清单；换环境才重新拉。 */
+    let pluginLoadedFor: string | null = null;
+    /** 插件开关动作是否在跑（忙时所有开关置灰，防重复提交）。 */
+    let pluginBusy = false;
+
     /** 备份时间戳（unix 秒）→ 本地时间文本；文件名里就是它，用户能对着看。 */
     function stampLabel(stamp: number): string {
       const date = new Date(stamp * 1000);
@@ -2827,6 +2878,151 @@ async function main(): Promise<void> {
       }
     }
 
+    /**
+     * 插件清单：一行一个插件，开/关一个复选框。
+     *
+     * 三件必须一眼看到的事：桥接插件要标出来（关掉它登录链接只能靠日志）；
+     * 禁用表达写在补丁层里某处的要说明来源（用户手写的不等于壳生成的）；
+     * 读不到挂载点的内置骨架包开关置灰（壳不往补丁层塞 DSH 不认识的 id）。
+     */
+    function renderPluginList(): void {
+      const hasItems = pluginItems.length > 0;
+      pluginEmpty.classList.toggle("hidden", hasItems || !pluginLoaded);
+      pluginList.innerHTML = pluginItems
+        .map((item) => {
+          const marks: string[] = [];
+          if (item.bridge) {
+            marks.push(`<span class="plugin-tag plugin-tag-bridge">桥接</span>`);
+          }
+          if (item.manual) {
+            marks.push(`<span class="plugin-tag">手写禁用</span>`);
+          }
+          const checked = item.enabled ? " checked" : "";
+          const disabled = pluginBusy || !item.switchable ? " disabled" : "";
+          const title = item.switchable
+            ? ""
+            : ` title="官方内置的骨架包，没有可禁用的挂载点"`;
+          return `<label class="plugin-row${item.enabled ? "" : " is-off"}"${title}><input type="checkbox" data-plugin="${escapeHtml(item.name)}"${checked}${disabled} /><span class="plugin-name">${escapeHtml(item.name)}</span><span class="plugin-state">${item.enabled ? "已启用" : "已停用"}</span>${marks.join("")}</label>`;
+        })
+        .join("");
+      for (const box of pluginList.querySelectorAll<HTMLInputElement>("[data-plugin]")) {
+        box.addEventListener("change", () => {
+          void togglePlugin(box.dataset.plugin ?? "", box.checked);
+        });
+      }
+    }
+
+    /** 插件面板跟着选中的环境走；换环境才拉一次清单。 */
+    function syncPluginPanel(): void {
+      const target = manageTarget;
+      profilePluginPanel.classList.toggle("hidden", target === null);
+      if (target === null) {
+        pluginItems = [];
+        pluginLoaded = false;
+        pluginLoadedFor = null;
+        setPluginNote(null);
+        setPluginWarning(null);
+        renderPluginList();
+        return;
+      }
+      if (pluginLoadedFor !== target) {
+        pluginLoadedFor = target;
+        pluginItems = [];
+        pluginLoaded = false;
+        setPluginNote(null);
+        setPluginWarning(null);
+        renderPluginList();
+        void refreshPluginList(target);
+        return;
+      }
+      renderPluginList();
+    }
+
+    /** 读一次插件清单（读失败只提示，不打断其它面板动作）。 */
+    async function refreshPluginList(name: string): Promise<void> {
+      try {
+        const list = await invoke<PluginItem[]>("plugin_list", { config: collectConfig(), name });
+        if (manageTarget !== name) {
+          return; // 期间换了环境，丢弃这批结果
+        }
+        pluginItems = list;
+        pluginLoaded = true;
+        renderPluginList();
+      } catch (err) {
+        if (manageTarget === name) {
+          setManageError(`读取插件清单失败：${String(err)}`);
+        }
+      }
+    }
+
+    /**
+     * 开关一个插件。
+     *
+     * 后端在写文件前会自己先备份一次补丁层，成功时把备份路径与刷新后的清单一起带回来；
+     * 关掉桥接插件时还会带一句「登录链接只能靠日志兜底」的提醒。
+     */
+    async function togglePlugin(name: string, enabled: boolean): Promise<void> {
+      const target = manageTarget;
+      if (!target || !name || pluginBusy || manageBusy || patchBusy) {
+        return;
+      }
+      pluginBusy = true;
+      setManageError(null);
+      setManageNote(null);
+      setPluginNote(null);
+      setPluginWarning(null);
+      renderManageUI();
+      try {
+        const outcome = await invoke<ToggleOutcome>("plugin_toggle", {
+          config: collectConfig(),
+          name: target,
+          plugin: name,
+          enabled,
+        });
+        pluginItems = outcome.items;
+        pluginLoaded = true;
+        setPluginWarning(outcome.warning);
+        setPluginNote(
+          enabled
+            ? `已打开「${name}」，重启 DSH 后生效。`
+            : `已关闭「${name}」，重启 DSH 后生效；重新打开不需要重新下载。`,
+        );
+        setManageOutput(outcome.message, true);
+        // 开关前刚自动备份过，备份清单跟着刷新一次，免得用户还要再点一下才能看到。
+        patchLoadedFor = null;
+      } catch (err) {
+        setManageError(String(err));
+        setManageOutput(`切换插件开关失败：${String(err)}`, true);
+        // 失败时那个复选框已经跟着鼠标点过去了，重拉一次清单把它掰回真实状态。
+        pluginLoadedFor = null;
+      } finally {
+        pluginBusy = false;
+        renderManageUI();
+      }
+    }
+
+    /** 开关后的那一句确认（含「重启才生效」）：面板上一眼能看到，不用展开输出块。 */
+    function setPluginNote(text: string | null): void {
+      if (!text) {
+        pluginNote.textContent = "";
+        pluginNote.classList.add("hidden");
+        return;
+      }
+      pluginNote.textContent = text;
+      pluginNote.classList.remove("hidden");
+    }
+
+    /** 桥接关掉后的提醒：一字不改地用后端那句，免两处口径不一样。 */
+    function setPluginWarning(text: string | null): void {
+      if (!text) {
+        pluginWarning.textContent = "";
+        pluginWarning.classList.add("hidden");
+        return;
+      }
+      pluginWarning.textContent = text;
+      pluginWarning.classList.remove("hidden");
+    }
+
     function setManageNote(text: string | null): void {
       if (!text) {
         profileManageNote.textContent = "";
@@ -2909,9 +3105,11 @@ async function main(): Promise<void> {
       btnProfileConfirmYes.disabled = manageBusy;
       btnProfileConfirmNo.disabled = manageBusy;
       // 补丁层面板跟着选中的环境走：没选中就没有可备份的东西。
-      btnPatchBackup.disabled = !hasTarget || patchBusy || manageBusy;
+      btnPatchBackup.disabled = !hasTarget || patchBusy || manageBusy || pluginBusy;
       btnPatchBackup.textContent = patchBusy ? "处理中…" : "备份补丁层";
       syncPatchPanel();
+      // 插件开关同样跟着选中的环境走（两者会互相影响：开关一次就多一份备份）。
+      syncPluginPanel();
     }
 
     /**
@@ -2950,6 +3148,8 @@ async function main(): Promise<void> {
           setManageNote(outcome.message);
         }
         // 新建/复制/重命名都会改变清单，删掉的更得重读：一律重读一次。
+        // 重装依赖同样可能让插件数从零变成若干，插件清单也得重新拉。
+        pluginLoadedFor = null;
         await loadProfiles();
         if (options.reloadPrefs) {
           await reloadPrefsFromDisk();
@@ -3059,6 +3259,11 @@ async function main(): Promise<void> {
     });
 
     btnProfileDeps.addEventListener("click", () => {
+      void runManage(installDepsSelected, { output: true });
+    });
+
+    // 零插件空状态里的「去安装依赖」：跟着走同一个动作，而不是另写一份。
+    btnPluginDeps.addEventListener("click", () => {
       void runManage(installDepsSelected, { output: true });
     });
 

@@ -19,6 +19,7 @@ pub mod overlay;
 pub mod patch_layer;
 pub mod path_shim;
 pub mod paths;
+pub mod plugin_switch;
 pub mod prefs;
 pub mod profile_ops;
 pub mod profiles;
