@@ -79,6 +79,19 @@ const state = {
   /** 命令行集成的假状态：改它能预览开关打开/关闭、PATH 里没有目录、被别的 dsh 盖住、
       以及非 Windows 宿主（supported: false）等分支。enabled 默认跟 savedShell 走。 */
   cli: { supported: true, enabled: false, onPath: false, shadow: null },
+  /** npx 缓存盘面的假数据：dirs 里 keep=true 的是保留的（current 那份必保留），
+      其余会被「立即清理」删掉；把 cleanupFails 设为 true 可预览「删不掉 + 逐条原因」分支。 */
+  cache: {
+    supported: true,
+    rootSource: "npm",
+    warning: null,
+    cleanupFails: false,
+    dirs: [
+      { name: "1e7f6d9597241db0", label: "@deepseek-ai/dsh（1e7f6d95）", bytes: 486539264, keep: true, current: true },
+      { name: "50d2c97abf8f4186", label: "@deepseek-ai/dsh@next（50d2c97a）", bytes: 412090368, keep: false, current: false },
+      { name: "c8633a242642d858", label: "@deepseek-ai/dsh@0.2.1-rc.2（c8633a24）", bytes: 297795584, keep: false, current: false },
+    ],
+  },
   /** 环境列表（`list_profiles`）的假数据：删掉某项可预览「配置里记的环境已不在」，
       把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。 */
   profiles: [
@@ -172,8 +185,78 @@ window.__mockUnimplemented = [];
       message: message,
     };
   };
-  const cmds = {
-    app_info: () => ({
+  // 字节数的显示形式（1024 进制，B 取整、其余 1 位小数），与核心库的 human_bytes 一致；
+  // 真实后端会把算好的文字一起送过来，这里只是为了假数据看着像真的。
+  const humanBytes = (bytes) => {
+    if (bytes < 1024) return bytes + " B";
+    const units = ["KB", "MB", "GB", "TB"];
+    let value = bytes / 1024;
+    let i = 0;
+    while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
+    return value.toFixed(1) + " " + units[i];
+  };
+  // 缓存盘面的假状态：只含属于本包的目录，与真实后端一个口径。
+  // 可回收 = keep=false 的字节和，份数与文案都跟着算，改 S.cache.dirs 就能预览各种分支。
+  const cacheState = (cache) => {
+    const dirs = (cache.dirs || []).map((dir) => ({
+      name: dir.name,
+      label: dir.label,
+      bytes: dir.bytes,
+      bytesText: humanBytes(dir.bytes),
+      bytes_text: humanBytes(dir.bytes),
+      keep: !!dir.keep,
+      current: !!dir.current,
+    }));
+    const ownBytes = dirs.reduce((sum, dir) => sum + dir.bytes, 0);
+    const removable = dirs.filter((dir) => !dir.keep);
+    const reclaimable = removable.reduce((sum, dir) => sum + dir.bytes, 0);
+    const current = dirs.find((dir) => dir.current);
+    let message;
+    if (!cache.supported) {
+      message = "缓存盘面仅在 Windows 宿主可用。";
+    } else if (dirs.length === 0) {
+      message = "没找到本包的 npx 缓存：本包还没用 npx 跑过时这里就是空的。只统计明确记录着本包的目录，别的包不计入。";
+    } else if (removable.length === 0) {
+      message = "本包占用 " + humanBytes(ownBytes) + "（" + dirs.length + " 份），没有可回收的部分：保留份数已经覆盖全部。";
+    } else {
+      message =
+        "本包占用 " +
+        humanBytes(ownBytes) +
+        "（" +
+        dirs.length +
+        " 份），可回收 " +
+        humanBytes(reclaimable) +
+        "（" +
+        removable.length +
+        " 份）。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。";
+    }
+    const warning = cache.warning === undefined ? null : cache.warning;
+    return {
+      supported: !!cache.supported,
+      root: cache.root === undefined ? "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache" : cache.root,
+      rootSource: cache.rootSource || "npm",
+      root_source: cache.rootSource || "npm",
+      ownBytes: ownBytes,
+      own_bytes: ownBytes,
+      ownBytesText: humanBytes(ownBytes),
+      own_bytes_text: humanBytes(ownBytes),
+      ownCount: dirs.length,
+      own_count: dirs.length,
+      reclaimableBytes: reclaimable,
+      reclaimable_bytes: reclaimable,
+      reclaimableBytesText: humanBytes(reclaimable),
+      reclaimable_bytes_text: humanBytes(reclaimable),
+      removableCount: removable.length,
+      removable_count: removable.length,
+      keepCount: dirs.length - removable.length,
+      keep_count: dirs.length - removable.length,
+      current: current ? current.name : null,
+      message: message,
+      warning: warning,
+      dirs: dirs,
+    };
+  };
+  const cmds = {    app_info: () => ({
       name: "DSHarbor",
       version: "0.0.0-mock",
       coreVersion: "0.0.0-mock",
@@ -232,6 +315,50 @@ window.__mockUnimplemented = [];
     "plugin:dialog|open": () => (S.dialogPick === undefined ? "D:\\\\tools\\\\dsh.cmd" : S.dialogPick),
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
+    // 缓存盘面：只读扫描。
+    cache_state: () => {
+      const cache = S.cache || (S.cache = { supported: true, dirs: [] });
+      return cacheState(cache);
+    },
+    // 立即清理：把 keep=false 的目录从假数据里拿掉，返回逐条结果与清理后的新盘面。
+    // cleanupFails=true 时假装删不掉（预览「没清掉 + 原因」那几行）。
+    cleanup_cache: () => {
+      seen("cleanup_cache");
+      const cache = S.cache || (S.cache = { supported: true, dirs: [] });
+      const removable = (cache.dirs || []).filter((dir) => !dir.keep);
+      const freedBytes = removable.reduce((sum, dir) => sum + dir.bytes, 0);
+      if (cache.cleanupFails) {
+        return {
+          removed: [],
+          failed: removable.map((dir) => ({
+            label: dir.label,
+            path: "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache\\\\_npx\\\\" + dir.name,
+            reason: "文件被占用（可能 DSH 正在运行）：拒绝访问。 (os error 32)",
+          })),
+          freedBytes: 0,
+          freed_bytes: 0,
+          message: "这次一个目录都没能清掉，原因见下面的逐条结果。",
+          state: cacheState(cache),
+        };
+      }
+      cache.dirs = (cache.dirs || []).filter((dir) => dir.keep);
+      return {
+        removed: removable.map((dir) => ({
+          label: dir.label,
+          bytes: dir.bytes,
+          bytesText: humanBytes(dir.bytes),
+          bytes_text: humanBytes(dir.bytes),
+        })),
+        failed: [],
+        freedBytes: freedBytes,
+        freed_bytes: freedBytes,
+        message:
+          removable.length === 0
+            ? "没有需要清理的目录。"
+            : "已清掉 " + removable.length + " 个目录，释放 " + humanBytes(freedBytes) + "。",
+        state: cacheState(cache),
+      };
+    },
     profile_port_hint: () => S.portHint,
     // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」。
     list_profiles: () => {

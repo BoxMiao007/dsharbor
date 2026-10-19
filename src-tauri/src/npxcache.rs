@@ -28,6 +28,8 @@ pub struct CacheDir {
     pub label: String,
     /// 目录下所有文件字节数之和。
     pub bytes: u64,
+    /// 上面那个数给界面直接显示的形式（`1.8 GB`）。
+    pub bytes_text: String,
     /// 这一份会不会被保留。
     pub keep: bool,
     /// 是不是当前启动配置对应的那一份。
@@ -46,10 +48,14 @@ pub struct CacheState {
     pub root_source: String,
     /// 本包占用字节数（只含明确记录着本包的目录）。
     pub own_bytes: u64,
+    /// 本包占用给界面直接显示的形式（`1.8 GB`）。
+    pub own_bytes_text: String,
     /// 本包占用的目录份数。
     pub own_count: usize,
     /// 可回收字节数。
     pub reclaimable_bytes: u64,
+    /// 可回收量给界面直接显示的形式（`412.3 MB`）。
+    pub reclaimable_bytes_text: String,
     /// 可回收的目录份数。
     pub removable_count: usize,
     /// 保留份数上限（当前配置那份 + 最近用过的几份）。
@@ -72,8 +78,10 @@ impl CacheState {
             root: None,
             root_source: String::new(),
             own_bytes: 0,
+            own_bytes_text: npx_cache::human_bytes(0),
             own_count: 0,
             reclaimable_bytes: 0,
+            reclaimable_bytes_text: npx_cache::human_bytes(0),
             removable_count: 0,
             keep_count: npx_cache::DEFAULT_KEEP,
             current: None,
@@ -90,6 +98,8 @@ impl CacheState {
 pub struct CleanedDir {
     pub label: String,
     pub bytes: u64,
+    /// 释放量给界面直接显示的形式（`412.3 MB`）。
+    pub bytes_text: String,
 }
 
 /// 没清掉的一份目录及原因。
@@ -182,6 +192,7 @@ fn cleanup_at(
                 removed.push(CleanedDir {
                     label: npx_cache::dir_label(dir),
                     bytes: dir.bytes,
+                    bytes_text: npx_cache::human_bytes(dir.bytes),
                 });
             }
             Err(err) => failed.push(CleanupFailure {
@@ -307,8 +318,10 @@ fn scan_at(
         root: Some(root.display().to_string()),
         root_source: source.to_string(),
         own_bytes: plan.own_bytes,
+        own_bytes_text: npx_cache::human_bytes(plan.own_bytes),
         own_count: plan.own_count,
         reclaimable_bytes: plan.reclaimable_bytes,
+        reclaimable_bytes_text: npx_cache::human_bytes(plan.reclaimable_bytes),
         removable_count: plan.remove.len(),
         keep_count: npx_cache::DEFAULT_KEEP,
         current: plan.current.clone(),
@@ -409,6 +422,7 @@ fn collect_dirs(entries: &[npx_cache::DirEntry], plan: &npx_cache::CachePlan) ->
             name: dir.name.clone(),
             label: npx_cache::dir_label(dir),
             bytes: dir.bytes,
+            bytes_text: npx_cache::human_bytes(dir.bytes),
             keep: plan.keep.iter().any(|kept| kept == &dir.name),
             current: plan.current.as_deref() == Some(dir.name.as_str()),
         })
