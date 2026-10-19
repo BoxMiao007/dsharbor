@@ -6,6 +6,7 @@
 //! 兼容旧格式：此前该文件顶层直接就是 `LaunchConfig`，加载时自动迁移。
 
 use dsharbor_core::launch::{Channel, LaunchConfig, LaunchMode, Runtime};
+use dsharbor_core::prefs::ShellPrefs;
 use serde::{Deserialize, Serialize};
 
 /// 托盘图标单击（左键）时默认打开的目标。
@@ -62,6 +63,11 @@ pub struct ShellConfig {
     /// 界面下次启动会写回合法值。
     #[serde(default)]
     pub ui_theme: Option<UiTheme>,
+    /// 「环境 / 网络 / 集成」三张卡承载的六个字段（JSON 里与上面几个键平级）。
+    /// 取值、默认值与宽容读取都在核心库（`dsharbor_core::prefs`）里定义与测试：
+    /// 缺键取默认，枚举认不出的名字只让那一个字段回默认，不牵连其余设置。
+    #[serde(flatten)]
+    pub prefs: ShellPrefs,
 }
 
 impl Default for ShellConfig {
@@ -79,6 +85,7 @@ impl Default for ShellConfig {
             tray_click: TrayClick::Launcher,
             light_delay_secs: 0,
             ui_theme: None,
+            prefs: ShellPrefs::default(),
         }
     }
 }
@@ -117,9 +124,7 @@ pub fn load(app: &tauri::AppHandle) -> ShellConfig {
     match serde_json::from_str::<LaunchConfig>(&text) {
         Ok(launch) => ShellConfig {
             launch,
-            tray_click: TrayClick::default(),
-            light_delay_secs: 0,
-            ui_theme: None,
+            ..ShellConfig::default()
         },
         Err(_) => ShellConfig::default(),
     }
@@ -184,4 +189,85 @@ pub fn save_launch(app: &tauri::AppHandle, launch: &LaunchConfig) -> Result<(), 
     let mut config = load(app);
     config.launch = launch.clone();
     store(app, &config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 壳配置里六个新字段的完整往返：界面改 → 存盘（序列化）→ 重启（反序列化）。
+    #[test]
+    fn shell_config_round_trips_the_six_new_fields() {
+        let config = ShellConfig {
+            prefs: ShellPrefs {
+                profile: "自定义环境".into(),
+                download_source: dsharbor_core::prefs::DownloadSource::Mirror,
+                proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+                proxy_address: "http://127.0.0.1:7890".into(),
+                cli_integration: true,
+                cache_cleanup: true,
+            },
+            ..ShellConfig::default()
+        };
+
+        let text = serde_json::to_string_pretty(&config).expect("序列化壳配置失败");
+        let back: ShellConfig = serde_json::from_str(&text).expect("反序列化壳配置失败");
+
+        assert_eq!(back.prefs, config.prefs, "六个新字段应原样往返");
+    }
+
+    /// 老配置文件（没有六个新键）与新配置（六个键齐全）混着读都要成立。
+    #[test]
+    fn missing_new_keys_take_defaults_without_dropping_other_settings() {
+        // 旧配置文件：只有壳自己的键，没有环境/网络/集成的字段。
+        let text = r#"{
+  "launch": { "mode": { "kind": "npx" }, "runtime": { "kind": "default" } },
+  "trayClick": "dsh",
+  "lightDelaySecs": 15,
+  "uiTheme": "nativeDark"
+}"#;
+        let config: ShellConfig = serde_json::from_str(text).expect("旧配置应能读出来");
+
+        assert_eq!(config.tray_click, TrayClick::Dsh, "其余设置不能丢");
+        assert_eq!(config.light_delay_secs, 15, "其余设置不能丢");
+        assert_eq!(config.ui_theme, Some(UiTheme::NativeDark), "其余设置不能丢");
+        assert_eq!(
+            config.prefs,
+            ShellPrefs::default(),
+            "缺键时六个字段取默认值"
+        );
+    }
+
+    /// 手改坏了枚举值只让那一个字段回默认，壳照样能打开、其余设置照样在。
+    #[test]
+    fn unknown_enum_literal_in_file_falls_back_per_field() {
+        let text = r#"{
+  "launch": { "mode": { "kind": "npx" }, "runtime": { "kind": "default" } },
+  "trayClick": "launcher",
+  "lightDelaySecs": 30,
+  "downloadSource": "某个不存在的源",
+  "proxyMode": 42,
+  "proxyAddress": "http://127.0.0.1:1080",
+  "cliIntegration": true
+}"#;
+        let config: ShellConfig =
+            serde_json::from_str(text).expect("坏枚举值不该让整份配置读不出来");
+
+        assert_eq!(config.light_delay_secs, 30, "坏枚举只影响自己那一个字段");
+        assert_eq!(
+            config.prefs.download_source,
+            dsharbor_core::prefs::DownloadSource::Inherit,
+            "认不出的下载源退回默认"
+        );
+        assert_eq!(
+            config.prefs.proxy_mode,
+            dsharbor_core::prefs::ProxyMode::System,
+            "类型都不对的代理模式也退回默认"
+        );
+        assert_eq!(
+            config.prefs.proxy_address, "http://127.0.0.1:1080",
+            "字符串照读"
+        );
+        assert!(config.prefs.cli_integration, "布尔照读");
+    }
 }

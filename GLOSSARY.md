@@ -34,7 +34,10 @@
 | 版本徽章 | version badge | 「DSH 会话」状态行里显示**当前运行的 DSH 版本**的徽章（两个四角星 + `DSH v…`，外观同「已停止」）；版本由壳在每次成功启动后用 `--version` 查询，查到就记进 `%APPDATA%\DSHarbor\dsh-version.txt`，所以壳重开后直接沿用上次的值（不再显示「DSH 版本未知」）。 |
 | 登录徽章 | login badge | 「DSH 会话」状态行**第一个**徽章，显示登录链接的通路与状态：登录等待中 / 桥接就绪（走桥接插件）/ 日志兜底就绪（日志解析）/ 登录获取失败；细节说明在徽章内感叹号图标的悬停气泡，获取失败时登录行显示原因原文。 |
 | 启动中 | starting | 「DSH 会话」状态徽章的一种：DSH 进程已拉起、登录链接尚未就绪（`running` 且未就绪、未报错），带转圈动画；就绪后自动变「运行中」。 |
-| 折叠摘要徽章 | card summary badge | 卡片收起时显示在标题行右侧的小徽章：「启动方式」显示当前方式名、「桥接插件」显示已安装 / 未安装；展开时隐藏。收起状态记在界面本地存储（`localStorage` 键 `dsharbor.ui.cardCollapsed`），壳重开后沿用。 |
+| 折叠摘要徽章 | card summary badge | 卡片收起时显示在标题行右侧的小徽章：「启动方式」显示当前方式名、「桥接插件」显示已安装 / 未安装；本版新增的三张卡（环境 / 网络 / 集成）内容尚未接入，先显示占位文案「未设置」；徽章展开时隐藏。收起状态记在界面本地存储（`localStorage` 键 `dsharbor.ui.cardCollapsed`），壳重开后沿用。 |
+| 环境卡 | profiles card | 「环境」卡片：对应 DSH 的 profile（一份独立的 `profiles/<名字>` 目录），当前环境名记在配置字段 `profile`（默认 `web`）。本版只铺卡片壳与字段承载，选环境、列插件、看桥接是否已装留待后续版本。 |
+| 网络卡 | network card | 「网络」卡片：承载下载源（`downloadSource`：沿用 npm 全局配置 / 镜像源 / 官方源）与代理（`proxyMode`：跟随系统 / 手动填写 / 不走代理；`proxyAddress`：代理地址）三个字段。本版只铺卡片壳与字段承载，不注入任何环境变量、不改任何全局配置。 |
+| 集成卡 | integrations card | 「集成」卡片：承载命令行集成开关（`cliIntegration`）与缓存清理开关（`cacheCleanup`），两者默认关闭。本版只铺卡片壳与字段承载，不写注册表、不扫缓存目录。 |
 | 关于卡片 | about card | 启动界面末尾常开的卡片：壳与核心库版本、DSH 版本、许可证、仓库、官网，以及配置目录 / 日志目录的一键打开入口。 |
 | 回滚备份 | bridge backup | 安装/卸载桥接插件前，壳把 profile 中会被 pnpm 改写的文件（package.json、pnpm-workspace.yaml、pnpm-lock.yaml、cordis.patch.yml）备份到 `%APPDATA%\DSHarbor\backups`（含内容哈希清单）；只保留最近 5 份，超出删最旧的。 |
 | 自绘标题栏 | custom titlebar | 主窗口顶部那条自己画的标题栏（窗口用 `decorations: false`，没有系统标题栏）：左上角应用图标 + `DSHarbor`，右上角最小化 / 最大化 / 关闭（关闭 = 轻量模式）；整条可拖动、双击最大化 / 还原、背景全透明。已知取舍：Windows 11 贴靠布局与 `Alt+Space` 系统菜单在自绘标题栏下不可用。 |

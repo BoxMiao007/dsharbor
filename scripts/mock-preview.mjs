@@ -60,6 +60,19 @@ const state = {
     extraArgs: [],
     port: null,
   },
+  /** 已保存的壳设置：改这里并刷新页面就能预览各种保存/回填分支。 */
+  savedShell: {
+    trayClick: "launcher",
+    lightDelaySecs: 0,
+    // 「环境 / 网络 / 集成」三张卡承载的六个字段：删掉任意键可预览「旧配置缺键取默认」，
+    // 填个不存在的枚举值可预览「手改坏了也不影响开壳」。
+    profile: "web",
+    downloadSource: "mirror",
+    proxyMode: "system",
+    proxyAddress: "",
+    cliIntegration: false,
+    cacheCleanup: false,
+  },
   counter: 0,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
@@ -111,9 +124,13 @@ window.__mockUnimplemented = [];
     }),
     load_shell_config: () => ({
       launch: JSON.parse(JSON.stringify(S.savedLaunch)),
-      trayClick: "launcher",
+      ...JSON.parse(JSON.stringify(S.savedShell)),
     }),
-    save_shell_config: () => null,
+    // 保存链路上看得到什么：存进 S.lastSavedShell，预览页控制台可查六个新字段有没有被带上。
+    save_shell_config: (a) => {
+      S.lastSavedShell = a && a.config;
+      return null;
+    },
     // 「指定程序路径」的即时校验：只看格式与「不存在」两种，用来预览字段下方红字。
     // 抛字符串而不是 Error：真实 invoke 被拒时前端拿到的是纯文案，预览要跟真机一致。
     check_binary_path: (a) => {

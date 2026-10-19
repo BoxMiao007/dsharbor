@@ -14,6 +14,7 @@ pub mod links;
 pub mod logparse;
 pub mod overlay;
 pub mod paths;
+pub mod prefs;
 pub mod registry;
 
 /// 对外展示的应用名（窗口标题、安装包、界面文案共用一个来源）。
