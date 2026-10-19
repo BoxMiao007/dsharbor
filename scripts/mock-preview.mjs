@@ -76,6 +76,12 @@ const state = {
   /** 系统代理的假数据：url 改成 null 可预览「跟随系统但系统里没配」。
       bypass 就是系统里那份例外列表（回环地址由后端补，这里不列）。 */
   systemProxy: { url: "127.0.0.1:7890", bypass: ["*.corp.example"], source: "env" },
+  /** 自检（`self_check_network`）的假结果：改 state 可预览三种结论各自的文案
+      （proxyOk / directOnly / bothFail），failure 是失败时多出来的那一行原因。 */
+  selfCheck: {
+    state: "proxyOk",
+    failure: null,
+  },
   counter: 0,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
@@ -499,6 +505,30 @@ window.__mockUnimplemented = [];
       seen("query_dsh_versions:" + (a && a.source ? a.source : "?"));
       if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
       return S.registry;
+    },
+    // 自检：结论与失败原因都从 __MOCK_STATE__.selfCheck 来（改它能预览三种文案），
+    // 下载源与代理地址按当前存盘配置填，跟真后端一样是「这次实际用的那两者」。
+    self_check_network: (a) => {
+      const source = (a && a.source) || "inherit";
+      seen("self_check_network:" + source);
+      const check = S.selfCheck || (S.selfCheck = { state: "proxyOk", failure: null });
+      const saved = S.lastSavedShell || S.savedShell;
+      const mode = saved.proxyMode || "system";
+      const registries = { mirror: "https://registry.npmmirror.com", official: "https://registry.npmjs.org" };
+      const registry = registries[source] || null;
+      const proxyUrl = mode === "off" ? null : mode === "manual" ? (saved.proxyAddress || null) : ((S.systemProxy || {}).url || null);
+      const via = check.state === "proxyOk" && proxyUrl ? "proxy" : "direct";
+      return {
+        state: check.state,
+        via: via,
+        registry: registry,
+        proxy: via === "proxy" ? proxyUrl : null,
+        failure:
+          check.state === "bothFail"
+            ? check.failure ||
+              "域名解析不到：可能是断网、DNS 被改，或者这条网络把域名拦了。（npm error code ENOTFOUND）"
+            : null,
+      };
     },
     start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; return status(); },
     stop_dsh: () => { seen("stop_dsh"); S.counter += 1; S.session = "stopped"; return status(); },
