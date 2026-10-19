@@ -79,6 +79,10 @@ const state = {
   counter: 0,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
+  /** 「启动后自动清理」的假结果：start_dsh / restart_dsh 在缓存开关打开时把结果写进这里，
+      `auto_cleanup_report` 按 since 返回新的一次（改 autoCleanup 可预览各种结果文案）。 */
+  autoCleanup: null,
+  autoCleanupSeq: 0,
   /** 命令行集成的假状态：改它能预览开关打开/关闭、PATH 里没有目录、被别的 dsh 盖住、
       以及非 Windows 宿主（supported: false）等分支。enabled 默认跟 savedShell 走。 */
   cli: { supported: true, enabled: false, onPath: false, shadow: null },
@@ -272,6 +276,56 @@ window.__mockUnimplemented = [];
       dirs: dirs,
     };
   };
+  // 清理的实际动作（与「立即清理」按钮和「启动后自动清理」共用一份，真后端也是同一个函数）。
+  const doCleanup = () => {
+    const cache = S.cache || (S.cache = { supported: true, dirs: [] });
+    const removable = (cache.dirs || []).filter((dir) => !dir.keep);
+    const freedBytes = removable.reduce((sum, dir) => sum + dir.bytes, 0);
+    if (cache.cleanupFails) {
+      return {
+        removed: [],
+        failed: removable.map((dir) => ({
+          label: dir.label,
+          path: "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache\\\\_npx\\\\" + dir.name,
+          reason: "文件被占用（可能 DSH 正在运行）：拒绝访问。 (os error 32)",
+        })),
+        freedBytes: 0,
+        freed_bytes: 0,
+        message: "这次一个目录都没能清掉，原因见下面的逐条结果。",
+        state: cacheState(cache),
+      };
+    }
+    cache.dirs = (cache.dirs || []).filter((dir) => dir.keep);
+    return {
+      removed: removable.map((dir) => ({
+        label: dir.label,
+        bytes: dir.bytes,
+        bytesText: humanBytes(dir.bytes),
+        bytes_text: humanBytes(dir.bytes),
+      })),
+      failed: [],
+      freedBytes: freedBytes,
+      freed_bytes: freedBytes,
+      message:
+        removable.length === 0
+          ? "没有需要清理的目录。"
+          : "已清掉 " + removable.length + " 个目录，释放 " + humanBytes(freedBytes) + "。",
+      state: cacheState(cache),
+    };
+  };
+  // 真的 DSH 拉起成功后、开关开着时，后端会自己跑一次清理并把结果留着等界面来取。
+  // 预览里用假数据把这条链路补上：只有开关开着才跑，且每次 seq 自增一次。
+  const maybeAutoCleanup = () => {
+    const shell = S.lastSavedShell || S.savedShell;
+    if (!shell || !shell.cacheCleanup) return;
+    const result = doCleanup();
+    S.autoCleanupSeq = (S.autoCleanupSeq || 0) + 1;
+    S.autoCleanup = {
+      seq: S.autoCleanupSeq,
+      message: "启动后自动清理：" + result.message,
+      result: result,
+    };
+  };
   const cmds = {    app_info: () => ({
       name: "DSHarbor",
       version: "0.0.0-mock",
@@ -399,40 +453,14 @@ window.__mockUnimplemented = [];
     // cleanupFails=true 时假装删不掉（预览「没清掉 + 原因」那几行）。
     cleanup_cache: () => {
       seen("cleanup_cache");
-      const cache = S.cache || (S.cache = { supported: true, dirs: [] });
-      const removable = (cache.dirs || []).filter((dir) => !dir.keep);
-      const freedBytes = removable.reduce((sum, dir) => sum + dir.bytes, 0);
-      if (cache.cleanupFails) {
-        return {
-          removed: [],
-          failed: removable.map((dir) => ({
-            label: dir.label,
-            path: "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache\\\\_npx\\\\" + dir.name,
-            reason: "文件被占用（可能 DSH 正在运行）：拒绝访问。 (os error 32)",
-          })),
-          freedBytes: 0,
-          freed_bytes: 0,
-          message: "这次一个目录都没能清掉，原因见下面的逐条结果。",
-          state: cacheState(cache),
-        };
-      }
-      cache.dirs = (cache.dirs || []).filter((dir) => dir.keep);
-      return {
-        removed: removable.map((dir) => ({
-          label: dir.label,
-          bytes: dir.bytes,
-          bytesText: humanBytes(dir.bytes),
-          bytes_text: humanBytes(dir.bytes),
-        })),
-        failed: [],
-        freedBytes: freedBytes,
-        freed_bytes: freedBytes,
-        message:
-          removable.length === 0
-            ? "没有需要清理的目录。"
-            : "已清掉 " + removable.length + " 个目录，释放 " + humanBytes(freedBytes) + "。",
-        state: cacheState(cache),
-      };
+      return doCleanup();
+    },
+    // 启动后自动清理的结果：since 是界面已经播报过的序号，只有更新的才返回。
+    auto_cleanup_report: (a) => {
+      seen("auto_cleanup_report");
+      const report = S.autoCleanup;
+      const since = (a && a.since) || 0;
+      return report && report.seq > since ? report : null;
     },
     profile_port_hint: () => S.portHint,
     // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」。
@@ -500,9 +528,9 @@ window.__mockUnimplemented = [];
       if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
       return S.registry;
     },
-    start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; return status(); },
+    start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
     stop_dsh: () => { seen("stop_dsh"); S.counter += 1; S.session = "stopped"; return status(); },
-    restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; return status(); },
+    restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
     bridge_install: () => {
       seen("bridge_install");
       if (S.bridgeInstallFails) throw new Error("mock：安装失败（可把 __MOCK_STATE__.bridgeInstallFails 改回 false）");

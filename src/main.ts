@@ -342,6 +342,16 @@ interface CleanupResult {
   state: CacheState;
 }
 
+/** 与 Rust 侧 `AutoCleanupReport` 对应：最近一次「启动后自动清理」的结果。 */
+interface AutoCleanupReport {
+  /** 第几次自动清理；界面只播报比上次新的那一次。 */
+  seq: number;
+  /** 说明文字（成功时以「启动后自动清理：」开头）。 */
+  message: string;
+  /** 成功时的逐条结果；缓存根都定位不到时没有可展示的条目。 */
+  result: CleanupResult | null;
+}
+
 /** 渠道候选：中文名在前、npm 标签在后；圆点靠 CSS 画（emoji 在 WebView2 里会渲染成黑白方块）。 */
 const CHANNEL_CHOICES: PickerChoice[] = [
   { value: "latest", label: "稳定版（latest）", dot: "latest" },
@@ -975,6 +985,11 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <div class="subcard cache-windows-only">
       <div class="subcard-title">npx 缓存</div>
       <p class="hint">只统计明确记录着本包的缓存目录，别的包既不计入也不删。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。</p>
+      <label class="switch-line">
+        <input type="checkbox" id="cache-auto-toggle" />
+        <span>每次启动成功后自动清理一次：保留当前启动配置对应的那份与最近用过的几份，其余删掉</span>
+      </label>
+      <p class="hint">默认关闭。打开后只在这一回真的拉起了 DSH 并且启动成功时修剪一次（壳外已经有一份在跑时什么也不删）；清掉了哪些、释放了多少会显示在下面。</p>
       <div class="kv">
         <div class="kv-row"><span class="kv-key">本包占用</span><span class="kv-value" id="cache-own">—</span></div>
         <div class="kv-row"><span class="kv-key">可回收</span><span class="kv-value" id="cache-reclaimable">—</span></div>
@@ -1689,6 +1704,7 @@ async function main(): Promise<void> {
     const cacheDirs = $<HTMLPreElement>("cache-dirs");
     const cacheResults = $<HTMLDivElement>("cache-results");
     const cacheResultsBody = $<HTMLDivElement>("cache-results-body");
+    const cacheAutoToggle = $<HTMLInputElement>("cache-auto-toggle");
 
     // 卡片折叠（所有带折叠头的分组，含「环境」「网络」「集成」）：默认展开；用户点出来的折叠状态记在 localStorage，
     // 壳重启、轻量模式重建窗口后沿用（维护者要求）。不放 config.json：那是整份回写的设置文件，
@@ -2193,6 +2209,8 @@ async function main(): Promise<void> {
       } catch (err) {
         console.error("查询状态失败:", err);
       }
+      // 自动清理是后端在启动成功后自己跑的，没有推送通道：顺路问一句有没有新结果。
+      await pollAutoCleanup();
     }
     requestStatusRefresh = refresh;
 
@@ -2646,6 +2664,7 @@ async function main(): Promise<void> {
         prefs = normalizePrefs(saved);
         fillProfilePicker();
         renderProfilesUI();
+        renderCacheAutoToggle();
       } catch (err) {
         setManageError(`重读配置失败：${err}`);
       }
@@ -2864,6 +2883,13 @@ async function main(): Promise<void> {
       void applyCliIntegration(cliToggle.checked);
     });
 
+    // 自动清理开关：只改一个持久化的偏好，真正的触发在后端启动成功后。
+    // 先回写 prefs 再保存，否则下一次任何字段的自动保存都会把刚打开的值抹回默认。
+    cacheAutoToggle.addEventListener("change", () => {
+      prefs.cacheCleanup = cacheAutoToggle.checked;
+      void persistConfigQuiet();
+    });
+
     btnCliDir.addEventListener("click", () => {
       void (async () => {
         cliError.classList.add("hidden");
@@ -2955,6 +2981,37 @@ async function main(): Promise<void> {
             ? `缓存 ${state.ownBytesText} · 可回收 ${state.reclaimableBytesText}`
             : `缓存 ${state.ownBytesText}`;
       renderIntegrationsSummary();
+    }
+
+    /** 已经播报过的自动清理序号：界面只用它分辨「有没有新的一次」，不重复播报。 */
+    let autoCleanupSeq = 0;
+
+    /** 开关状态跟着配置走：读回配置、改开关都调它，避免两处各写一遍。 */
+    function renderCacheAutoToggle(): void {
+      cacheAutoToggle.checked = prefs.cacheCleanup;
+    }
+
+    /** 自动清理的结果在后端，界面没有推送通道：搭在每秒的状态轮询上顺路问一句。
+        超过 `autoCleanupSeq` 的才算新结果（启动后删东西是用户看不见的事，必须播报）。 */
+    async function pollAutoCleanup(): Promise<void> {
+      let report: AutoCleanupReport | null;
+      try {
+        report = await invoke<AutoCleanupReport | null>("auto_cleanup_report", { since: autoCleanupSeq });
+      } catch (err) {
+        console.debug("读取自动清理结果失败:", err);
+        return;
+      }
+      if (report === null) return;
+      autoCleanupSeq = report.seq;
+      if (report.result === null) {
+        // 连缓存根都没定位到（npm 坏了等）：没有逐条结果，只留一行说明。
+        cacheMessage.textContent = report.message;
+        return;
+      }
+      // 与「立即清理」走同一套渲染：新盘面 + 「清掉哪些」逐条列表。
+      renderCacheState(report.result.state);
+      renderCleanupResults(report.result);
+      cacheMessage.textContent = report.message;
     }
 
     async function refreshCacheState(): Promise<void> {
@@ -3136,6 +3193,8 @@ async function main(): Promise<void> {
       proxyModePicker.setValue(prefs.proxyMode);
       proxyAddressInput.value = prefs.proxyAddress;
       renderNetworkUI();
+      // 缓存自动清理开关（默认关）：跟着读回来的配置走，重开壳仍然生效。
+      renderCacheAutoToggle();
       void refreshProxyState();
     }
 
