@@ -14,7 +14,8 @@ use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use dsharbor_core::launch::Runtime;
-use dsharbor_core::prefs::DownloadSource;
+use dsharbor_core::net::{self, SelfCheckReport};
+use dsharbor_core::prefs::{DownloadSource, ShellPrefs};
 use dsharbor_core::registry::{self, RegistryInfo};
 
 /// 缓存有效期。
@@ -117,6 +118,66 @@ fn cache_put(key: &str, info: RegistryInfo) {
 ///
 /// 走与启动 DSH 同一条 PATH 注入（WSL 下先取发行版的干净 PATH）：否则发行版里
 /// 那份 npm 可能压根不在 PATH 上，或者直接误用 Windows 版 npm。
+/// 自检的单次超时。
+///
+/// 比版本查询的 30 秒短：用户点了「测试连接」就坐在那里等结果，
+/// 一次几秒、最多两次，再久他只会以为界面卡死了。
+const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// 「网络」卡的「测试连接」：拿当前下载源与当前代理设置真的跑一次 npm。
+///
+/// 跑几条由 `net::self_check_plan` 决定（配了代理才有第二跑），
+/// 跑完的结果由 `net::self_check_outcome` 归成三态并写中文原因；
+/// 这里只负责把命令拉起来，不自己拼任何环境变量或参数。
+pub fn self_check(
+    runtime: &Runtime,
+    prefs: &ShellPrefs,
+    source: DownloadSource,
+) -> SelfCheckReport {
+    let proxy = crate::proxy::resolution(prefs);
+    let plan = net::self_check_plan(net::registry_of(source), &proxy);
+    let first = run_check(runtime, &plan.first);
+    let second = match (&first, &plan.second) {
+        // 第一条就通了，那条「去掉代理再试一次」根本不跑。
+        (Ok(()), _) => None,
+        (Err(_), Some(env)) => Some(run_check(runtime, env)),
+        (Err(_), None) => None,
+    };
+    let outcome = net::self_check_outcome(plan.first_via, first, second);
+    net::self_check_report(source, &proxy, &outcome)
+}
+
+/// 跑一条自检请求。
+///
+/// 用的是与真实下载完全相同的命令装配（同一个 `build_command`、同一套
+/// `query_args()`），只是把环境变量换成自检这一条要用的那份。
+///
+/// 退出码 0 就算通，不再去解析输出：`run_capture` 把 stdout 与 stderr 合在了一起，
+/// npm 的一句无害警告就会让解析失败，把一个真的通了的连接报成失败。
+fn run_check(runtime: &Runtime, env: &[(String, String)]) -> Result<(), String> {
+    let command = build_command(runtime, env)?;
+    let (code, output) = crate::plugin::run_capture(command, CHECK_TIMEOUT)?;
+    check_result(code, &output)
+}
+
+/// 把一次自检命令的退出码与输出变成「通 / 不通」。
+///
+/// 只看退出码：`run_capture` 把 stdout 与 stderr 合在了一起，
+/// npm 的一句无害警告（新版本可用、某些旧依赖已废弃）就会让 JSON 解析失败，
+/// 把一个真的通了的连接报成失败——比报错更难查。
+/// 不通时把整段原始输出带上去，归类那一层会自己取首行。
+fn check_result(code: i32, output: &str) -> Result<(), String> {
+    if code == 0 {
+        return Ok(());
+    }
+    let trimmed = output.trim();
+    Err(if trimmed.is_empty() {
+        format!("npm view 执行失败（退出码 {code}）")
+    } else {
+        trimmed.to_string()
+    })
+}
+
 fn timeout_error() -> String {
     format!("查询官方版本列表超时（{} 秒）", QUERY_TIMEOUT.as_secs())
 }
@@ -502,5 +563,62 @@ mod tests {
         assert!(args.contains(&"--json".to_string()), "{args:?}");
         assert!(args.contains(&"versions".to_string()), "{args:?}");
         assert!(args.contains(&"dist-tags".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn a_zero_exit_counts_as_reachable_even_with_warnings_on_stderr() {
+        // `run_capture` 把 stdout 与 stderr 合并了：npm 的「有新版本」之类警告
+        // 不应把一次真的通了的连接报成失败，所以这里不看输出只看出码。
+        assert!(check_result(0, "npm warn deprecated foo@1.0.0").is_ok());
+        assert!(check_result(0, "").is_ok());
+    }
+
+    #[test]
+    fn a_failing_pass_carries_the_raw_output_for_classification() {
+        let err = check_result(
+            1,
+            "npm error code ENOTFOUND\nnpm error network getaddrinfo ENOTFOUND registry.npmjs.org\n",
+        )
+        .expect_err("非零退出码就是不通");
+        // 首尾空白要削掉，不然拼进界面会多一行空行。
+        assert!(err.starts_with("npm error code ENOTFOUND"), "{err}");
+        assert!(!err.ends_with('\n'), "{err:?}");
+    }
+
+    #[test]
+    fn a_silent_failure_still_says_something() {
+        // 被杀掉的进程 / 什么也没打印的失败：至少得告诉用户退出码。
+        let err = check_result(1, "   \n").expect_err("非零退出码就是不通");
+        assert!(err.contains("退出码 1"), "{err}");
+    }
+
+    #[test]
+    fn the_two_passes_are_ordered_proxy_then_direct_when_a_proxy_is_set() {
+        // 自检的第一跑必须与真实下载同一条路，否则「通了」不能证明下载能成。
+        let resolved = proxy("http://127.0.0.1:7890");
+        let plan = net::self_check_plan(net::registry_of(DownloadSource::Mirror), &resolved);
+        assert_eq!(plan.first_via, net::CheckVia::Proxy);
+        assert!(plan
+            .first
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("https_proxy")));
+        let second = plan.second.expect("第一跑失败后要去掉代理再试一次");
+        assert!(!second.iter().any(|(key, _)| key.contains("proxy")));
+        // 两跑都能拿这个 env 拼出真命令（防止只测了纯函数、接不上真命令）。
+        assert!(build_command(&Runtime::Default, &plan.first).is_ok());
+        assert!(build_command(&Runtime::Default, &second).is_ok());
+    }
+
+    #[test]
+    fn a_bypassed_source_runs_a_single_direct_pass() {
+        // 例外列表已覆盖的域名：真实下载本来就是直连，跑两遍没意义。
+        let resolved = ProxyResolution {
+            url: Some("http://127.0.0.1:7890".to_string()),
+            bypass: vec!["*.npmmirror.com".to_string()],
+            ..ProxyResolution::default()
+        };
+        let plan = net::self_check_plan(net::registry_of(DownloadSource::Mirror), &resolved);
+        assert_eq!(plan.first_via, net::CheckVia::Direct);
+        assert!(plan.second.is_none());
     }
 }
