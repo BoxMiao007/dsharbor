@@ -148,19 +148,6 @@ pub fn list_profiles(config: &LaunchConfig) -> Result<Vec<ProfileSummary>, Strin
     Ok(profiles::parse_listing(&read_listing(&target)?))
 }
 
-/// 目标环境下**已经装了桥接插件**的环境名。
-///
-/// 切换环境时要判断「新环境要不要自动补装桥接」：拆开桥接的环境（用户主动禁用了它）
-/// 不应该因为一次切换又被装回去，所以先看它原来就有没有。
-pub fn bridge_profiles(config: &LaunchConfig) -> Result<Vec<String>, String> {
-    let target = Target::of(config);
-    Ok(profiles::parse_listing(&read_listing(&target)?)
-        .into_iter()
-        .filter(|summary| summary.bridge_installed)
-        .map(|summary| summary.name)
-        .collect())
-}
-
 /// 读「名字<TAB>单行 package.json」清单（宿主直连与 WSL 各一条路径）。
 ///
 /// 缺 `package.json` 的目录跳过：那不是 DSH 初始化好的环境，壳也不会去碰它。
