@@ -340,6 +340,33 @@ async fn proxy_state(app: tauri::AppHandle) -> Result<proxy::ProxyState, String>
     .map_err(|err| format!("读取代理状态失败：{err}"))
 }
 
+/// 「网络」卡的「测试连接」：拿当前下载源与当前代理设置真的跑一次 npm，
+/// 告诉用户到底通不通、是怎么通的、不通是卡在哪。
+///
+/// async + spawn_blocking：要拉 npm 子进程并等它结束（最多两条），同步命令会堵主线程。
+///
+/// 下载源由界面随请求一起传，与 `query_dsh_versions` 同一个理由：它才是
+/// 「这次用哪个源」的权威，不必先去读盘；代理由已保存的设置决定，
+/// 与真实下载走同一条注入路径。
+///
+/// 不写入缓存（见 `registry::self_check`）：自检的结果是「此刻这条网络」的快照，
+/// 与「有多少版本可选」是两回事，互相覆盖只会让两边都不准。
+#[tauri::command]
+async fn self_check_network(
+    app: tauri::AppHandle,
+    runtime: launch::Runtime,
+    source: String,
+) -> Result<dsharbor_core::net::SelfCheckReport, String> {
+    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
+        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
+        dsharbor_core::prefs::DownloadSource::default()
+    });
+    let prefs = settings::load(&app).prefs;
+    tauri::async_runtime::spawn_blocking(move || registry::self_check(&runtime, &prefs, source))
+        .await
+        .map_err(|err| format!("后台自检失败：{err}"))
+}
+
 /// 「集成」卡命令行集成段的当前状态：开关值、真实 PATH 情况、垫片预览与状态说明。
 ///
 /// async + spawn_blocking：读 PATH 要起 `reg.exe`、探测 dsh 要看磁盘，同步命令会堵主线程。
@@ -1500,6 +1527,7 @@ pub fn run() {
             load_shell_config,
             save_shell_config,
             proxy_state,
+            self_check_network,
             profile_port_hint,
             list_profiles,
             create_profile,

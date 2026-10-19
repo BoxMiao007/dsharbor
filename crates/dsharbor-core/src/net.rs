@@ -332,6 +332,304 @@ pub fn status_hint(mode: ProxyMode, resolution: &ProxyResolution) -> String {
     format!("{head}；回环地址始终直连{tail}。")
 }
 
+/// 下载自检失败原因的类别。
+///
+/// 「网络」卡的「测试连接」拿到的是 npm 的一堆英文报错，直接给用户看没用；
+/// 归类在这里做，文案也在这里定，界面与日志就必然是同一套说法。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetErrorKind {
+    /// 域名解析不到。
+    Dns,
+    /// 连不上、连接被重置：网络本身不通。
+    Unreachable,
+    /// 代理地址上没人接：代理没开或端口填错。
+    ProxyRefused,
+    /// 证书校验不过。
+    Tls,
+    /// 超时（含被壳拍掉的命令）。
+    Timeout,
+    /// 认不出的兜底。
+    Unknown,
+}
+
+impl NetErrorKind {
+    /// 给人看的一句话。
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Dns => "域名解析不到：可能是断网、DNS 被改，或者这条网络把域名拦了。",
+            Self::Unreachable => "连不上服务器：网络不通，或者连接中途被切断了。",
+            Self::ProxyRefused => "代理拒绝连接：代理软件没开着，或者端口填错了。",
+            Self::Tls => "证书校验失败：常见的成因是代理在中间换掉了证书。",
+            Self::Timeout => "等不到回应：网络太慢，或者请求被半路拦下了。",
+            Self::Unknown => "没认出来的错误，具体报错见下面的原始输出。",
+        }
+    }
+}
+
+/// 把一段命令输出 / 报错文本归成 [`NetErrorKind`]。
+///
+/// 判定顺序有意为之：
+/// - 先看超时：`TLS handshake timeout` 和 `ETIMEDOUT` 是同一回事，不能算成证书问题；
+/// - 再看域名：`getaddrinfo ENOTFOUND` 里也带 `network`，不能落到「连不上」；
+/// - `ECONNREFUSED` 要看它拒的是谁。连本机端口（代理的默认相）才是代理没开；
+///   拒的是远端地址就只能算「连不上」，不能冤枉用户的代理设置。
+///
+/// 匹配一律不区分大小写；`ECONNREFUSED` 的两种写法（`ECONNREFUSED`）都能认。
+pub fn classify_error(text: &str) -> NetErrorKind {
+    let lowered = text.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|needle| lowered.contains(needle));
+
+    if has(&["etimedout", "timeout", "timed out", "超时"]) {
+        return NetErrorKind::Timeout;
+    }
+    if has(&[
+        "enotfound",
+        "eai_again",
+        "eai_noname",
+        "eai_fail",
+        "getaddrinfo",
+        "name or service not known",
+    ]) {
+        return NetErrorKind::Dns;
+    }
+    if has(&["econnrefused"]) {
+        // 拒的是本机端口 → 代理没在监听；拒的是远端地址 → 只是这台机器连不上。
+        let to_loopback = has(&["127.0.0.1", "localhost", "[::1]", "::1", "0.0.0.0"]);
+        return if to_loopback || has(&["proxy"]) {
+            NetErrorKind::ProxyRefused
+        } else {
+            NetErrorKind::Unreachable
+        };
+    }
+    if has(&[
+        "self_signed_cert_in_chain",
+        "cert_has_expired",
+        "err_tls_cert_altname_invalid",
+        "unable_to_verify_leaf_signature",
+        "unable_to_get_issuer_cert",
+        "certificate",
+        "cert_",
+        "tls",
+        "ssl",
+    ]) {
+        return NetErrorKind::Tls;
+    }
+    if has(&[
+        "econnreset",
+        "ehostunreach",
+        "enetunreach",
+        "epipe",
+        "socket hang up",
+        "network request failed",
+        "network error",
+    ]) {
+        return NetErrorKind::Unreachable;
+    }
+    NetErrorKind::Unknown
+}
+
+/// 自检的一条请求走的是什么路。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckVia {
+    /// 带着代理环境变量跑。
+    Proxy,
+    /// 不带任何代理变量跑，走直连。
+    Direct,
+}
+
+impl CheckVia {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proxy => "proxy",
+            Self::Direct => "direct",
+        }
+    }
+}
+
+/// 自检的结论三态。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfCheckState {
+    /// 跟真实下载同一条路通了。
+    ProxyOk,
+    /// 带代理不通，去掉代理就通了。
+    DirectOnly,
+    /// 两条路都不通。
+    BothFail,
+}
+
+impl SelfCheckState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProxyOk => "proxyOk",
+            Self::DirectOnly => "directOnly",
+            Self::BothFail => "bothFail",
+        }
+    }
+}
+
+/// 一次自检要跑哪几条请求，按顺序。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfCheckPlan {
+    /// 第一条：与真实下载路径一致。
+    pub first: Vec<(String, String)>,
+    /// 第一条走的是代理还是直连。
+    pub first_via: CheckVia,
+    /// 第一条失败后要不要去掉代理再跑一条；`None` 表示不需要。
+    pub second: Option<Vec<(String, String)>>,
+}
+
+/// 算出这次自检要跑几条、每条带什么环境变量。
+///
+/// 第一条总是跟真实下载一致；只有「配了代理、且目标域名不在例外列表里」时，
+/// 才有意义再去掉代理试一下——否则两条路一模一样，白跑一次。
+pub fn self_check_plan(registry: Option<&str>, proxy: &ProxyResolution) -> SelfCheckPlan {
+    // 「去掉代理」那一份就是只带下载源的环境变量。
+    let direct_env = |source: Option<&str>| -> Vec<(String, String)> {
+        source
+            .map(|url| vec![(REGISTRY_ENV.to_string(), url.to_string())])
+            .unwrap_or_default()
+    };
+
+    let proxied = proxy.url.is_some();
+    // 域名命中例外列表时，真实下载也是直连，无需第二跑。
+    let bypassed = match (registry, proxy.url.as_deref()) {
+        (Some(url), Some(_)) => match Url::parse(url) {
+            Ok(parsed) => match parsed.host_str() {
+                Some(host) => bypass_matches(host, parsed.port(), &proxy.bypass),
+                None => false,
+            },
+            Err(_) => false,
+        },
+        _ => false,
+    };
+
+    if !proxied || bypassed {
+        return SelfCheckPlan {
+            first: direct_env(registry),
+            first_via: CheckVia::Direct,
+            second: None,
+        };
+    }
+
+    SelfCheckPlan {
+        first: plan_env(registry, proxy),
+        first_via: CheckVia::Proxy,
+        second: Some(direct_env(registry)),
+    }
+}
+
+/// 由两条请求的结果得出三态。
+///
+/// `direct` 为 `None` 表示没跑第二条（本来就只有一条路）。
+pub fn check_state(proxy_ok: bool, direct: Option<bool>) -> SelfCheckState {
+    if proxy_ok {
+        return SelfCheckState::ProxyOk;
+    }
+    match direct {
+        Some(true) => SelfCheckState::DirectOnly,
+        _ => SelfCheckState::BothFail,
+    }
+}
+
+/// 把一段报错变成「一句中文 + 一行原文」。
+///
+/// 原文只取第一行：npm 的完整日志有几十行，全搬进界面反而让人找不到重点。
+pub fn failure_text(text: &str) -> String {
+    let sentence = classify_error(text).message();
+    match text.lines().map(str::trim).find(|line| !line.is_empty()) {
+        Some(line) => format!("{sentence}（{line}）"),
+        None => sentence.to_string(),
+    }
+}
+
+/// 自检的结论：三态 + 结论所依据的那条路 + 失败时的说法。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfCheckOutcome {
+    pub state: SelfCheckState,
+    /// 结论所依据的那条路：通了就是通的那条路，都不通就是第一条（真实下载路径）。
+    pub via: CheckVia,
+    /// 失败说明；成功时为 `None`。
+    pub failure: Option<String>,
+}
+
+/// 把两条请求的原始输出汇成结论。
+///
+/// 参数是「按 `self_check_plan` 的顺序跑完」的原始 Captured 文本，
+/// 归类与文案都在这里做，外壳只管跑命令。
+pub fn self_check_outcome(
+    first_via: CheckVia,
+    first: Result<(), String>,
+    second: Option<Result<(), String>>,
+) -> SelfCheckOutcome {
+    let first_error = match first {
+        Ok(()) => {
+            return SelfCheckOutcome {
+                state: SelfCheckState::ProxyOk,
+                via: first_via,
+                failure: None,
+            }
+        }
+        Err(text) => text,
+    };
+
+    let state = check_state(false, second.as_ref().map(Result::is_ok));
+    let failure = match &second {
+        // 两条都失败：两边的说法都要给，否则用户不知道该调代理还是调源。
+        Some(Err(second_error)) => format!(
+            "{}；去掉代理也不行：{}",
+            failure_text(&first_error),
+            failure_text(second_error)
+        ),
+        _ => failure_text(&first_error),
+    };
+    let via = match state {
+        SelfCheckState::DirectOnly => CheckVia::Direct,
+        _ => first_via,
+    };
+    SelfCheckOutcome {
+        state,
+        via,
+        failure: Some(failure),
+    }
+}
+
+/// 自检回给界面的报表。
+///
+/// 「通了」不够，还得说清是怎么通的：用户关心的就是代理到底有没有用上。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelfCheckReport {
+    /// 三态：`proxyOk` / `directOnly` / `bothFail`。
+    pub state: &'static str,
+    /// 结论所依据的那条路：`proxy` / `direct`。
+    pub via: &'static str,
+    /// 实际请求的下载源；`None` 表示透传 npm 全局配置，界面自己换文案。
+    pub registry: Option<String>,
+    /// 实际用上的代理地址；`None` 表示这条请求没走代理。
+    pub proxy: Option<String>,
+    /// 失败说明；成功时为 `None`。
+    pub failure: Option<String>,
+}
+
+/// 把结论包成界面要的报表。
+pub fn self_check_report(
+    source: DownloadSource,
+    proxy: &ProxyResolution,
+    outcome: &SelfCheckOutcome,
+) -> SelfCheckReport {
+    SelfCheckReport {
+        state: outcome.state.as_str(),
+        via: outcome.via.as_str(),
+        registry: registry_of(source).map(str::to_string),
+        // 只有真的走代理那条，才把代理地址拿出来说；直连时报代理容易让人误会。
+        proxy: match outcome.via {
+            CheckVia::Proxy => proxy.url.clone(),
+            CheckVia::Direct => None,
+        },
+        failure: outcome.failure.clone(),
+    }
+}
+
 /// 拼 `NO_PROXY` 的值：回环地址恒在最前，再接用户自己的例外列表（去重、保序）。
 fn no_proxy_value(bypass: &[String]) -> String {
     let mut items: Vec<String> = Vec::new();
@@ -994,6 +1292,323 @@ mod tests {
             status_hint(ProxyMode::Manual, &bad),
             ProxyUrlError::Socks.message()
         );
+    }
+
+    // ---- 自检失败原因归类 ----
+
+    #[test]
+    fn dns_failures_are_recognised() {
+        // npm 解析不到域名时给的是 getaddrinfo 的 errno。
+        assert_eq!(
+            classify_error("npm error code ENOTFOUND\nnpm error network getaddrinfo ENOTFOUND registry.npmjs.org"),
+            NetErrorKind::Dns
+        );
+        assert_eq!(
+            classify_error("request to https://x failed: EAI_AGAIN"),
+            NetErrorKind::Dns
+        );
+        assert_eq!(classify_error("EAI_NONAME"), NetErrorKind::Dns);
+    }
+
+    #[test]
+    fn refused_connections_are_told_apart_from_plain_unreachable_hosts() {
+        // npm 会把「连到哪儿被拒」一起打出来：连的是本机端口，就是代理没在监听。
+        assert_eq!(
+            classify_error(
+                "npm error network request failed, reason: connect ECONNREFUSED 127.0.0.1:7890"
+            ),
+            NetErrorKind::ProxyRefused
+        );
+        assert_eq!(
+            classify_error("connect ECONNREFUSED localhost:1080"),
+            NetErrorKind::ProxyRefused
+        );
+        // 没提到代理或本机地址的拒绝，只能算「连不上」，不能冤枉用户的代理。
+        assert_eq!(
+            classify_error("connect ECONNREFUSED 104.16.24.34:443"),
+            NetErrorKind::Unreachable
+        );
+        assert_eq!(classify_error("socket hang up"), NetErrorKind::Unreachable);
+        assert_eq!(
+            classify_error("npm error code EHOSTUNREACH"),
+            NetErrorKind::Unreachable
+        );
+    }
+
+    #[test]
+    fn tls_failures_are_recognised() {
+        assert_eq!(
+            classify_error("npm error code SELF_SIGNED_CERT_IN_CHAIN"),
+            NetErrorKind::Tls
+        );
+        assert_eq!(
+            classify_error("unable to verify the first certificate"),
+            NetErrorKind::Tls
+        );
+        assert_eq!(
+            classify_error("npm error code CERT_HAS_EXPIRED"),
+            NetErrorKind::Tls
+        );
+    }
+
+    #[test]
+    fn timeouts_are_recognised_even_inside_a_tls_handshake() {
+        assert_eq!(
+            classify_error("npm error code ETIMEDOUT"),
+            NetErrorKind::Timeout
+        );
+        // 命令本身被壳掐掉时的那句中文也要归到这里。
+        assert_eq!(
+            classify_error("命令超时（30 秒未结束）"),
+            NetErrorKind::Timeout
+        );
+        assert_eq!(
+            classify_error("network timeout at: https://registry.npmjs.org/@deepseek-ai%2fdsh"),
+            NetErrorKind::Timeout
+        );
+        // 握手超时说到底是超时，不是证书问题。
+        assert_eq!(
+            classify_error("TLS handshake timeout"),
+            NetErrorKind::Timeout
+        );
+    }
+
+    #[test]
+    fn unknown_text_falls_back_instead_of_guessing() {
+        assert_eq!(classify_error(""), NetErrorKind::Unknown);
+        assert_eq!(classify_error("npm error code E404"), NetErrorKind::Unknown);
+        assert_eq!(classify_error("npm view 执行失败"), NetErrorKind::Unknown);
+    }
+
+    #[test]
+    fn every_kind_has_its_own_chinese_sentence() {
+        let kinds = [
+            NetErrorKind::Dns,
+            NetErrorKind::Unreachable,
+            NetErrorKind::ProxyRefused,
+            NetErrorKind::Tls,
+            NetErrorKind::Timeout,
+            NetErrorKind::Unknown,
+        ];
+        let mut seen: Vec<&str> = Vec::new();
+        for kind in kinds {
+            let text = kind.message();
+            assert!(!text.is_empty(), "{kind:?} 缺文案");
+            assert!(!seen.contains(&text), "{kind:?} 与前面的说法重复：{text}");
+            seen.push(text);
+        }
+    }
+
+    // ---- 自检要跑哪几条 ----
+
+    #[test]
+    fn no_proxy_configured_means_a_single_direct_pass() {
+        let none = resolve_proxy(ProxyMode::System, "", &SystemProxyProbe::none());
+        let plan = self_check_plan(Some(MIRROR_REGISTRY), &none);
+        assert_eq!(plan.first_via, CheckVia::Direct);
+        assert!(plan.second.is_none());
+        // 第一条就是直连那一份：没有代理变量，只带下载源。
+        assert_eq!(plan.first, registry_env(DownloadSource::Mirror));
+    }
+
+    #[test]
+    fn proxy_configured_means_two_passes_proxy_first() {
+        let resolved = system("127.0.0.1:7890");
+        let plan = self_check_plan(Some(MIRROR_REGISTRY), &resolved);
+        assert_eq!(plan.first_via, CheckVia::Proxy);
+        let second = plan.second.expect("先带代理跑失败后，要去掉代理再跑一次");
+        // 第一条带代理变量，第二条一个代理变量都没有，下载源两条都带。
+        assert!(plan
+            .first
+            .iter()
+            .any(|(key, _)| key == "HTTPS_PROXY" || key == "https_proxy"));
+        assert!(!second
+            .iter()
+            .any(|(key, _)| key.to_ascii_lowercase().contains("proxy")));
+        assert_eq!(second, registry_env(DownloadSource::Mirror));
+    }
+
+    #[test]
+    fn a_source_hitting_the_bypass_list_runs_only_one_pass() {
+        // 系统例外里写了这个域名：请求本来就直连，再去掉代理跑一遍没意义。
+        let probe = probe(
+            "127.0.0.1:7890",
+            &["registry.npmmirror.com"],
+            ProxySource::Env,
+        );
+        let resolved = resolve_proxy(ProxyMode::System, "", &probe);
+        let plan = self_check_plan(Some(MIRROR_REGISTRY), &resolved);
+        assert_eq!(plan.first_via, CheckVia::Direct);
+        assert!(plan.second.is_none());
+    }
+
+    #[test]
+    fn an_unknown_registry_cannot_be_matched_against_the_bypass_list() {
+        // 「沿用 npm 全局配置」时壳不知道实际是哪个域名，只能老老实实跑两条。
+        let probe = probe(
+            "127.0.0.1:7890",
+            &["registry.npmmirror.com"],
+            ProxySource::Env,
+        );
+        let resolved = resolve_proxy(ProxyMode::System, "", &probe);
+        let plan = self_check_plan(None, &resolved);
+        assert_eq!(plan.first_via, CheckVia::Proxy);
+        assert!(plan.second.is_some());
+    }
+
+    // ---- 三态判定 ----
+
+    #[test]
+    fn a_successful_first_pass_is_reported_as_proxy_ok() {
+        assert_eq!(check_state(true, None), SelfCheckState::ProxyOk);
+        // 第二条在第一条成功时根本不会跑，但即使跑了也不影响结论。
+        assert_eq!(check_state(true, Some(true)), SelfCheckState::ProxyOk);
+    }
+
+    #[test]
+    fn proxy_failing_and_direct_working_is_the_direct_only_state() {
+        assert_eq!(check_state(false, Some(true)), SelfCheckState::DirectOnly);
+    }
+
+    #[test]
+    fn both_passes_failing_including_the_single_pass_case_is_both_fail() {
+        assert_eq!(check_state(false, Some(false)), SelfCheckState::BothFail);
+        // 没配代理时只跑过一条，失败就是失败，不能报成「只直连通了」。
+        assert_eq!(check_state(false, None), SelfCheckState::BothFail);
+    }
+
+    #[test]
+    fn states_serialise_to_the_frontend_literals() {
+        assert_eq!(SelfCheckState::ProxyOk.as_str(), "proxyOk");
+        assert_eq!(SelfCheckState::DirectOnly.as_str(), "directOnly");
+        assert_eq!(SelfCheckState::BothFail.as_str(), "bothFail");
+        assert_eq!(CheckVia::Proxy.as_str(), "proxy");
+        assert_eq!(CheckVia::Direct.as_str(), "direct");
+    }
+
+    #[test]
+    fn failure_text_pairs_the_kind_sentence_with_the_first_raw_line() {
+        let text =
+            "npm error code ENOTFOUND\nnpm error network getaddrinfo ENOTFOUND registry.npmjs.org";
+        let line = failure_text(text);
+        assert!(line.starts_with(NetErrorKind::Dns.message()), "{line}");
+        assert!(line.contains("ENOTFOUND"), "{line}");
+        // 只取首行，不把整屏 npm 日志复制进界面。
+        assert!(!line.contains("getaddrinfo"), "{line}");
+    }
+
+    #[test]
+    fn failure_text_survives_empty_or_whitespace_output() {
+        assert_eq!(failure_text(""), NetErrorKind::Unknown.message());
+        assert_eq!(failure_text("   \n\n  "), NetErrorKind::Unknown.message());
+    }
+
+    #[test]
+    fn a_successful_first_pass_needs_no_failure_text() {
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        assert_eq!(outcome.state, SelfCheckState::ProxyOk);
+        assert_eq!(outcome.via, CheckVia::Proxy);
+        assert_eq!(outcome.failure, None);
+    }
+
+    #[test]
+    fn direct_only_reports_the_direct_route_and_the_proxy_error() {
+        let outcome = self_check_outcome(
+            CheckVia::Proxy,
+            Err("npm error connect ECONNREFUSED 127.0.0.1:7890".to_string()),
+            Some(Ok(())),
+        );
+        assert_eq!(outcome.state, SelfCheckState::DirectOnly);
+        // 通的是直连，结论就说直连。
+        assert_eq!(outcome.via, CheckVia::Direct);
+        let failure = outcome.failure.expect("代理那条失败要说清原因");
+        assert!(
+            failure.starts_with(NetErrorKind::ProxyRefused.message()),
+            "{failure}"
+        );
+    }
+
+    #[test]
+    fn both_failing_keeps_both_reasons() {
+        let outcome = self_check_outcome(
+            CheckVia::Proxy,
+            Err("npm error connect ECONNREFUSED 127.0.0.1:7890".to_string()),
+            Some(Err(
+                "npm error network getaddrinfo ENOTFOUND registry.npmmirror.com".to_string(),
+            )),
+        );
+        assert_eq!(outcome.state, SelfCheckState::BothFail);
+        let failure = outcome.failure.expect("两条都失败要都有说法");
+        assert!(failure.contains("代理拒绝连接"), "{failure}");
+        assert!(failure.contains("域名解析不到"), "{failure}");
+        // 走的是真实下载路径（先带代理），而不是第一次失败的那条。
+        assert_eq!(outcome.via, CheckVia::Proxy);
+    }
+
+    #[test]
+    fn a_single_failing_pass_is_both_fail_not_direct_only() {
+        let outcome = self_check_outcome(
+            CheckVia::Direct,
+            Err("npm error network getaddrinfo ENOTFOUND registry.npmjs.org".to_string()),
+            None,
+        );
+        assert_eq!(outcome.state, SelfCheckState::BothFail);
+        assert_eq!(outcome.via, CheckVia::Direct);
+        assert!(outcome
+            .failure
+            .expect("失败要有说法")
+            .starts_with(NetErrorKind::Dns.message()));
+    }
+
+    #[test]
+    fn the_report_names_the_route_and_the_source_it_actually_used() {
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        let report = self_check_report(DownloadSource::Mirror, &resolved, &outcome);
+        assert_eq!(report.state, "proxyOk");
+        assert_eq!(report.via, "proxy");
+        assert_eq!(report.registry.as_deref(), Some(MIRROR_REGISTRY));
+        assert_eq!(report.proxy.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(report.failure, None);
+    }
+
+    #[test]
+    fn a_direct_report_does_not_claim_a_proxy_was_used() {
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(
+            CheckVia::Proxy,
+            Err("npm error connect ECONNREFUSED 127.0.0.1:7890".to_string()),
+            Some(Ok(())),
+        );
+        let report = self_check_report(DownloadSource::Official, &resolved, &outcome);
+        assert_eq!(report.state, "directOnly");
+        assert_eq!(report.via, "direct");
+        assert_eq!(report.proxy, None);
+        assert!(report.failure.is_some());
+    }
+
+    #[test]
+    fn an_inherited_source_is_reported_as_unknown_instead_of_guessed() {
+        // 选「沿用 npm 全局配置」时壳不知道实际域名，不能编一个出来。
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        let report = self_check_report(DownloadSource::Inherit, &resolved, &outcome);
+        assert_eq!(report.registry, None);
+    }
+
+    #[test]
+    fn reports_serialise_as_camel_case_for_the_frontend() {
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        let json = serde_json::to_string(&self_check_report(
+            DownloadSource::Mirror,
+            &resolved,
+            &outcome,
+        ))
+        .expect("报表要能序列化给界面");
+        assert!(json.contains("\"state\":\"proxyOk\""), "{json}");
+        assert!(json.contains("\"via\":\"proxy\""), "{json}");
+        assert!(json.contains("\"registry\":"), "{json}");
     }
 
     #[test]

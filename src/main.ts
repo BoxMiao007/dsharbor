@@ -237,6 +237,21 @@ interface ProxyState {
   hint: string;
 }
 
+/** 与 Rust 侧 `net::SelfCheckReport` 对应：三态、结论依据的那条路、
+    实际用到的下载源与代理地址、失败说明。 */
+interface SelfCheckReport {
+  /** `proxyOk` / `directOnly` / `bothFail`。 */
+  state: "proxyOk" | "directOnly" | "bothFail";
+  /** `proxy` / `direct`：结论依据的那条路。 */
+  via: "proxy" | "direct";
+  /** 实际请求的下载源；null 表示透传 npm 全局配置。 */
+  registry: string | null;
+  /** 实际用上的代理地址；null 表示这条请求没走代理。 */
+  proxy: string | null;
+  /** 失败说明（一句中文 + 一行原文）；成功时为 null。 */
+  failure: string | null;
+}
+
 /** 与 Rust 侧 `plugin::BridgeOutcome` 对应。 */
 interface BridgeOutcome {
   ok: boolean;
@@ -935,6 +950,14 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       </div>
       <p class="hint" id="proxy-hint"></p>
     </div>
+    <div class="fields network-fields">
+      <span class="field-label">自检</span>
+      <div class="actions">
+        <button type="button" id="btn-self-check">测试连接</button>
+      </div>
+      <p class="hint" id="self-check-status"></p>
+      <p class="hint hidden" id="self-check-detail"></p>
+    </div>
   `;
   const networkSection = cardSection(foldHead("network", "网络", networkSummary), networkBody);
   // 「集成」卡：命令行集成（PATH 与 dsh 垫片）+ npx 缓存盘面。卡片内容全部由后端算好
@@ -1537,6 +1560,11 @@ async function main(): Promise<void> {
       // 地址输入框只在手动模式才露出来；另外两种模式那个值不参与计算，露出来只会让人以为要填。
       proxyManualRow.classList.toggle("hidden", prefs.proxyMode !== "manual");
       renderProxyHint();
+      // 源或代理变了，上一次自检的结论就不适用了：清掉，别让人拿旧结论判断新配置。
+      // 只有这条路径会清它：每秒的状态刷新走的不是 renderNetworkUI，
+      // 所以用户刚看到的结果不会被自动刷新抹掉。
+      selfCheckReport = null;
+      renderSelfCheck();
     }
 
     /** 提示行：手动模式填错了就把那句校验文案当错误显示，其它情形都是普通说明。 */
@@ -1621,6 +1649,87 @@ async function main(): Promise<void> {
         proxyAddressInput.blur();
       }
     });
+
+    // 自检（「测试连接」）：结果只属于「点下的这一次」。存在这里的变量里，
+    // 不放进 prefs、也不跟着每秒的状态刷新重算——自动刷新把用户刚看到的结果
+    // 抹掉是本卡最容易被投诉的毛病。只有改了下载源才清空（那时的结论已经不适用了）。
+    const btnSelfCheck = $<HTMLButtonElement>("btn-self-check");
+    const selfCheckStatus = $<HTMLParagraphElement>("self-check-status");
+    const selfCheckDetail = $<HTMLParagraphElement>("self-check-detail");
+    let selfCheckReport: SelfCheckReport | null = null;
+    /** 正在进行中的请求：非 null 时按钮禁用，连点也不会发第二次。 */
+    let selfCheckRunning = false;
+
+    /** 结果行的文案：三态各一句，通了要说清是走代理通的还是直连通的。 */
+    function selfCheckLine(report: SelfCheckReport): string {
+      const source = report.registry ?? "npm 全局配置里的源";
+      switch (report.state) {
+        case "proxyOk":
+          return report.via === "proxy" && report.proxy
+            ? `通了：经代理 ${report.proxy} 访问 ${source} 成功，下载会走这条路。`
+            : `通了：直连 ${source} 成功（这次没走代理），下载会走这条路。`;
+        case "directOnly":
+          return `只有直连能通：去掉代理后访问 ${source} 成功了。真实下载仍然会带代理，所以很可能下不动——建议检查代理设置，或者选「不走代理」。`;
+        default:
+          return `两种都不通：带代理和不带代理都没拿到 ${source} 的数据。先看下面的原因，再检查代理设置或换一个下载源。`;
+      }
+    }
+
+    function renderSelfCheck(): void {
+      const report = selfCheckReport;
+      btnSelfCheck.disabled = selfCheckRunning;
+      btnSelfCheck.textContent = selfCheckRunning ? "测试中…" : "测试连接";
+      if (selfCheckRunning) {
+        selfCheckStatus.textContent = "正在测试…（最多要等十几秒）";
+        selfCheckStatus.classList.remove("error");
+        selfCheckDetail.classList.add("hidden");
+        selfCheckDetail.textContent = "";
+        return;
+      }
+      if (report === null) {
+        selfCheckStatus.textContent = "用当前下载源与代理设置跑一次真实请求，确认到底通不通。";
+        selfCheckStatus.classList.remove("error");
+        selfCheckDetail.classList.add("hidden");
+        selfCheckDetail.textContent = "";
+        return;
+      }
+      selfCheckStatus.textContent = selfCheckLine(report);
+      selfCheckStatus.classList.toggle("error", report.state !== "proxyOk");
+      // 失败原因单独一行：它是「一句中文 + 一行原文」，跟上面那句混在一起太长。
+      const failure = report.failure;
+      selfCheckDetail.classList.toggle("hidden", failure === null);
+      selfCheckDetail.textContent = failure ?? "";
+    }
+
+    async function runSelfCheck(): Promise<void> {
+      // 已有一个在跑：什么也不做（按钮本来就禁用着，这里再拒一次防竞态）。
+      if (selfCheckRunning) {
+        return;
+      }
+      selfCheckRunning = true;
+      renderSelfCheck();
+      try {
+        selfCheckReport = await invoke<SelfCheckReport>("self_check_network", {
+          runtime,
+          source: prefs.downloadSource,
+        });
+      } catch (err) {
+        // 命令本身没跑起来（IPC 出错）：当作「都不通」上报，同样带一句原因。
+        selfCheckReport = {
+          state: "bothFail",
+          via: "direct",
+          registry: null,
+          proxy: null,
+          failure: `自检没能执行：${err}`,
+        };
+      } finally {
+        selfCheckRunning = false;
+        renderSelfCheck();
+      }
+    }
+
+    btnSelfCheck.addEventListener("click", () => void runSelfCheck());
+
     renderNetworkUI();
     // 重建界面时旧实例要 dispose（它们各自挂着 document 监听）。
     livePickers = [
