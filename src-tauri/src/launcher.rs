@@ -337,6 +337,7 @@ impl SessionHandle {
 /// 由 lib.rs 在启动前准备好；没有时传空数组。
 pub fn spawn(
     config: &LaunchConfig,
+    profile: &str,
     launcher_args: &[String],
     bridge_endpoint: Endpoint,
 ) -> Result<SessionHandle, String> {
@@ -345,6 +346,7 @@ pub fn spawn(
     let nonce = generate_nonce()?;
     let plan = build_launch_plan(
         config,
+        profile,
         &[(NONCE_ENV.to_string(), nonce.clone())],
         launcher_args,
     )?;

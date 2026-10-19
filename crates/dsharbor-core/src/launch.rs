@@ -11,15 +11,15 @@ use serde::{Deserialize, Serialize};
 pub const NPX_PREFIX: &str = "npx --yes";
 /// DSH 包名。渠道 / 版本以 npm 规格的形式接在后面（`@deepseek-ai/dsh@next`）。
 pub const NPX_PACKAGE: &str = "@deepseek-ai/dsh";
-/// DSH 的 web 子命令（插件管理会把换掉成 `plugin`）。
+/// 默认环境名。
+///
+/// DSH 的命令行把「启动哪个环境」做成了位置参数：`dsh web` 等价于
+/// `dsh --profile web`。所以这个位置放的是**环境名**，不是固定的子命令——
+/// 用户切到别的环境时，壳把它换成那个环境名。
 pub const WEB_SUBCOMMAND: &str = "web";
-/// 系统全局命令（用户已 `npm install -g` 的场景）。
-pub const SYSTEM_COMMAND: &str = "dsh web";
 /// 已下线的「通过 WSL 启动」模式的默认内部命令。
 /// 只在迁移旧配置时用来判断该还原成「官方 npx（latest）」还是「自定义命令」。
 pub const LEGACY_WSL_INNER: &str = "npx --yes @deepseek-ai/dsh web";
-/// 二进制模式默认附加的子命令（DSH 的 web 子命令）。
-pub const BINARY_BASE_ARGS: [&str; 1] = [WEB_SUBCOMMAND];
 /// 壳为每次 DSH 启动追加的应用参数：禁用 DSH 自带的「启动后打开系统浏览器」。
 /// 需求：DSH 界面只出现在壳自己的窗口里（点「打开 DSH 界面」），不调用用户安装的
 /// 浏览器（浏览器占内存大）。DSH 默认 openBrowser=true 会自己拉一次默认浏览器，
@@ -27,8 +27,8 @@ pub const BINARY_BASE_ARGS: [&str; 1] = [WEB_SUBCOMMAND];
 pub const DEFAULT_APP_ARGS: [&str; 1] = ["--no-open"];
 /// 系统命令前缀（不含子命令）。
 pub const SYSTEM_DSH: &str = "dsh";
-/// v1 固定使用的 DSH profile 名（用户已有的 web 环境）。
-pub const PROFILE_NAME: &str = "web";
+/// 默认环境名（DSH 自带的 `web` 环境）。首次启动与配置缺项时用它。
+pub const PROFILE_NAME: &str = WEB_SUBCOMMAND;
 // 关于 WSL 的 PATH 污染（清理不放在本库、也不放进 inner 命令）：
 //
 // 通过 `wsl.exe` 从 Windows 侧启动发行版时，Windows 的 PATH 会以
@@ -238,14 +238,16 @@ pub fn validate_env(env: &[(String, String)]) -> Result<(), String> {
 
 /// 构造带环境变量的完整启动计划（壳用它把桥接 nonce 注入 DSH 进程、
 /// 并在需要时追加端口覆盖等 launcher 层参数）。
+/// `profile` 是当前选中的环境名，经校验后作为位置参数传给 DSH。
 pub fn build_launch_plan(
     config: &LaunchConfig,
+    profile: &str,
     env: &[(String, String)],
     launcher_args: &[String],
 ) -> Result<LaunchPlan, String> {
     validate_env(env)?;
     Ok(LaunchPlan {
-        spawn: build_spawn_plan_with_launcher_args(config, launcher_args)?,
+        spawn: build_spawn_plan_with_launcher_args(config, profile, launcher_args)?,
         env: env.to_vec(),
     })
 }
@@ -430,8 +432,8 @@ fn validate_launcher_arg(arg: &str) -> Result<(), String> {
 }
 
 /// 构造启动计划。调用前会先做完整校验。
-pub fn build_spawn_plan(config: &LaunchConfig) -> Result<SpawnPlan, String> {
-    build_spawn_plan_with_launcher_args(config, &[])
+pub fn build_spawn_plan(config: &LaunchConfig, profile: &str) -> Result<SpawnPlan, String> {
+    build_spawn_plan_with_launcher_args(config, profile, &[])
 }
 
 /// 官方 npx 命令的包规格：跟 dist-tag 的渠道不加后缀，rc/alpha 跟具体版本号。
@@ -448,12 +450,9 @@ pub fn npx_spec(channel: Channel, version: Option<&str>) -> String {
     format!("{NPX_PACKAGE}{suffix}")
 }
 
-/// 完整 npx 启动命令（含 `web` 子命令）。
-pub fn npx_web_command(channel: Channel, version: Option<&str>) -> String {
-    format!(
-        "{NPX_PREFIX} {} {WEB_SUBCOMMAND}",
-        npx_spec(channel, version)
-    )
+/// 完整 npx 启动命令（含环境名位置参数）。
+pub fn npx_web_command(channel: Channel, version: Option<&str>, profile: &str) -> String {
+    format!("{NPX_PREFIX} {} {profile}", npx_spec(channel, version))
 }
 
 /// 目标环境内要执行的东西：一整行 shell 命令行，或一个直接拉起的程序。
@@ -515,11 +514,17 @@ fn wrap_plan(runtime: &Runtime, base: BasePlan) -> SpawnPlan {
 ///
 /// 顺序很关键：DSH 启动器只解析命令行**头部**自己的旗标（`--patch` 等），
 /// 遇到第一个应用参数就停——所以内部参数必须排在用户附加参数（app 参数）前面。
+///
+/// `profile` 是当前选中的环境名，插在包规格后面作为位置参数（`dsh web` 里的那个位置）。
+/// 名字先经 `profiles::validate_name` 校验：非法时直接报错，**不静默回退成默认环境**
+/// （静默回退会让用户以为切了、其实没切）。
 pub fn build_spawn_plan_with_launcher_args(
     config: &LaunchConfig,
+    profile: &str,
     launcher_args: &[String],
 ) -> Result<SpawnPlan, String> {
     validate(config)?;
+    crate::profiles::validate_name(profile)?;
     for arg in launcher_args {
         validate_launcher_arg(arg)?;
     }
@@ -537,23 +542,25 @@ pub fn build_spawn_plan_with_launcher_args(
     let extra = &extra;
     let base = match &config.mode {
         LaunchMode::Npx { channel, version } => {
-            let mut tokens = split_line(&npx_web_command(*channel, version.as_deref()));
+            let mut tokens = split_line(&npx_web_command(*channel, version.as_deref(), profile));
             tokens.extend(extra.iter().cloned());
             BasePlan::line(&tokens)
         }
         LaunchMode::System => {
-            let mut tokens = split_line(SYSTEM_COMMAND);
+            let mut tokens = vec![SYSTEM_DSH.to_string(), profile.to_string()];
             tokens.extend(extra.iter().cloned());
             BasePlan::line(&tokens)
         }
         LaunchMode::Binary { path } => {
-            let mut args: Vec<String> = BINARY_BASE_ARGS.iter().map(|s| s.to_string()).collect();
+            let mut args: Vec<String> = vec![profile.to_string()];
             args.extend(extra.iter().cloned());
             BasePlan::Program {
                 program: path.clone(),
                 args,
             }
         }
+        // 自定义命令原样透传：用户可能已经写了 `dsh --profile lab web`
+        // 或别的子命令，壳再插一个环境名会改坏语义。
         LaunchMode::Custom { command } => {
             let mut tokens = split_line(command);
             tokens.extend(extra.iter().cloned());
@@ -600,12 +607,19 @@ pub enum PluginOp {
     Uninstall { name: String },
 }
 
-/// 构造插件管理命令：复用当前启动方式的前缀，但把 `web` 子命令换成
-/// `plugin --profile web <add|remove> ...`（官方插件机制，会自动登记/摘除
+/// 构造插件管理命令：复用当前启动方式的前缀，但把环境名位置参数换成
+/// `plugin --profile <环境名> <add|remove> ...`（官方插件机制，会自动登记/摘除
 /// `dsh.profile.bundles`，不手工编辑用户配置）。
-pub fn build_plugin_plan(config: &LaunchConfig, op: &PluginOp) -> Result<SpawnPlan, String> {
+///
+/// 插件操作永远作用于当前选中的环境，不再固定某一个。
+pub fn build_plugin_plan(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &PluginOp,
+) -> Result<SpawnPlan, String> {
     validate(config)?;
-    let mut args: Vec<String> = vec!["plugin".into(), "--profile".into(), PROFILE_NAME.into()];
+    crate::profiles::validate_name(profile)?;
+    let mut args: Vec<String> = vec!["plugin".into(), "--profile".into(), profile.to_string()];
     match op {
         PluginOp::Install { package } => {
             validate_package_ref(package)?;
@@ -641,21 +655,21 @@ pub fn build_plugin_plan(config: &LaunchConfig, op: &PluginOp) -> Result<SpawnPl
             },
         ),
         LaunchMode::Custom { command } => {
-            let mut tokens = plugin_prefix(command);
+            let mut tokens = plugin_prefix(command, profile);
             tokens.extend(args);
             wrap_plan(&config.runtime, BasePlan::line(&tokens))
         }
     })
 }
 
-/// 去掉尾部的 `web` 子命令，得到插件管理前缀。
+/// 去掉末尾的环境名位置参数，得到插件管理前缀。
 ///
-/// 自定义命令与 WSL 内部命令都遵循 DSH 的 `<启动器> web [参数]` 写法
+/// 自定义命令与 WSL 内部命令都遵循 DSH 的 `<启动器> <环境名> [参数]` 写法
 /// （界面上的默认值与示例都是），所以换个子命令就能复用同一个启动器：
 /// 版本标签（`@next`）、包管理器、发行版内的 PATH 全部保持不变。
-fn plugin_prefix(inner: &str) -> Vec<String> {
+fn plugin_prefix(inner: &str, profile: &str) -> Vec<String> {
     let mut tokens = split_line(inner);
-    if tokens.last().map(|token| token == "web").unwrap_or(false) {
+    if tokens.last().map(|token| token == profile).unwrap_or(false) {
         tokens.pop();
     }
     tokens
@@ -778,7 +792,7 @@ mod tests {
 
     #[test]
     fn npx_latest_plan() {
-        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[])).unwrap();
+        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), PROFILE_NAME).unwrap();
         assert_eq!(
             plan,
             SpawnPlan::ShellLine {
@@ -790,7 +804,7 @@ mod tests {
 
     #[test]
     fn npx_next_uses_dist_tag() {
-        let plan = build_spawn_plan(&cfg(npx(Channel::Next, None), &[])).unwrap();
+        let plan = build_spawn_plan(&cfg(npx(Channel::Next, None), &[]), PROFILE_NAME).unwrap();
         assert_eq!(
             plan,
             SpawnPlan::ShellLine {
@@ -802,7 +816,11 @@ mod tests {
 
     #[test]
     fn npx_rc_pins_exact_version() {
-        let plan = build_spawn_plan(&cfg(npx(Channel::Rc, Some("0.2.1-rc.2")), &[])).unwrap();
+        let plan = build_spawn_plan(
+            &cfg(npx(Channel::Rc, Some("0.2.1-rc.2")), &[]),
+            PROFILE_NAME,
+        )
+        .unwrap();
         assert_eq!(
             plan,
             SpawnPlan::ShellLine {
@@ -826,12 +844,12 @@ mod tests {
     fn npx_version_rejects_injection() {
         for bad in ["1.0; rm -rf /", "1.0 && x", "a b", "0.1.0\nwhoami"] {
             assert!(
-                build_spawn_plan(&cfg(npx(Channel::Rc, Some(bad)), &[])).is_err(),
+                build_spawn_plan(&cfg(npx(Channel::Rc, Some(bad)), &[]), PROFILE_NAME).is_err(),
                 "应被拒绝: {bad:?}"
             );
         }
         // 空版本号也不行（否则拼出 `@` 结尾的无意义规格）。
-        assert!(build_spawn_plan(&cfg(npx(Channel::Rc, Some("")), &[])).is_err());
+        assert!(build_spawn_plan(&cfg(npx(Channel::Rc, Some("")), &[]), PROFILE_NAME).is_err());
     }
 
     #[test]
@@ -843,17 +861,17 @@ mod tests {
             "@deepseek-ai/dsh@0.2.1-rc.2"
         );
         assert_eq!(
-            npx_web_command(Channel::Latest, None),
+            npx_web_command(Channel::Latest, None, PROFILE_NAME),
             "npx --yes @deepseek-ai/dsh web"
         );
     }
 
     #[test]
     fn npx_with_extra_args() {
-        let plan = build_spawn_plan(&cfg(
-            npx(Channel::Latest, None),
-            &["--port", "3081", "--no-open"],
-        ))
+        let plan = build_spawn_plan(
+            &cfg(npx(Channel::Latest, None), &["--port", "3081", "--no-open"]),
+            PROFILE_NAME,
+        )
         .unwrap();
         assert_eq!(
             plan,
@@ -866,7 +884,7 @@ mod tests {
 
     #[test]
     fn system_default_plan() {
-        let plan = build_spawn_plan(&cfg(LaunchMode::System, &[])).unwrap();
+        let plan = build_spawn_plan(&cfg(LaunchMode::System, &[]), PROFILE_NAME).unwrap();
         assert_eq!(
             plan,
             SpawnPlan::ShellLine {
@@ -878,12 +896,15 @@ mod tests {
 
     #[test]
     fn binary_exe_is_direct() {
-        let plan = build_spawn_plan(&cfg(
-            LaunchMode::Binary {
-                path: "D:\\tools\\dsh.exe".into(),
-            },
-            &["--port", "3082"],
-        ))
+        let plan = build_spawn_plan(
+            &cfg(
+                LaunchMode::Binary {
+                    path: "D:\\tools\\dsh.exe".into(),
+                },
+                &["--port", "3082"],
+            ),
+            PROFILE_NAME,
+        )
         .unwrap();
         assert_eq!(
             plan,
@@ -901,12 +922,15 @@ mod tests {
 
     #[test]
     fn binary_cmd_uses_script_plan() {
-        let plan = build_spawn_plan(&cfg(
-            LaunchMode::Binary {
-                path: "C:\\Program Files\\dsh.cmd".into(),
-            },
-            &[],
-        ))
+        let plan = build_spawn_plan(
+            &cfg(
+                LaunchMode::Binary {
+                    path: "C:\\Program Files\\dsh.cmd".into(),
+                },
+                &[],
+            ),
+            PROFILE_NAME,
+        )
         .unwrap();
         // 程序与参数分开传递（不拼整行），引号交给外壳层的参数转义规则各管各的。
         assert_eq!(
@@ -921,12 +945,15 @@ mod tests {
     #[test]
     fn custom_command_plan() {
         // 用户示例：固定版本标签的启动命令，壳在末尾补 --no-open。
-        let plan = build_spawn_plan(&cfg(
-            LaunchMode::Custom {
-                command: "npx @deepseek-ai/dsh@next web".into(),
-            },
-            &[],
-        ))
+        let plan = build_spawn_plan(
+            &cfg(
+                LaunchMode::Custom {
+                    command: "npx @deepseek-ai/dsh@next web".into(),
+                },
+                &[],
+            ),
+            PROFILE_NAME,
+        )
         .unwrap();
         assert_eq!(
             plan,
@@ -939,12 +966,15 @@ mod tests {
 
     #[test]
     fn custom_command_keeps_extra_args_and_rejects_injection() {
-        let plan = build_spawn_plan(&cfg(
-            LaunchMode::Custom {
-                command: "pnpm dlx @deepseek-ai/dsh web".into(),
-            },
-            &["--port", "3081"],
-        ))
+        let plan = build_spawn_plan(
+            &cfg(
+                LaunchMode::Custom {
+                    command: "pnpm dlx @deepseek-ai/dsh web".into(),
+                },
+                &["--port", "3081"],
+            ),
+            PROFILE_NAME,
+        )
         .unwrap();
         assert_eq!(
             plan,
@@ -956,22 +986,28 @@ mod tests {
         // 自定义命令同样要过白名单：引号、管道、重定向一律拒绝。
         for bad in ["npx dsh web; rm -rf /", "npx dsh \"web\"", "npx dsh | more"] {
             assert!(
-                build_spawn_plan(&cfg(
-                    LaunchMode::Custom {
-                        command: bad.into()
-                    },
-                    &[]
-                ))
+                build_spawn_plan(
+                    &cfg(
+                        LaunchMode::Custom {
+                            command: bad.into()
+                        },
+                        &[]
+                    ),
+                    PROFILE_NAME
+                )
                 .is_err(),
                 "应被拒绝: {bad:?}"
             );
         }
-        assert!(build_spawn_plan(&cfg(
-            LaunchMode::Custom {
-                command: "   ".into()
-            },
-            &[]
-        ))
+        assert!(build_spawn_plan(
+            &cfg(
+                LaunchMode::Custom {
+                    command: "   ".into()
+                },
+                &[]
+            ),
+            PROFILE_NAME
+        )
         .is_err());
     }
 
@@ -985,6 +1021,7 @@ mod tests {
                 },
                 &[],
             ),
+            PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:C:/tmp/x.tgz".into(),
             },
@@ -1003,7 +1040,7 @@ mod tests {
     fn wsl_runtime_wraps_npx_line() {
         let mut config = cfg(npx(Channel::Latest, None), &[]);
         config.runtime = wsl("Ubuntu-24.04");
-        let plan = build_spawn_plan(&config).unwrap();
+        let plan = build_spawn_plan(&config, PROFILE_NAME).unwrap();
         assert_eq!(
             plan,
             SpawnPlan::Wsl {
@@ -1022,7 +1059,7 @@ mod tests {
             &["--port", "3083"],
         );
         config.runtime = wsl("Debian");
-        let plan = build_spawn_plan(&config).unwrap();
+        let plan = build_spawn_plan(&config, PROFILE_NAME).unwrap();
         assert_eq!(
             plan,
             SpawnPlan::Wsl {
@@ -1037,7 +1074,7 @@ mod tests {
         // 渠道与运行环境正交：发行版里也能跑 next / 固定版本。
         let mut config = cfg(npx(Channel::Rc, Some("0.2.1-rc.2")), &[]);
         config.runtime = wsl("Ubuntu");
-        match build_spawn_plan(&config).unwrap() {
+        match build_spawn_plan(&config, PROFILE_NAME).unwrap() {
             SpawnPlan::Wsl { inner, .. } => {
                 assert_eq!(inner, "npx --yes @deepseek-ai/dsh@0.2.1-rc.2 web --no-open")
             }
@@ -1058,7 +1095,7 @@ mod tests {
         );
         config.runtime = wsl("Ubuntu");
         assert_eq!(
-            build_spawn_plan(&config).unwrap(),
+            build_spawn_plan(&config, PROFILE_NAME).unwrap(),
             SpawnPlan::Direct {
                 program: "D:\\tools\\dsh.exe".into(),
                 args: vec!["web".into(), "--no-open".into()]
@@ -1074,7 +1111,7 @@ mod tests {
         let mut config = cfg(LaunchMode::System, &[]);
         config.runtime = wsl("Ubuntu");
         assert_eq!(
-            build_spawn_plan(&config).unwrap(),
+            build_spawn_plan(&config, PROFILE_NAME).unwrap(),
             SpawnPlan::ShellLine {
                 line: "dsh web --no-open".into(),
                 wrap: ShellWrap::Cmd
@@ -1128,7 +1165,7 @@ mod tests {
             "a\\b",
             "a\tb",
         ] {
-            let err = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[bad]));
+            let err = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[bad]), PROFILE_NAME);
             assert!(err.is_err(), "注入样例应被拒绝: {bad:?}");
         }
     }
@@ -1137,7 +1174,7 @@ mod tests {
     fn rejects_malformed_args() {
         for bad in ["", " leading", "trailing ", "中文参数"] {
             assert!(
-                build_spawn_plan(&cfg(npx(Channel::Latest, None), &[bad])).is_err(),
+                build_spawn_plan(&cfg(npx(Channel::Latest, None), &[bad]), PROFILE_NAME).is_err(),
                 "应被拒绝: {bad:?}"
             );
         }
@@ -1145,7 +1182,8 @@ mod tests {
 
     #[test]
     fn arg_with_inner_space_is_quoted() {
-        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &["a b"])).unwrap();
+        let plan =
+            build_spawn_plan(&cfg(npx(Channel::Latest, None), &["a b"]), PROFILE_NAME).unwrap();
         match plan {
             SpawnPlan::ShellLine { line, .. } => {
                 assert_eq!(line, "npx --yes @deepseek-ai/dsh web \"a b\" --no-open")
@@ -1157,13 +1195,17 @@ mod tests {
     #[test]
     fn no_open_is_appended_once() {
         // 默认追加 --no-open（不弹系统浏览器）。
-        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[])).unwrap();
+        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), PROFILE_NAME).unwrap();
         match plan {
             SpawnPlan::ShellLine { line, .. } => assert!(line.ends_with(" --no-open"), "{line}"),
             other => panic!("unexpected plan: {other:?}"),
         }
         // 用户自己写了 --no-open 时不重复。
-        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &["--no-open"])).unwrap();
+        let plan = build_spawn_plan(
+            &cfg(npx(Channel::Latest, None), &["--no-open"]),
+            PROFILE_NAME,
+        )
+        .unwrap();
         match plan {
             SpawnPlan::ShellLine { line, .. } => {
                 assert_eq!(line.matches("--no-open").count(), 1, "{line}")
@@ -1174,33 +1216,45 @@ mod tests {
 
     #[test]
     fn rejects_bad_paths() {
-        assert!(build_spawn_plan(&cfg(
-            LaunchMode::Binary {
-                path: "dsh.exe".into()
-            },
-            &[]
-        ))
+        assert!(build_spawn_plan(
+            &cfg(
+                LaunchMode::Binary {
+                    path: "dsh.exe".into()
+                },
+                &[]
+            ),
+            PROFILE_NAME
+        )
         .is_err());
-        assert!(build_spawn_plan(&cfg(
-            LaunchMode::Binary {
-                path: "D:\\tools\\dsh.sh".into()
-            },
-            &[]
-        ))
+        assert!(build_spawn_plan(
+            &cfg(
+                LaunchMode::Binary {
+                    path: "D:\\tools\\dsh.sh".into()
+                },
+                &[]
+            ),
+            PROFILE_NAME
+        )
         .is_err());
-        assert!(build_spawn_plan(&cfg(
-            LaunchMode::Binary {
-                path: "D:\\tools\\d\"sh.exe".into()
-            },
-            &[]
-        ))
+        assert!(build_spawn_plan(
+            &cfg(
+                LaunchMode::Binary {
+                    path: "D:\\tools\\d\"sh.exe".into()
+                },
+                &[]
+            ),
+            PROFILE_NAME
+        )
         .is_err());
-        assert!(build_spawn_plan(&cfg(
-            LaunchMode::Binary {
-                path: "D:\\100%\\dsh.exe".into()
-            },
-            &[]
-        ))
+        assert!(build_spawn_plan(
+            &cfg(
+                LaunchMode::Binary {
+                    path: "D:\\100%\\dsh.exe".into()
+                },
+                &[]
+            ),
+            PROFILE_NAME
+        )
         .is_err());
     }
 
@@ -1228,16 +1282,25 @@ mod tests {
 
     #[test]
     fn rejects_bad_distro() {
-        assert!(build_spawn_plan(&wsl_cfg(npx(Channel::Latest, None), &[], "a b")).is_err());
-        assert!(build_spawn_plan(&wsl_cfg(npx(Channel::Latest, None), &[], "")).is_err());
+        assert!(build_spawn_plan(
+            &wsl_cfg(npx(Channel::Latest, None), &[], "a b"),
+            PROFILE_NAME
+        )
+        .is_err());
+        assert!(
+            build_spawn_plan(&wsl_cfg(npx(Channel::Latest, None), &[], ""), PROFILE_NAME).is_err()
+        );
         // 自定义命令为空同样被拦（与运行环境无关）。
-        assert!(build_spawn_plan(&wsl_cfg(
-            LaunchMode::Custom {
-                command: "  ".into()
-            },
-            &[],
-            "ok"
-        ))
+        assert!(build_spawn_plan(
+            &wsl_cfg(
+                LaunchMode::Custom {
+                    command: "  ".into()
+                },
+                &[],
+                "ok"
+            ),
+            PROFILE_NAME
+        )
         .is_err());
     }
 
@@ -1256,6 +1319,7 @@ mod tests {
     fn launch_plan_carries_env() {
         let plan = build_launch_plan(
             &cfg(npx(Channel::Latest, None), &[]),
+            PROFILE_NAME,
             &[("DSHARBOR_BRIDGE_NONCE".into(), "ab12".into())],
             &[],
         )
@@ -1274,14 +1338,23 @@ mod tests {
     #[test]
     fn rejects_bad_env() {
         let config = cfg(npx(Channel::Latest, None), &[]);
-        assert!(build_launch_plan(&config, &[("bad-key".into(), "v".into())], &[]).is_err());
-        assert!(build_launch_plan(&config, &[("K".into(), "a\nb".into())], &[]).is_err());
+        assert!(build_launch_plan(
+            &config,
+            PROFILE_NAME,
+            &[("bad-key".into(), "v".into())],
+            &[]
+        )
+        .is_err());
+        assert!(
+            build_launch_plan(&config, PROFILE_NAME, &[("K".into(), "a\nb".into())], &[]).is_err()
+        );
     }
 
     #[test]
     fn launcher_args_precede_user_args() {
         let plan = build_spawn_plan_with_launcher_args(
             &cfg(npx(Channel::Latest, None), &["--no-open"]),
+            PROFILE_NAME,
             &["--patch".into(), "C:\\x\\port-overlay.yml".into()],
         )
         .unwrap();
@@ -1299,6 +1372,7 @@ mod tests {
     fn launcher_args_wsl_placement() {
         let plan = build_spawn_plan_with_launcher_args(
             &wsl_cfg(npx(Channel::Latest, None), &["--no-open"], "Ubuntu-24.04"),
+            PROFILE_NAME,
             &["--patch".into(), "/mnt/c/x/port-overlay.yml".into()],
         )
         .unwrap();
@@ -1318,6 +1392,7 @@ mod tests {
             assert!(
                 build_spawn_plan_with_launcher_args(
                     &cfg(npx(Channel::Latest, None), &[]),
+                    PROFILE_NAME,
                     &[bad.into()]
                 )
                 .is_err(),
@@ -1327,6 +1402,7 @@ mod tests {
         // 路径里的反斜杠与空格是允许的（Windows 路径必须能过）。
         assert!(build_spawn_plan_with_launcher_args(
             &cfg(npx(Channel::Latest, None), &[]),
+            PROFILE_NAME,
             &["--patch".into(), "C:\\Program Files\\x.yml".into()]
         )
         .is_ok());
@@ -1398,7 +1474,7 @@ mod tests {
         assert_eq!(legacy.runtime, wsl("Ubuntu"));
         // 迁移结果必须是可直接启动的：拼出来的就是发行版里跑 npx latest。
         assert_eq!(
-            build_spawn_plan(&legacy).unwrap(),
+            build_spawn_plan(&legacy, PROFILE_NAME).unwrap(),
             SpawnPlan::Wsl {
                 distro: "Ubuntu".into(),
                 inner: "npx --yes @deepseek-ai/dsh web --no-open".into()
@@ -1422,6 +1498,7 @@ mod tests {
     fn plugin_install_npx_plan() {
         let plan = build_plugin_plan(
             &cfg(npx(Channel::Latest, None), &[]),
+            PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:/tmp/dsharbor-bridge-0.1.0.tgz".into(),
             },
@@ -1440,6 +1517,7 @@ mod tests {
     fn plugin_uninstall_system_plan() {
         let plan = build_plugin_plan(
             &cfg(LaunchMode::System, &[]),
+            PROFILE_NAME,
             &PluginOp::Uninstall {
                 name: "dsharbor-bridge".into(),
             },
@@ -1463,6 +1541,7 @@ mod tests {
                 },
                 &[],
             ),
+            PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:C:/x/dsharbor-bridge-0.1.0.tgz".into(),
             },
@@ -1487,6 +1566,7 @@ mod tests {
     fn plugin_install_wsl_drops_web_subcommand() {
         let plan = build_plugin_plan(
             &wsl_cfg(npx(Channel::Latest, None), &[], "Ubuntu-24.04"),
+            PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:/mnt/c/Users/x/dsharbor-bridge-0.1.0.tgz".into(),
             },
@@ -1518,6 +1598,7 @@ mod tests {
         ] {
             let plan = build_plugin_plan(
                 &cfg(npx(channel, version), &[]),
+                PROFILE_NAME,
                 &PluginOp::Uninstall {
                     name: "dsharbor-bridge".into(),
                 },
@@ -1543,6 +1624,7 @@ mod tests {
                 &[],
                 "Ubuntu-24.04",
             ),
+            PROFILE_NAME,
             &PluginOp::Uninstall {
                 name: "dsharbor-bridge".into(),
             },
@@ -1563,6 +1645,7 @@ mod tests {
             assert!(
                 build_plugin_plan(
                     &cfg(npx(Channel::Latest, None), &[]),
+                    PROFILE_NAME,
                     &PluginOp::Install {
                         package: bad.into()
                     }
@@ -1579,6 +1662,7 @@ mod tests {
         // pnpm 会把 `file:D:\Program` 当包名去 registry 查 → 404，安装必失败。
         let err = build_plugin_plan(
             &cfg(npx(Channel::Latest, None), &[]),
+            PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:D:\\Program Files\\DSHarbor\\resources\\dsharbor-bridge-0.1.0.tgz"
                     .into(),
@@ -1647,5 +1731,155 @@ mod tests {
         assert_eq!(parse_version_output("启动失败：找不到命令 dsh"), None);
         // 超长行不当版本号（防御乱码/日志刷屏）。
         assert_eq!(parse_version_output(&"1".repeat(65)), None);
+    }
+
+    #[test]
+    fn npx_command_follows_the_selected_environment() {
+        // `web` 是位置参数形式的环境选择器：换个环境名就换一整份环境。
+        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), "lab").unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "npx --yes @deepseek-ai/dsh lab --no-open".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+        assert_eq!(
+            npx_web_command(Channel::Next, None, "lab"),
+            "npx --yes @deepseek-ai/dsh@next lab"
+        );
+    }
+
+    #[test]
+    fn system_and_binary_commands_follow_the_selected_environment() {
+        let plan = build_spawn_plan(&cfg(LaunchMode::System, &[]), "lab").unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "dsh lab --no-open".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+        let plan = build_spawn_plan(
+            &cfg(
+                LaunchMode::Binary {
+                    path: "D:\\tools\\dsh.exe".into(),
+                },
+                &[],
+            ),
+            "lab",
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::Direct {
+                program: "D:\\tools\\dsh.exe".into(),
+                args: vec!["lab".into(), "--no-open".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn custom_command_is_passed_through_untouched() {
+        // 用户可能已经自己写了 `--profile` 或别的子命令，壳不能再往里插环境名。
+        let plan = build_spawn_plan(
+            &cfg(
+                LaunchMode::Custom {
+                    command: "npx @deepseek-ai/dsh@next web".into(),
+                },
+                &[],
+            ),
+            "lab",
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "npx @deepseek-ai/dsh@next web --no-open".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_environment_name_is_rejected_instead_of_falling_back() {
+        // 静默回退成默认环境会让用户以为切了、其实没切。
+        for bad in ["", "a b", "-x", "../etc"] {
+            assert!(
+                build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), bad).is_err(),
+                "应被拒绝: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_plan_targets_the_selected_environment() {
+        let plan = build_plugin_plan(
+            &cfg(npx(Channel::Latest, None), &[]),
+            "lab",
+            &PluginOp::Install {
+                package: "file:/tmp/x.tgz".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "npx --yes @deepseek-ai/dsh plugin --profile lab add file:/tmp/x.tgz".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+        let plan = build_plugin_plan(
+            &cfg(LaunchMode::System, &[]),
+            "lab",
+            &PluginOp::Uninstall {
+                name: "dsharbor-bridge".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "dsh plugin --profile lab remove dsharbor-bridge".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+    }
+
+    #[test]
+    fn custom_plugin_prefix_drops_the_current_environment_name() {
+        // 自定义命令末尾写的就是当前环境名时才剥掉，返回插件子命令。
+        let plan = build_plugin_plan(
+            &cfg(
+                LaunchMode::Custom {
+                    command: "pnpm dlx @deepseek-ai/dsh lab".into(),
+                },
+                &[],
+            ),
+            "lab",
+            &PluginOp::Install {
+                package: "file:/tmp/x.tgz".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "pnpm dlx @deepseek-ai/dsh plugin --profile lab add file:/tmp/x.tgz".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+    }
+
+    #[test]
+    fn plugin_plan_rejects_an_invalid_environment_name() {
+        assert!(build_plugin_plan(
+            &cfg(npx(Channel::Latest, None), &[]),
+            "a;b",
+            &PluginOp::Uninstall {
+                name: "dsharbor-bridge".into(),
+            },
+        )
+        .is_err());
     }
 }

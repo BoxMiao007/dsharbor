@@ -18,9 +18,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dsharbor_core::launch::{
-    build_plugin_plan, runtime_of, LaunchConfig, LaunchPlan, PluginOp, Runtime, PROFILE_NAME,
+    build_plugin_plan, runtime_of, LaunchConfig, LaunchPlan, PluginOp, Runtime,
 };
 use dsharbor_core::paths::windows_path_to_wsl;
+use dsharbor_core::profiles::{self, ProfileSummary};
 use serde::Serialize;
 use tauri::Manager;
 
@@ -122,19 +123,77 @@ fn wsl_dsh_home(distro: &str) -> Result<String, String> {
     Ok(home.to_string())
 }
 
-/// 当前目标环境的 profile 目录（v1 固定使用 web profile）。
-pub fn profile_dir(target: &Target) -> Result<String, String> {
+/// 目标环境下某个 profile 的目录（`<DSH 主目录>/profiles/<名字>`）。
+///
+/// 名字既拼路径又进命令行，所以先过一遍合法性：非法名字直接报错，
+/// 不静默退回默认环境——静默退回会让用户以为切了其实没切。
+pub fn profile_dir(target: &Target, profile: &str) -> Result<String, String> {
+    profiles::validate_name(profile)?;
     match target {
         Target::Host => {
             let home = host_dsh_home()?;
             let sep = if cfg!(windows) { '\\' } else { '/' };
-            Ok(format!("{home}{sep}profiles{sep}{PROFILE_NAME}"))
+            Ok(format!("{home}{sep}profiles{sep}{profile}"))
         }
-        Target::Wsl { distro } => Ok(format!(
-            "{}/profiles/{}",
-            wsl_dsh_home(distro)?,
-            PROFILE_NAME
-        )),
+        Target::Wsl { distro } => Ok(format!("{}/profiles/{profile}", wsl_dsh_home(distro)?)),
+    }
+}
+
+/// 目标环境下 DSH 已有的全部 profile（含不能列进下拉的，由核心库标记）。
+///
+/// 读盘/枚举留在这一层，只把内容拼成 `名字<TAB>package.json` 的文本交给
+/// 核心库的 `profiles::parse_listing` 判定——「哪个环境能列出来」不在这里重复一遍。
+pub fn list_profiles(config: &LaunchConfig) -> Result<Vec<ProfileSummary>, String> {
+    let target = Target::of(config);
+    Ok(profiles::parse_listing(&read_listing(&target)?))
+}
+
+/// 读「名字<TAB>单行 package.json」清单（宿主直连与 WSL 各一条路径）。
+///
+/// 缺 `package.json` 的目录跳过：那不是 DSH 初始化好的环境，壳也不会去碰它。
+fn read_listing(target: &Target) -> Result<String, String> {
+    match target {
+        Target::Host => {
+            let home = host_dsh_home()?;
+            let sep = if cfg!(windows) { '\\' } else { '/' };
+            let root = format!("{home}{sep}profiles");
+            let entries = match std::fs::read_dir(&root) {
+                Ok(entries) => entries,
+                // 还没建过任何环境：空列表，不是错误。
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+                Err(err) => return Err(format!("读取环境目录 {root} 失败：{err}")),
+            };
+            let mut listing = String::new();
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let Ok(package_json) = std::fs::read_to_string(path.join("package.json")) else {
+                    continue;
+                };
+                // 清单一行一个环境：压成一行的 JSON 才能按行切回来。
+                let one_line = package_json.replace(['\n', '\r'], " ");
+                listing.push_str(&format!("{name}\t{one_line}\n"));
+            }
+            Ok(listing)
+        }
+        Target::Wsl { distro } => {
+            let home = wsl_dsh_home(distro)?;
+            // 逐目录拼 `名字<TAB>内容`；用 bash 的 glob 而不是 find，避免为不存在的目录报错。
+            let script = format!(
+                "for d in '{home}'/profiles/*/; do \
+                 [ -d \"$d\" ] || continue; \
+                 p=\"$d/package.json\"; \
+                 [ -f \"$p\" ] || continue; \
+                 printf '%s\\t%s\\n' \"$(basename \"$d\")\" \"$(tr '\\n' ' ' < \"$p\")\"; \
+                 done"
+            );
+            wsl_run(distro, &script, Duration::from_secs(30))
+        }
     }
 }
 
@@ -359,8 +418,12 @@ struct BackupResult {
 }
 
 /// 备份 profile 目录里会被 pnpm 改写的文件（含内容哈希清单），返回备份结果。
-fn backup_profile(app: &tauri::AppHandle, target: &Target) -> Result<BackupResult, String> {
-    let dir = profile_dir(target)?;
+fn backup_profile(
+    app: &tauri::AppHandle,
+    target: &Target,
+    profile: &str,
+) -> Result<BackupResult, String> {
+    let dir = profile_dir(target, profile)?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -425,14 +488,14 @@ fn is_installed(target: &Target, profile: &str) -> Result<bool, String> {
         .map(|bundles| {
             bundles
                 .iter()
-                .any(|item| item.as_str() == Some("dsharbor-bridge"))
+                .any(|item| item.as_str() == Some(profiles::BRIDGE_PLUGIN))
         })
         .unwrap_or(false);
     Ok(in_bundles)
 }
 
-fn plugin_command(config: &LaunchConfig, op: &PluginOp) -> Result<Command, String> {
-    let spawn = build_plugin_plan(config, op)?;
+fn plugin_command(config: &LaunchConfig, profile: &str, op: &PluginOp) -> Result<Command, String> {
+    let spawn = build_plugin_plan(config, profile, op)?;
     Ok(command_for_plan(&LaunchPlan {
         spawn,
         env: Vec::new(),
@@ -508,14 +571,18 @@ fn stage_bridge_tgz(app: &tauri::AppHandle, target: &Target, tgz: &str) -> Resul
 }
 
 /// 安装桥接插件（先备份、再走官方 plugin add、最后校验 bundles 登记）。
-pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOutcome, String> {
+pub fn install(
+    app: &tauri::AppHandle,
+    config: &LaunchConfig,
+    profile: &str,
+) -> Result<BridgeOutcome, String> {
     let target = Target::of(config);
-    let profile = profile_dir(&target)?;
-    if is_installed(&target, &profile).unwrap_or(false) {
+    let dir = profile_dir(&target, profile)?;
+    if is_installed(&target, &dir).unwrap_or(false) {
         return Ok(BridgeOutcome {
             ok: true,
             message: format!(
-                "{} 上已经安装过桥接插件（dsh.profile.bundles 已登记），未重复操作。",
+                "{} 上的环境 {profile} 已经安装过桥接插件（dsh.profile.bundles 已登记），未重复操作。",
                 target.label()
             ),
             backup_dir: latest_backup(app).unwrap_or_default(),
@@ -526,16 +593,16 @@ pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOu
     let BackupResult {
         dir: backup_dir,
         pruned,
-    } = backup_profile(app, &target)?;
+    } = backup_profile(app, &target, profile)?;
     // 先暂存到无空格路径：pnpm 无法解析含空格的 `file:` 规格（见 stage_bridge_tgz）。
     let package_ref = stage_bridge_tgz(app, &target, &tgz)?;
 
     let op = PluginOp::Install {
         package: format!("file:{package_ref}"),
     };
-    let command = plugin_command(config, &op)?;
+    let command = plugin_command(config, profile, &op)?;
     let (code, output) = run_capture(command, PLUGIN_OP_TIMEOUT)?;
-    let installed = is_installed(&target, &profile).unwrap_or(false);
+    let installed = is_installed(&target, &dir).unwrap_or(false);
     let ok = code == 0 && installed;
     let verify = if installed {
         "已登记 dsh.profile.bundles ✓"
@@ -543,7 +610,7 @@ pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOu
         "未在 dsh.profile.bundles 中找到 dsharbor-bridge ✗（安装可能未生效）"
     };
     let message = format!(
-        "安装命令：dsh plugin --profile {PROFILE_NAME} add file:{package_ref}（经 {}）\n\
+        "安装命令：dsh plugin --profile {profile} add file:{package_ref}（经 {}）\n\
          插件包：{tgz}\n\
          暂存路径：{package_ref}\n\
          退出码：{code}\n\
@@ -562,13 +629,20 @@ pub fn install(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOu
 }
 
 /// 卸载桥接插件（先备份、再走官方 plugin remove、最后校验 bundles 已摘除）。
-pub fn uninstall(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeOutcome, String> {
+pub fn uninstall(
+    app: &tauri::AppHandle,
+    config: &LaunchConfig,
+    profile: &str,
+) -> Result<BridgeOutcome, String> {
     let target = Target::of(config);
-    let profile = profile_dir(&target)?;
-    if !is_installed(&target, &profile).unwrap_or(false) {
+    let dir = profile_dir(&target, profile)?;
+    if !is_installed(&target, &dir).unwrap_or(false) {
         return Ok(BridgeOutcome {
             ok: true,
-            message: format!("{} 上未安装桥接插件，无需卸载。", target.label()),
+            message: format!(
+                "{} 上的环境 {profile} 未安装桥接插件，无需卸载。",
+                target.label()
+            ),
             backup_dir: latest_backup(app).unwrap_or_default(),
         });
     }
@@ -576,13 +650,13 @@ pub fn uninstall(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<Bridge
     let BackupResult {
         dir: backup_dir,
         pruned,
-    } = backup_profile(app, &target)?;
+    } = backup_profile(app, &target, profile)?;
     let op = PluginOp::Uninstall {
-        name: "dsharbor-bridge".to_string(),
+        name: profiles::BRIDGE_PLUGIN.to_string(),
     };
-    let command = plugin_command(config, &op)?;
+    let command = plugin_command(config, profile, &op)?;
     let (code, output) = run_capture(command, PLUGIN_OP_TIMEOUT)?;
-    let still_installed = is_installed(&target, &profile).unwrap_or(false);
+    let still_installed = is_installed(&target, &dir).unwrap_or(false);
     let ok = code == 0 && !still_installed;
     let verify = if still_installed {
         "bundles 中仍能找到 dsharbor-bridge ✗（卸载可能未生效）"
@@ -590,7 +664,7 @@ pub fn uninstall(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<Bridge
         "已从 dsh.profile.bundles 摘除 ✓"
     };
     let message = format!(
-        "卸载命令：dsh plugin --profile {PROFILE_NAME} remove dsharbor-bridge（经 {}）\n\
+        "卸载命令：dsh plugin --profile {profile} remove dsharbor-bridge（经 {}）\n\
          退出码：{code}\n\
          校验：{verify}\n\
          输出：\n{}\n\
@@ -610,6 +684,7 @@ pub fn uninstall(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<Bridge
 pub fn restore(
     app: &tauri::AppHandle,
     config: &LaunchConfig,
+    profile: &str,
     backup_dir: &str,
 ) -> Result<String, String> {
     let root = backups_root(app)?;
@@ -624,7 +699,7 @@ pub fn restore(
     }
 
     let target = Target::of(config);
-    let profile = profile_dir(&target)?;
+    let dir = profile_dir(&target, profile)?;
     let mut restored: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
     for name in BACKUP_FILES {
@@ -635,14 +710,14 @@ pub fn restore(
         }
         let content = std::fs::read_to_string(&source)
             .map_err(|err| format!("读取备份文件 {name} 失败：{err}"))?;
-        write_file(&target, &join_path(&target, &profile, name), &content)?;
+        write_file(&target, &join_path(&target, &dir, name), &content)?;
         restored.push(name.to_string());
     }
     if restored.is_empty() {
         return Err("这个备份里没有任何可恢复的文件。".to_string());
     }
     let mut message = format!(
-        "已恢复 {} 上的 profile 文件：{}",
+        "已恢复 {} 上的环境 {profile} 的 profile 文件：{}",
         target.label(),
         restored.join("、")
     );
@@ -654,10 +729,14 @@ pub fn restore(
 }
 
 /// 查询桥接插件状态（界面展示用）。
-pub fn state(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeState, String> {
+pub fn state(
+    app: &tauri::AppHandle,
+    config: &LaunchConfig,
+    profile: &str,
+) -> Result<BridgeState, String> {
     let target = Target::of(config);
-    let profile = profile_dir(&target)?;
-    let installed = is_installed(&target, &profile).unwrap_or(false);
+    let dir = profile_dir(&target, profile)?;
+    let installed = is_installed(&target, &dir).unwrap_or(false);
     let detail = if installed {
         "dsh.profile.bundles 已登记 dsharbor-bridge：DSH 启动时插件会自动挂载，\
          壳经 /dsharbor-bridge/url 取登录链接。"
@@ -668,7 +747,7 @@ pub fn state(app: &tauri::AppHandle, config: &LaunchConfig) -> Result<BridgeStat
     Ok(BridgeState {
         installed,
         target: target.label(),
-        profile_dir: profile,
+        profile_dir: dir,
         detail,
         latest_backup: latest_backup(app),
     })
