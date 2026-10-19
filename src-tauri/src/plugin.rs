@@ -494,11 +494,21 @@ fn is_installed(target: &Target, profile: &str) -> Result<bool, String> {
     Ok(in_bundles)
 }
 
-fn plugin_command(config: &LaunchConfig, profile: &str, op: &PluginOp) -> Result<Command, String> {
+/// 组装插件安装/卸载命令。
+///
+/// `env` 是下载源与代理算出的环境变量（`dsharbor_core::net::plan_env` 的产物）：
+/// 插件是经 pnpm 从 registry 拉的，装的时候同样要受代理与源影响，
+/// 与版本查询、拉起 DSH 走的是同一份计划，不各拼一套。
+fn plugin_command(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &PluginOp,
+    env: &[(String, String)],
+) -> Result<Command, String> {
     let spawn = build_plugin_plan(config, profile, op)?;
     Ok(command_for_plan(&LaunchPlan {
         spawn,
-        env: Vec::new(),
+        env: env.to_vec(),
     }))
 }
 
@@ -570,6 +580,12 @@ fn stage_bridge_tgz(app: &tauri::AppHandle, target: &Target, tgz: &str) -> Resul
     }
 }
 
+/// 这次插件操作要注入的环境变量：当前设置里的下载源 + 代理。
+fn plugin_env(app: &tauri::AppHandle) -> Vec<(String, String)> {
+    let prefs = crate::settings::load(app).prefs;
+    crate::proxy::child_env(&prefs, prefs.download_source)
+}
+
 /// 安装桥接插件（先备份、再走官方 plugin add、最后校验 bundles 登记）。
 pub fn install(
     app: &tauri::AppHandle,
@@ -600,7 +616,7 @@ pub fn install(
     let op = PluginOp::Install {
         package: format!("file:{package_ref}"),
     };
-    let command = plugin_command(config, profile, &op)?;
+    let command = plugin_command(config, profile, &op, &plugin_env(app))?;
     let (code, output) = run_capture(command, PLUGIN_OP_TIMEOUT)?;
     let installed = is_installed(&target, &dir).unwrap_or(false);
     let ok = code == 0 && installed;
@@ -654,7 +670,7 @@ pub fn uninstall(
     let op = PluginOp::Uninstall {
         name: profiles::BRIDGE_PLUGIN.to_string(),
     };
-    let command = plugin_command(config, profile, &op)?;
+    let command = plugin_command(config, profile, &op, &plugin_env(app))?;
     let (code, output) = run_capture(command, PLUGIN_OP_TIMEOUT)?;
     let still_installed = is_installed(&target, &dir).unwrap_or(false);
     let ok = code == 0 && !still_installed;

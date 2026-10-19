@@ -73,6 +73,9 @@ const state = {
     cliIntegration: false,
     cacheCleanup: false,
   },
+  /** 系统代理的假数据：url 改成 null 可预览「跟随系统但系统里没配」。
+      bypass 就是系统里那份例外列表（回环地址由后端补，这里不列）。 */
+  systemProxy: { url: "127.0.0.1:7890", bypass: ["*.corp.example"], source: "env" },
   counter: 0,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
@@ -230,6 +233,65 @@ window.__mockUnimplemented = [];
     // 系统「打开文件」框：预览里没有原生对话框，直接返回 __MOCK_STATE__.dialogPick
     // （设成 null 模拟「用户取消」）。
     "plugin:dialog|open": () => (S.dialogPick === undefined ? "D:\\\\tools\\\\dsh.cmd" : S.dialogPick),
+    // 代理状态：假实现按照 savedShell 的两个字段算出与核心库同一套结果
+    // （地址归一化与文案在 Rust 侧只有一份，这里只预览界面怎么显示）。
+    // 改 S.systemProxy.url 可预览「系统里没检测到代理」。
+    proxy_state: () => {
+      seen("proxy_state");
+      const sys = S.systemProxy || (S.systemProxy = { url: null, bypass: [], source: "none" });
+      const bypass = (sys.bypass || []).slice();
+      // 真后端每次读的是存盘后的配置，所以这里优先用「刚保存的那一份」，否则预览里
+      // 改完地址、点完模式后提示行不会跟着变，看不到真实的来回。
+      const saved = S.lastSavedShell || S.savedShell;
+      const mode = saved.proxyMode || "system";
+      const raw = (saved.proxyAddress || "").trim();
+      const normalize = (value) => {
+        const text = String(value || "").trim();
+        if (!text) return { error: "还没填代理地址，形如 http://127.0.0.1:7890" };
+        if (/^socks[0-9a-z]*:[/][/]/i.test(text)) {
+          return { error: "这里是 socks 代理，请填同一端口的 http 混合端口，形如 http://127.0.0.1:7890" };
+        }
+        const withScheme = /^[a-z][a-z0-9+.-]*:[/][/]/i.test(text) ? text : "http://" + text;
+        const scheme = (/^([a-z][a-z0-9+.-]*):[/][/]/i.exec(withScheme) || [])[1] || "";
+        if (scheme.toLowerCase() !== "http" && scheme.toLowerCase() !== "https") {
+          return { error: "只支持 http 或 https 代理，不认识 " + scheme.toLowerCase() + ":// 开头的地址" };
+        }
+        let rest = withScheme.slice(scheme.length + 3).split(/[?#]/)[0];
+        const slash = rest.indexOf("/");
+        if (slash >= 0) rest = rest.slice(0, slash);
+        const hostPort = rest.slice(rest.lastIndexOf("@") + 1);
+        const host = hostPort.replace(/:\d+$/, "");
+        if (!host) return { error: "地址里没解析出主机名，形如 http://127.0.0.1:7890" };
+        return { url: scheme.toLowerCase() + "://" + rest };
+      };
+      const plain = (url, tail) =>
+        (mode === "manual" ? "手动填写：DSH 与下载都走 " + url : "跟随系统：使用系统里配的代理 " + url) +
+        "；回环地址始终直连" +
+        (tail ? "，系统例外 " + tail + " 项一并直连" : "") +
+        "。";
+      let url = null;
+      let hint;
+      if (mode === "off") {
+        hint = "不走代理：不向 DSH 下发任何代理环境变量。";
+      } else if (mode === "manual") {
+        const result = normalize(raw);
+        if (result.error) hint = result.error;
+        else {
+          url = result.url;
+          hint = plain(url, bypass.length);
+        }
+      } else if (sys.url) {
+        const result = normalize(sys.url);
+        if (result.error) hint = "跟随系统：系统里没检测到代理设置，请求直连。";
+        else {
+          url = result.url;
+          hint = plain(url, bypass.length);
+        }
+      } else {
+        hint = "跟随系统：系统里没检测到代理设置，请求直连。";
+      }
+      return { url: url, bypass: url === null ? [] : bypass, hint: hint };
+    },
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
     profile_port_hint: () => S.portHint,
