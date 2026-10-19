@@ -14,6 +14,8 @@ use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use dsharbor_core::launch::Runtime;
+use dsharbor_core::net;
+use dsharbor_core::prefs::DownloadSource;
 use dsharbor_core::registry::{self, RegistryInfo};
 
 /// 缓存有效期。
@@ -23,8 +25,9 @@ const CACHE_TTL: Duration = Duration::from_secs(600);
 /// 超时就当失败（界面显示「读不到版本列表」，不阻塞任何操作）。
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 缓存键：运行环境 + 发行版。Windows 与各发行版里的 npm 是各自独立的
-/// registry 视图（代理、镜像配置都可能不同），必须分别缓存。
+/// 缓存键：运行环境 + 发行版 + 下载源。Windows 与各发行版里的 npm 是各自独立的
+/// registry 视图（代理、镜像配置都可能不同），必须分别缓存；下载源也进键，
+/// 切源后就不会命中另一个源的旧清单。
 type CacheKey = String;
 
 struct CacheEntry {
@@ -34,23 +37,31 @@ struct CacheEntry {
 
 static CACHE: Mutex<Option<HashMap<CacheKey, CacheEntry>>> = Mutex::new(None);
 
-fn cache_key(runtime: &Runtime) -> CacheKey {
+fn cache_key(runtime: &Runtime, source: DownloadSource) -> CacheKey {
     match runtime {
-        Runtime::Default => "host".to_string(),
-        Runtime::Wsl { distro } => format!("wsl:{distro}"),
+        Runtime::Default => format!("host:{}", source.as_str()),
+        Runtime::Wsl { distro } => format!("wsl:{distro}:{}", source.as_str()),
     }
 }
 
-/// 查清单：命中新鲜缓存直接返回；否则跑 `npm view`。
+/// 清掉全部缓存。保存下载源之后调用：换了源，旧清单里的版本号来自另一个 registry，
+/// 立刻作废；下一次查询就会带上新源重新跑 `npm view`。
+pub fn invalidate_all() {
+    if let Ok(mut guard) = CACHE.lock() {
+        *guard = None;
+    }
+}
+
+/// 查清单：命中新鲜缓存直接返回；否则跑 `npm view`（带上下载源对应的 registry）。
 ///
 /// 查询失败时退回该运行环境上一次成功的快照（哪怕已过期）：断网时用户仍能
 /// 选回上次见过的版本，而不是面对一个空下拉。
-pub fn query(runtime: &Runtime) -> Result<RegistryInfo, String> {
-    let key = cache_key(runtime);
+pub fn query(runtime: &Runtime, source: DownloadSource) -> Result<RegistryInfo, String> {
+    let key = cache_key(runtime, source);
     if let Some(info) = cache_get(&key) {
         return Ok(info);
     }
-    match run_query(runtime) {
+    match run_query(runtime, source) {
         Ok(info) => {
             cache_put(&key, info.clone());
             Ok(info)
@@ -105,8 +116,8 @@ fn timeout_error() -> String {
     format!("查询官方版本列表超时（{} 秒）", QUERY_TIMEOUT.as_secs())
 }
 
-fn run_query(runtime: &Runtime) -> Result<RegistryInfo, String> {
-    let mut command = build_command(runtime)?;
+fn run_query(runtime: &Runtime, source: DownloadSource) -> Result<RegistryInfo, String> {
+    let mut command = build_command(runtime, source)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -191,8 +202,13 @@ fn run_query(runtime: &Runtime) -> Result<RegistryInfo, String> {
 }
 
 /// 组装查询命令：Windows 直接跑 npm；WSL 经 wsl.exe 在发行版里跑。
-fn build_command(runtime: &Runtime) -> Result<Command, String> {
+///
+/// `source` 决定是否往子进程环境里塞 registry：「沿用 npm 全局配置」时不塞任何东西，
+/// 子进程读到的就是用户自己 `.npmrc` 里的源；选了镜像/官方时用环境变量覆盖，
+/// 不修改用户的任何配置文件。
+fn build_command(runtime: &Runtime, source: DownloadSource) -> Result<Command, String> {
     let args = registry::query_args();
+    let env = net::registry_env(source);
     match runtime {
         Runtime::Default => {
             let mut command = if cfg!(windows) {
@@ -205,19 +221,29 @@ fn build_command(runtime: &Runtime) -> Result<Command, String> {
                 Command::new("npm")
             };
             command.args(args);
+            command.envs(env);
             Ok(command)
         }
         Runtime::Wsl { distro } => {
             let mut command = Command::new("wsl.exe");
             command.args(["-d", distro, "--"]);
+            let mut env: Vec<(String, String)> = Vec::new();
             // 与启动 DSH 时同一份干净 PATH：清理 /mnt 污染项并补上
             // ~/.local/share/pnpm/bin、~/.local/bin。
             match crate::wsl::clean_path(distro) {
                 Ok(path) => {
-                    command.arg("env").arg(format!("PATH={path}"));
+                    env.push(("PATH".to_string(), path));
                 }
                 // 取不到干净 PATH 就按原样进发行版，至少还有一次机会。
                 Err(err) => eprintln!("[dsharbor] 读取 WSL PATH 失败，直接执行：{err}"),
+            }
+            env.extend(net::registry_env(source));
+            if !env.is_empty() {
+                command.arg("env");
+                for (key, value) in env {
+                    // 值都是 URL / PATH，不含空格也不含引号，`env K=V` 单个 argv 即可。
+                    command.arg(format!("{key}={value}"));
+                }
             }
             command.args(["bash", "-lc"]);
             // 一整条命令作为单个 argv 传给 bash -lc：npm 与参数都是固定字面量，
@@ -234,13 +260,30 @@ mod tests {
 
     #[test]
     fn cache_key_separates_runtimes() {
-        assert_eq!(cache_key(&Runtime::Default), "host");
         assert_eq!(
-            cache_key(&Runtime::Wsl {
-                distro: "Ubuntu".into()
-            }),
-            "wsl:Ubuntu"
+            cache_key(&Runtime::Default, DownloadSource::Inherit),
+            "host:inherit"
         );
+        assert_eq!(
+            cache_key(
+                &Runtime::Wsl {
+                    distro: "Ubuntu".into()
+                },
+                DownloadSource::Inherit
+            ),
+            "wsl:Ubuntu:inherit"
+        );
+    }
+
+    #[test]
+    fn cache_key_separates_download_sources() {
+        // 切源后不能命中另一个源的旧清单：版本号来自不同的 registry。
+        let official = cache_key(&Runtime::Default, DownloadSource::Official);
+        let mirror = cache_key(&Runtime::Default, DownloadSource::Mirror);
+        let inherit = cache_key(&Runtime::Default, DownloadSource::Inherit);
+        assert_ne!(official, mirror);
+        assert_ne!(official, inherit);
+        assert_ne!(mirror, inherit);
     }
 
     #[test]
@@ -268,28 +311,86 @@ mod tests {
     #[test]
     fn wsl_command_injects_clean_path_and_runs_npm() {
         // 只校验参数结构，不真的执行（开发机上不一定装了 WSL）。
-        let command = build_command(&Runtime::Wsl {
-            distro: "Ubuntu".into(),
-        })
+        let command = build_command(
+            &Runtime::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            DownloadSource::Inherit,
+        )
         .unwrap();
         let args: Vec<String> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())
             .collect();
         assert_eq!(&args[..3], ["-d", "Ubuntu", "--"]);
-        assert_eq!(args.last().map(String::as_str), Some("bash"));
-        let line = args.last().map(String::as_str).unwrap_or_default();
         assert_eq!(args[args.len() - 2], "-lc");
+        let line = &args[args.len() - 1];
+        assert!(line.contains("npm view @deepseek-ai/dsh"), "{line}");
+        assert!(line.contains("--json"), "{line}");
+    }
+
+    #[test]
+    fn wsl_command_passes_the_registry_through_env() {
+        // WSL 里没法用 Command::env（那是 Windows 进程的环境），只能拼成
+        // `env K=V` 的 argv 夹在 wsl.exe 与 bash 之间。
+        let command = build_command(
+            &Runtime::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            DownloadSource::Official,
+        )
+        .unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
         assert!(
-            args[args.len() - 1].contains("npm view @deepseek-ai/dsh"),
-            "{line}"
+            args.iter()
+                .any(|arg| arg == "npm_config_registry=https://registry.npmjs.org"),
+            "{args:?}"
         );
-        assert!(args[args.len() - 1].contains("--json"));
+        // 注入项必须在 bash 之前，否则会变成 bash 的参数而不是环境变量。
+        let bash_at = args.iter().position(|arg| arg == "bash").unwrap();
+        let registry_at = args
+            .iter()
+            .position(|arg| arg.starts_with("npm_config_registry="))
+            .unwrap();
+        assert!(registry_at < bash_at, "{args:?}");
+    }
+
+    #[test]
+    fn host_command_sets_the_registry_env_var_and_inherit_sets_nothing() {
+        let official = build_command(&Runtime::Default, DownloadSource::Official).unwrap();
+        let envs: Vec<(String, String)> = official
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.unwrap_or_default().to_string_lossy().to_string(),
+                )
+            })
+            .collect();
+        assert!(
+            envs.contains(&(
+                "npm_config_registry".to_string(),
+                "https://registry.npmjs.org".to_string()
+            )),
+            "{envs:?}"
+        );
+
+        // 验收标准③：选「沿用」时不下发 registry，行为等同于没有这项功能。
+        let inherit = build_command(&Runtime::Default, DownloadSource::Inherit).unwrap();
+        assert!(
+            inherit
+                .get_envs()
+                .all(|(key, _)| key.to_string_lossy() != "npm_config_registry"),
+            "沿用 npm 全局配置时不该注入 registry"
+        );
     }
 
     #[test]
     fn host_command_runs_npm_view_in_json_mode() {
-        let command = build_command(&Runtime::Default).unwrap();
+        let command = build_command(&Runtime::Default, DownloadSource::Inherit).unwrap();
         let args: Vec<String> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())

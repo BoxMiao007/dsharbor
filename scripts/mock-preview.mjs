@@ -76,6 +76,9 @@ const state = {
   counter: 0,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
+  /** 命令行集成的假状态：改它能预览开关打开/关闭、PATH 里没有目录、被别的 dsh 盖住、
+      以及非 Windows 宿主（supported: false）等分支。enabled 默认跟 savedShell 走。 */
+  cli: { supported: true, enabled: false, onPath: false, shadow: null },
   calls: {},
 };
 
@@ -107,6 +110,60 @@ window.__mockUnimplemented = [];
     latestBackup: "backup-1760500000",
     backupCount: S.bridgeInstalls,
   });
+  // 命令行集成的假状态：真实实现会读 HKCU\\Environment 并探测 dsh，这里只拼一份
+  // 看上去像真的结果（目录取 app_info 的 configDir + \\bin）。
+  // 垫片正文跟随传入的启动方式，预览里切完模式能直接看到正文变了。
+  const shimForMode = (mode) => {
+    const kind = (mode && mode.kind) || "npx";
+    let target;
+    if (kind === "system") target = "D:\\\\IT\\\\Scoop\\\\apps\\\\deepseek-harness\\\\dsh.cmd";
+    else if (kind === "binary") target = '"' + ((mode && mode.path) || "D:\\\\tools\\\\dsh.cmd") + '"';
+    else if (kind === "custom") target = (mode && mode.command) || "node D:\\\\tools\\\\dsh.js";
+    else {
+      const suffix = mode && mode.channel === "next" ? "@next" : mode && mode.version ? "@" + mode.version : "";
+      target = "npx --yes @deepseek-ai/dsh" + suffix;
+    }
+    return "@echo off\\r\\n" + target + " %*\\r\\n";
+  };
+  const cliIntegrationState = (cli) => {
+    const binDir = "C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\DSHarbor\\\\bin";
+    const enabled = !!cli.enabled;
+    const onPath = !!cli.onPath;
+    const shadow = cli.shadow === undefined ? null : cli.shadow;
+    let message;
+    if (!cli.supported) {
+      message = "仅在 Windows 宿主可用：这里不会改动任何 shell 配置，可以复制下面的命令手动接入。";
+    } else if (enabled && !onPath) {
+      message = "开关已打开，但用户 PATH 里没有垫片目录（可能被其它工具改回去了），重新开关一次即可补回。";
+    } else if (enabled && shadow) {
+      message =
+        "已接入。注意：PATH 里还有一份排在更前面的 " + shadow + "，终端会先命中它；要改用壳里的这份，把它挪到后面或删掉。";
+    } else if (enabled) {
+      message = "已接入：新开一个终端后 dsh 命令就指向壳里正在用的那份。";
+    } else {
+      message = "开关关闭：终端里的 dsh 与壳无关。";
+    }
+    return {
+      supported: !!cli.supported,
+      enabled: enabled,
+      binDir: binDir,
+      bin_dir: binDir,
+      shimPath: binDir + "\\\\dsh.cmd",
+      shim_path: binDir + "\\\\dsh.cmd",
+      onPath: onPath,
+      on_path: onPath,
+      manualCommand: 'export PATH="$PATH:' + binDir + '"',
+      manual_command: 'export PATH="$PATH:' + binDir + '"',
+      shimText: cli.shimText === undefined ? "@echo off\\r\\nnpx --yes @deepseek-ai/dsh %*\\r\\n" : cli.shimText,
+      shim_text: cli.shimText === undefined ? "@echo off\\r\\nnpx --yes @deepseek-ai/dsh %*\\r\\n" : cli.shimText,
+      shimError: cli.shimError === undefined ? null : cli.shimError,
+      shim_error: cli.shimError === undefined ? null : cli.shimError,
+      systemDsh: "D:\\\\IT\\\\Scoop\\\\apps\\\\deepseek-harness\\\\dsh.cmd",
+      system_dsh: "D:\\\\IT\\\\Scoop\\\\apps\\\\deepseek-harness\\\\dsh.cmd",
+      shadow: shadow,
+      message: message,
+    };
+  };
   const cmds = {
     app_info: () => ({
       name: "DSHarbor",
@@ -131,6 +188,27 @@ window.__mockUnimplemented = [];
       S.lastSavedShell = a && a.config;
       return null;
     },
+    // 命令行集成：假状态。改 S.cli 里的字段就能预览各种分支
+    // （supported:false 看「仅在 Windows 宿主可用」、shadow 有值看「排在更前面」提示）。
+    cli_integration_state: () => {
+      const cli = S.cli || (S.cli = { supported: true, enabled: false, onPath: false, shadow: null });
+      if (cli.supported === undefined) cli.supported = true;
+      if (cli.enabled === undefined) cli.enabled = !!S.savedShell.cliIntegration;
+      if (cli.onPath === undefined) cli.onPath = false;
+      return cliIntegrationState(cli);
+    },
+    set_cli_integration: (a) => {
+      seen("set_cli_integration");
+      const cli = S.cli || (S.cli = { supported: true, enabled: false, onPath: false, shadow: null });
+      if (cli.supported === undefined) cli.supported = true;
+      cli.enabled = !!(a && a.enabled);
+      // 真实后端会同时改 PATH：这里跟着改，预览里才能看到开→关来回切的效果。
+      cli.onPath = !!cli.enabled;
+      // 垫片正文跟随当前启动方式重写（真实实现写盘，这里只记住给界面回显）。
+      cli.shimText = cli.enabled ? shimForMode(a && a.config && a.config.mode) : cli.shimText;
+      S.savedShell.cliIntegration = !!cli.enabled;
+      return cliIntegrationState(cli);
+    },
     // 「指定程序路径」的即时校验：只看格式与「不存在」两种，用来预览字段下方红字。
     // 抛字符串而不是 Error：真实 invoke 被拒时前端拿到的是纯文案，预览要跟真机一致。
     check_binary_path: (a) => {
@@ -150,7 +228,9 @@ window.__mockUnimplemented = [];
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,
     // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 重新读取按钮」。
-    query_dsh_versions: () => {
+    // 下载源记进 calls（键名形如 query_dsh_versions:official），预览时一眼能看出这次请求带的是哪个源。
+    query_dsh_versions: (a) => {
+      seen("query_dsh_versions:" + (a && a.source ? a.source : "?"));
       if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
       return S.registry;
     },

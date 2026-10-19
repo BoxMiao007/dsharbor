@@ -10,6 +10,7 @@ mod plugin;
 mod profile;
 mod registry;
 mod settings;
+mod shellpath;
 mod tray;
 mod wsl;
 
@@ -299,9 +300,60 @@ fn load_shell_config(app: tauri::AppHandle) -> settings::ShellConfig {
 }
 
 /// 保存整份壳设置（非法输入报错、不写盘——配置界面的输入校验兜底）。
+///
+/// 下载源变了就清掉版本清单缓存：旧清单里的版本号来自另一个 registry，
+/// 不作废会让人以为切换没生效。
 #[tauri::command]
 fn save_shell_config(app: tauri::AppHandle, config: settings::ShellConfig) -> Result<(), String> {
-    settings::save(&app, &config)
+    let previous = settings::load(&app).prefs.download_source;
+    settings::save(&app, &config)?;
+    if previous != config.prefs.download_source {
+        registry::invalidate_all();
+    }
+    Ok(())
+}
+
+/// 「集成」卡命令行集成段的当前状态：开关值、真实 PATH 情况、垫片预览与状态说明。
+///
+/// async + spawn_blocking：读 PATH 要起 `reg.exe`、探测 dsh 要看磁盘，同步命令会堵主线程。
+#[tauri::command]
+async fn cli_integration_state(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+) -> Result<shellpath::CliIntegrationState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let enabled = settings::load(&app).prefs.cli_integration;
+        shellpath::state(&app, &config, enabled)
+    })
+    .await
+    .map_err(|err| format!("读取命令行集成状态失败：{err}"))
+}
+
+/// 打开 / 关闭命令行集成：写（或删）`dsh.cmd` 垫片，并改当前用户 PATH 里的那一条。
+///
+/// 开关值随同落盘：不改 `cliIntegration` 的话，壳下次启动看不出「该不该刷垫片」，
+/// 与用户刚看到的开关状态会对不上。
+#[tauri::command]
+async fn set_cli_integration(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    enabled: bool,
+) -> Result<shellpath::CliIntegrationState, String> {
+    let next = {
+        let app = app.clone();
+        let config = config.clone();
+        tauri::async_runtime::spawn_blocking(move || shellpath::apply(&app, &config, enabled))
+            .await
+            .map_err(|err| format!("切换命令行集成失败：{err}"))??
+    };
+    let mut settings = settings::load(&app);
+    settings.prefs.cli_integration = enabled;
+    settings.launch = config;
+    // PATH 已经改完了，这里存配置失败不该报「整个操作失败」（那样用户会以为 PATH 没动）。
+    if let Err(err) = settings::save(&app, &settings) {
+        eprintln!("[dsharbor] 命令行集成：开关状态未能落盘：{err}");
+    }
+    Ok(next)
 }
 
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
@@ -498,11 +550,20 @@ async fn wsl_distro_info() -> Result<Vec<wsl::DistroInfo>, String> {
 ///
 /// async 命令：要拉起 npm（WSL 下还要先起 wsl.exe），同步命令会把主线程堵住。
 /// 查询失败就返回错误字符串，界面自己降级成「稳定版 + 默认环境」继续可用。
+///
+/// 下载源由界面随请求一起传（`source`）：它才是「这次要用哪个源」的权威，
+/// 不必先去读盘——否则一旦保存没落盘，界面显示的选项与实际请求的源就对不上。
+/// 认不出的值退回默认并只记日志，不影响使用。
 #[tauri::command]
 async fn query_dsh_versions(
     runtime: launch::Runtime,
+    source: String,
 ) -> Result<dsharbor_core::registry::RegistryInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime))
+    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
+        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
+        dsharbor_core::prefs::DownloadSource::default()
+    });
+    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime, source))
         .await
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }
@@ -805,6 +866,8 @@ fn open_shell_dir(app: tauri::AppHandle, kind: String) -> Result<String, String>
         "config" => app_data_root(&app)?,
         "logs" => std::path::PathBuf::from(plugin::host_dsh_home()?).join("logs"),
         "backups" => plugin::backups_root(&app)?,
+        // 命令行集成的垫片目录（与版本目录解耦，PATH 里那条永远指这里）。
+        "bin" => shellpath::bin_dir(&app)?,
         other => return Err(format!("不认识的目录：{other}")),
     };
     // 目录可能还不存在（重装后首次启动、DSH 还没写过日志）：先建出来，否则资源管理器报错。
@@ -1246,6 +1309,9 @@ pub fn run() {
             // 托盘：轻量模式的入口。这里失败会直接终止启动——
             // 没有托盘的轻量态意味着窗口关掉后应用再也回不来。
             tray::setup(app.handle())?;
+            // 命令行集成开着时按当前启动配置重写垫片（跟随启动方式变化）。
+            // 失败只记日志，不阻塞启动：垫片是便利功能，坏掉不该让壳起不来。
+            shellpath::refresh_on_start(app.handle());
             // 无人值守的自测/截图钩子：DSHARBOR_AUTOSTART 里放 LaunchConfig 的 JSON
             // 时，应用启动后自动拉起 DSH。正常使用不会设置这个变量。
             if let Ok(raw) = std::env::var("DSHARBOR_AUTOSTART") {
@@ -1294,7 +1360,9 @@ pub fn run() {
             set_caption_color,
             save_ui_theme,
             check_binary_path,
-            open_shell_dir
+            open_shell_dir,
+            cli_integration_state,
+            set_cli_integration
         ])
         .build(tauri::generate_context!())
         .expect("构建 DSHarbor 外壳失败")
