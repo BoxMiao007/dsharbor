@@ -134,12 +134,26 @@ pub fn backup_message(profile: &str, target_label: &str, path: &str, pruned: &[S
 }
 
 /// 还原成功后的说明：还原成哪一份、还原前的版本另存在哪、什么时候生效。
-pub fn restore_message(profile: &str, target_label: &str, source: &str, saved: &str) -> String {
-    format!(
-        "已把环境「{profile}」的补丁层还原成：\n{source}\n（写回 {target_label} 上的 {PATCH_FILE}）\n\
-         还原前的版本已另存一份，想反悔就再还原它：\n{saved}\n\
-         补丁层要重启 DSH 后才生效。"
-    )
+///
+/// `saved` 为 `None` 表示还原前那份补丁层文件根本不存在（刚新建的环境），
+/// 这时不该给出一条通往不存在的副件的路径。
+pub fn restore_message(
+    profile: &str,
+    target_label: &str,
+    source: &str,
+    saved: Option<&str>,
+) -> String {
+    let mut message = format!(
+        "已把环境「{profile}」的补丁层还原成：\n{source}\n（已写回 {target_label} 上的 {PATCH_FILE}）"
+    );
+    match saved {
+        Some(saved) => message.push_str(&format!(
+            "\n还原前的版本已另存一份，想反悔就再还原它：\n{saved}"
+        )),
+        None => message.push_str("\n还原前这个环境里没有补丁层文件，所以没有另存副本。"),
+    }
+    message.push_str("\n补丁层要重启 DSH 后才生效。");
+    message
 }
 
 /// DSH 正在运行时拒绝操作的说明。
@@ -327,7 +341,12 @@ mod tests {
 
     #[test]
     fn restore_message_points_at_the_saved_copy() {
-        let text = restore_message("lab", "Windows", "C:/x/patch-1.yml", "C:/x/patch-2.yml");
+        let text = restore_message(
+            "lab",
+            "Windows",
+            "C:/x/patch-1.yml",
+            Some("C:/x/patch-2.yml"),
+        );
         assert!(text.contains("lab"), "{text}");
         assert!(text.contains("C:/x/patch-1.yml"), "{text}");
         assert!(
@@ -335,6 +354,15 @@ mod tests {
             "还原前另存的副本要说清楚：{text}"
         );
         assert!(text.contains("重启"), "要提醒重启才生效：{text}");
+    }
+
+    #[test]
+    fn restore_message_explains_why_there_is_no_saved_copy() {
+        // 刚建的环境里没有补丁层文件：不该给出一份不存在的副本路径。
+        let text = restore_message("lab", "WSL（Ubuntu）", "C:/x/patch-1.yml", None);
+        assert!(text.contains("没有另存副本"), "{text}");
+        assert!(!text.contains("想反悔"), "{text}");
+        assert!(text.contains("WSL（Ubuntu）"), "{text}");
     }
 
     #[test]
