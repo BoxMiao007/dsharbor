@@ -8,6 +8,7 @@ mod detect;
 mod launcher;
 mod plugin;
 mod profile;
+mod proxy;
 mod registry;
 mod settings;
 mod shellpath;
@@ -185,7 +186,10 @@ fn spawn_session(
             if let Ok(mut slot) = state.external_port.lock() {
                 *slot = None;
             }
-            match launcher::spawn(config, profile, launcher_args, endpoint) {
+            // 代理与下载源注入被拉起的 DSH 进程（与版本查询、插件安装卸载同一份计划）。
+            let prefs = settings::load(app).prefs;
+            let env = proxy::child_env(&prefs, prefs.download_source);
+            match launcher::spawn(config, profile, launcher_args, &env, endpoint) {
                 Ok(session) => {
                     *guard = Some(session);
                     spawned_child = true;
@@ -305,9 +309,16 @@ fn load_shell_config(app: tauri::AppHandle) -> settings::ShellConfig {
 /// 不作废会让人以为切换没生效。
 #[tauri::command]
 fn save_shell_config(app: tauri::AppHandle, config: settings::ShellConfig) -> Result<(), String> {
-    let previous = settings::load(&app).prefs.download_source;
+    let previous = settings::load(&app).prefs;
     settings::save(&app, &config)?;
-    if previous != config.prefs.download_source {
+    // 下载源或代理变了就清掉版本清单缓存：旧清单是在另一个源/另一条代理下取的，
+    // 不作废会让人以为切换没生效。代理探测结果也一起作废——用户可能刚改过系统设置。
+    let proxy_changed = previous.proxy_mode != config.prefs.proxy_mode
+        || previous.proxy_address != config.prefs.proxy_address;
+    if proxy_changed {
+        proxy::invalidate_probe();
+    }
+    if previous.download_source != config.prefs.download_source || proxy_changed {
         registry::invalidate_all();
     }
     Ok(())
@@ -556,6 +567,7 @@ async fn wsl_distro_info() -> Result<Vec<wsl::DistroInfo>, String> {
 /// 认不出的值退回默认并只记日志，不影响使用。
 #[tauri::command]
 async fn query_dsh_versions(
+    app: tauri::AppHandle,
     runtime: launch::Runtime,
     source: String,
 ) -> Result<dsharbor_core::registry::RegistryInfo, String> {
@@ -563,7 +575,11 @@ async fn query_dsh_versions(
         eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
         dsharbor_core::prefs::DownloadSource::default()
     });
-    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime, source))
+    // 注入给 npm 的环境变量在这里算好：源用界面这次传的（它才是权威），
+    // 代理用已保存的设置（见壳设置里的「网络」卡）。
+    let prefs = settings::load(&app).prefs;
+    let env = proxy::child_env(&prefs, source);
+    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime, source, &env))
         .await
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }
@@ -1323,7 +1339,9 @@ pub fn run() {
                             profile::port_overlay_args(app.handle(), &config, &profile)
                                 .unwrap_or_default();
                         let endpoint = detect::effective_endpoint(&config, &profile);
-                        match launcher::spawn(&config, &profile, &launcher_args, endpoint) {
+                        let prefs = settings::load(app.handle()).prefs;
+                        let env = proxy::child_env(&prefs, prefs.download_source);
+                        match launcher::spawn(&config, &profile, &launcher_args, &env, endpoint) {
                             Ok(session) => {
                                 if let Ok(mut guard) = state.session.lock() {
                                     *guard = Some(session);

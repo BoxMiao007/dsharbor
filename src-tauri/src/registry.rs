@@ -14,7 +14,6 @@ use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use dsharbor_core::launch::Runtime;
-use dsharbor_core::net;
 use dsharbor_core::prefs::DownloadSource;
 use dsharbor_core::registry::{self, RegistryInfo};
 
@@ -54,14 +53,20 @@ pub fn invalidate_all() {
 
 /// 查清单：命中新鲜缓存直接返回；否则跑 `npm view`（带上下载源对应的 registry）。
 ///
+/// `env` 是这次要注入 npm 进程的全部环境变量（下载源 + 代理），由调用方用
+/// `net::plan_env` 算好——本函数不再自己拼，三条注入路径因此不会各写一套。
 /// 查询失败时退回该运行环境上一次成功的快照（哪怕已过期）：断网时用户仍能
 /// 选回上次见过的版本，而不是面对一个空下拉。
-pub fn query(runtime: &Runtime, source: DownloadSource) -> Result<RegistryInfo, String> {
+pub fn query(
+    runtime: &Runtime,
+    source: DownloadSource,
+    env: &[(String, String)],
+) -> Result<RegistryInfo, String> {
     let key = cache_key(runtime, source);
     if let Some(info) = cache_get(&key) {
         return Ok(info);
     }
-    match run_query(runtime, source) {
+    match run_query(runtime, env) {
         Ok(info) => {
             cache_put(&key, info.clone());
             Ok(info)
@@ -116,8 +121,8 @@ fn timeout_error() -> String {
     format!("查询官方版本列表超时（{} 秒）", QUERY_TIMEOUT.as_secs())
 }
 
-fn run_query(runtime: &Runtime, source: DownloadSource) -> Result<RegistryInfo, String> {
-    let mut command = build_command(runtime, source)?;
+fn run_query(runtime: &Runtime, env: &[(String, String)]) -> Result<RegistryInfo, String> {
+    let mut command = build_command(runtime, env)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -203,12 +208,11 @@ fn run_query(runtime: &Runtime, source: DownloadSource) -> Result<RegistryInfo, 
 
 /// 组装查询命令：Windows 直接跑 npm；WSL 经 wsl.exe 在发行版里跑。
 ///
-/// `source` 决定是否往子进程环境里塞 registry：「沿用 npm 全局配置」时不塞任何东西，
-/// 子进程读到的就是用户自己 `.npmrc` 里的源；选了镜像/官方时用环境变量覆盖，
+/// `extra_env` 决定往子进程环境里塞什么：下载源（选「沿用 npm 全局配置」时那一项根本不出现，
+/// 子进程读到的就是用户自己 `.npmrc` 里的源）与代理。都是环境变量覆盖，
 /// 不修改用户的任何配置文件。
-fn build_command(runtime: &Runtime, source: DownloadSource) -> Result<Command, String> {
+fn build_command(runtime: &Runtime, extra_env: &[(String, String)]) -> Result<Command, String> {
     let args = registry::query_args();
-    let env = net::registry_env(source);
     match runtime {
         Runtime::Default => {
             let mut command = if cfg!(windows) {
@@ -221,7 +225,7 @@ fn build_command(runtime: &Runtime, source: DownloadSource) -> Result<Command, S
                 Command::new("npm")
             };
             command.args(args);
-            command.envs(env);
+            command.envs(extra_env.iter().map(|(key, value)| (key, value)));
             Ok(command)
         }
         Runtime::Wsl { distro } => {
@@ -237,7 +241,9 @@ fn build_command(runtime: &Runtime, source: DownloadSource) -> Result<Command, S
                 // 取不到干净 PATH 就按原样进发行版，至少还有一次机会。
                 Err(err) => eprintln!("[dsharbor] 读取 WSL PATH 失败，直接执行：{err}"),
             }
-            env.extend(net::registry_env(source));
+            // 代理与源一起进 `env K=V`：WSL 里 Command::env 只作用于 Windows 侧进程，
+            // 到不了发行版内部，只能拼成 argv 交给 env。
+            env.extend_from_slice(extra_env);
             if !env.is_empty() {
                 command.arg("env");
                 for (key, value) in env {
@@ -257,6 +263,16 @@ fn build_command(runtime: &Runtime, source: DownloadSource) -> Result<Command, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dsharbor_core::net::{self, ProxyResolution};
+
+    /// 代理方案的测试替身：一条地址、一组例外，别去碰开发机真实的系统设置。
+    fn proxy(url: &str) -> ProxyResolution {
+        ProxyResolution {
+            url: Some(url.to_string()),
+            bypass: vec!["*.corp.example".to_string()],
+            ..ProxyResolution::default()
+        }
+    }
 
     #[test]
     fn cache_key_separates_runtimes() {
@@ -315,7 +331,7 @@ mod tests {
             &Runtime::Wsl {
                 distro: "Ubuntu".into(),
             },
-            DownloadSource::Inherit,
+            &[],
         )
         .unwrap();
         let args: Vec<String> = command
@@ -337,7 +353,10 @@ mod tests {
             &Runtime::Wsl {
                 distro: "Ubuntu".into(),
             },
-            DownloadSource::Official,
+            &net::plan_env(
+                net::registry_of(DownloadSource::Official),
+                &ProxyResolution::default(),
+            ),
         )
         .unwrap();
         let args: Vec<String> = command
@@ -360,7 +379,14 @@ mod tests {
 
     #[test]
     fn host_command_sets_the_registry_env_var_and_inherit_sets_nothing() {
-        let official = build_command(&Runtime::Default, DownloadSource::Official).unwrap();
+        let official = build_command(
+            &Runtime::Default,
+            &net::plan_env(
+                net::registry_of(DownloadSource::Official),
+                &ProxyResolution::default(),
+            ),
+        )
+        .unwrap();
         let envs: Vec<(String, String)> = official
             .get_envs()
             .map(|(key, value)| {
@@ -379,7 +405,14 @@ mod tests {
         );
 
         // 验收标准③：选「沿用」时不下发 registry，行为等同于没有这项功能。
-        let inherit = build_command(&Runtime::Default, DownloadSource::Inherit).unwrap();
+        let inherit = build_command(
+            &Runtime::Default,
+            &net::plan_env(
+                net::registry_of(DownloadSource::Inherit),
+                &ProxyResolution::default(),
+            ),
+        )
+        .unwrap();
         assert!(
             inherit
                 .get_envs()
@@ -389,8 +422,78 @@ mod tests {
     }
 
     #[test]
+    fn host_command_carries_the_proxy_alongside_the_source() {
+        // 代理与源一起由 plan_env 产出：这条测试盯的是「查询路径也走了同一个计划」。
+        let env = net::plan_env(
+            net::registry_of(DownloadSource::Official),
+            &proxy("http://127.0.0.1:7890"),
+        );
+        let command = build_command(&Runtime::Default, &env).unwrap();
+        let envs: Vec<(String, String)> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.unwrap_or_default().to_string_lossy().to_string(),
+                )
+            })
+            .collect();
+        assert!(
+            envs.contains(&(
+                "npm_config_registry".to_string(),
+                "https://registry.npmjs.org".to_string()
+            )),
+            "{envs:?}"
+        );
+        assert!(
+            envs.contains(&(
+                "HTTPS_PROXY".to_string(),
+                "http://127.0.0.1:7890".to_string()
+            )),
+            "{envs:?}"
+        );
+        let no_proxy = envs
+            .iter()
+            .find(|(key, _)| key == "NO_PROXY")
+            .map(|(_, value)| value.clone())
+            .expect("NO_PROXY 应该在计划里");
+        assert!(
+            no_proxy.starts_with("localhost,127.0.0.1,::1"),
+            "{no_proxy}"
+        );
+        assert!(no_proxy.contains("*.corp.example"), "{no_proxy}");
+    }
+
+    #[test]
+    fn wsl_command_passes_the_proxy_through_env_args() {
+        // 回环例外里含 `::1`，值本身不含空格——WSL 的 `env K=V` argv 才能不转义就传下去。
+        let env = net::plan_env(None, &proxy("http://127.0.0.1:7890"));
+        let command = build_command(
+            &Runtime::Wsl {
+                distro: "Ubuntu".into(),
+            },
+            &env,
+        )
+        .unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        let bash_at = args.iter().position(|arg| arg == "bash").unwrap();
+        let https_at = args
+            .iter()
+            .position(|arg| arg == "HTTPS_PROXY=http://127.0.0.1:7890")
+            .unwrap();
+        assert!(https_at < bash_at, "{args:?}");
+        // 每个注入项都得是单个 argv（含空格就会被 env 拆坏）。
+        for arg in &args[..bash_at] {
+            assert!(!arg.contains(' '), "注入项不该含空格：{arg}");
+        }
+    }
+
+    #[test]
     fn host_command_runs_npm_view_in_json_mode() {
-        let command = build_command(&Runtime::Default, DownloadSource::Inherit).unwrap();
+        let command = build_command(&Runtime::Default, &[]).unwrap();
         let args: Vec<String> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())
