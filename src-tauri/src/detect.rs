@@ -56,8 +56,8 @@ fn resolved_host_source(managed_host: Option<String>, flag_host: Option<String>)
 
 /// 本次启动真正会落到哪个地址：host 跟随 profile / 附加参数（WSL 固定回环），
 /// 端口按上面的优先级。
-pub fn effective_endpoint(config: &LaunchConfig) -> Endpoint {
-    let hint = profile::port_hint(config).ok();
+pub fn effective_endpoint(config: &LaunchConfig, profile: &str) -> Endpoint {
+    let hint = profile::port_hint(config, profile).ok();
     let managed_port = hint.as_ref().and_then(|hint| hint.port);
     let managed_host = hint.and_then(|hint| hint.host);
     let flag_port = launch::extract_configured_port(&config.extra_args);

@@ -177,6 +177,17 @@ interface BridgeState {
   latestBackup: string | null;
 }
 
+/** 一份环境（DSH profile）的摘要：与 Rust 侧 `dsharbor_core::profiles::ProfileSummary` 对应。 */
+interface ProfileSummary {
+  name: string;
+  /** `dsh.profile.bundles` 里登记了多少项。 */
+  plugins: number;
+  /** 桥接插件是否已登记在 bundles 里。 */
+  bridgeInstalled: boolean;
+  /** 是否登记了网页应用 bundle（决定它能不能起网页界面）。 */
+  webCapable: boolean;
+}
+
 /** 下载源候选：标签用界面上的原文，value 与 Rust 侧 `DownloadSource::as_str()` 一致。 */
 const DOWNLOAD_SOURCE_CHOICES: PickerChoice[] = [
   { value: "inherit", label: "沿用 npm 全局配置" },
@@ -763,15 +774,25 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   const bridgeSummary = `
     <span id="bridge-summary" class="badge badge-stopped card-summary">读取中…</span>
   `;
-  // 「环境」「集成」两张卡本轮只铺承载：标题、折叠头、摘要徽章与一行占位说明。
-  // 卡片的具体内容（环境列表 / 命令行与缓存）由后续版本逐张接入，
-  // 字段本身已经在读写链路上，不再变动。摘要徽章先给占位文案，免得收起后一片空白。
-  const placeholderCard = (key: CardKey, title: string, note: string): string =>
-    cardSection(
-      foldHead(key, title, `\n    <span id="${key}-summary" class="badge badge-stopped card-summary">未设置</span>\n  `),
-      `<p class="hint">${note}</p>`,
-    );
-  const profilesSection = placeholderCard("profiles", "环境", "当前使用哪一份 DSH 环境、装了哪些插件，将在后续版本显示在这里。");
+  // 「环境」卡：选当前启动用哪一份 DSH 环境（profile）。
+  // 下拉只列能起网页界面的环境（官方桌面端专用目录整份隐藏，见核心库 profiles.rs）。
+  // 切换只写配置、不自动重启：正在跑的会话不能因为点一下下拉就断。
+  const profilesSummary = `
+    <span id="profiles-summary" class="badge badge-stopped card-summary">读取中…</span>
+  `;
+  const profilesBody = `
+    <div class="fields profiles-fields">
+      <span class="field-label">启动用环境 <span class="info-dot" role="img" tabindex="0" aria-label="环境说明" data-tip="环境是 ~/.dsh/profiles 下的一份独立 DSH 安装，各自有自己的插件与配置。只有登记了网页应用的环境才能起界面；切换后需要重启 DSH 才生效。">!</span></span>
+      <div class="picker" id="profile-picker"></div>
+      <p class="hint" id="profile-hint"></p>
+    </div>
+    <div id="profile-restart-row" class="actions hidden">
+      <button id="btn-profile-restart" class="primary">重启 DSH 使切换生效</button>
+    </div>
+    <p id="profile-note" class="hint hidden"></p>
+    <p id="profile-error" class="error hidden"></p>
+  `;
+  const profilesSection = cardSection(foldHead("profiles", "环境", profilesSummary), profilesBody);
   // 「网络」卡：本版接管下载源；代理设置的控件由后续版本接进来。
   const networkSummary = `
     <span id="network-summary" class="badge badge-stopped card-summary">沿用 npm 全局配置</span>
@@ -872,7 +893,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行这条命令。">!</span></span>
       <div class="picker" id="custom-runtime-picker"></div>
       <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
-      <p class="hint">写整条启动命令（末尾保留 <code>web</code> 子命令）；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。</p>
+      <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」卡里的其它环境时不会改写这条命令——自己写进去才算数。</p>
     </div>
   `;
   // 端口控件：原生两主题用候选 I 的 NumberBox（带上下箭头），原版是纯文本框（id 一样，绑定代码共用）。
@@ -1955,6 +1976,10 @@ async function main(): Promise<void> {
         if (command === "restart_dsh") endRestartSpin();
       }
       await refresh();
+      // 新会话已经换成配置里的环境了：收起「需要重启」那一行，免得一直挂在那儿。
+      pendingProfile = null;
+      renderProfilesUI();
+      void loadProfiles();
     }
 
     // 「启动 DSH / 停止」同一个按钮：运行中（含「启动中」）点击是停止，否则是启动（失败后也是重新启动）。
@@ -2093,6 +2118,130 @@ async function main(): Promise<void> {
           await refreshBridgeState();
         }
       })();
+    });
+
+    // ---- 环境卡片：选当前启动用哪一份 DSH 环境（profile） ----------------------
+    // 只列能起网页界面的环境；下拉项文案与摘要徽章都由核心库的 `ProfileSummary`
+    // 算好（名字 · 插件数 · 桥接状态），界面不另算一套口径。
+    const profilesSummary = $<HTMLSpanElement>("profiles-summary");
+    const profileHintEl = $<HTMLParagraphElement>("profile-hint");
+    const profileNote = $<HTMLParagraphElement>("profile-note");
+    const profileError = $<HTMLParagraphElement>("profile-error");
+    const profileRestartRow = $<HTMLElement>("profile-restart-row");
+    const btnProfileRestart = $<HTMLButtonElement>("btn-profile-restart");
+    /** 后端枚举回来的全部环境（含不能选的，便于提示「当前环境不可用」）。 */
+    let profileList: ProfileSummary[] = [];
+    /** 已切换但还没重启时记住目标名字，用来决定「提示重启」那一行显不显示。 */
+    let pendingProfile: string | null = null;
+
+    const profileOf = (name: string): ProfileSummary | null =>
+      profileList.find((item) => item.name === name) ?? null;
+
+    /** 徽章文案：优先说当前选中的那份，选中的找不到时（环境被删了）如实说。 */
+    function profileBadgeText(): string {
+      const current = profileOf(prefs.profile);
+      if (!current) {
+        return profileList.length === 0 ? "没有可用环境" : `${prefs.profile}（找不到）`;
+      }
+      return `${current.name} · ${current.plugins} 个插件 · ${current.bridgeInstalled ? "桥接已装" : "桥接未装"}`;
+    }
+
+    function renderProfilesUI(): void {
+      const current = profileOf(prefs.profile);
+      profilesSummary.textContent = profileBadgeText();
+      profilesSummary.className = `badge ${current ? "badge-running" : "badge-stopped"} card-summary`;
+      profileHintEl.textContent = current
+        ? `已登记 ${current.plugins} 个插件，${current.bridgeInstalled ? "桥接插件已装（能直接取带 token 的登录链接）" : "桥接插件未装（登录链接走日志兜底）"}。`
+        : profileList.length === 0
+          ? "还没读到任何能起网页界面的环境；先启动一次 DSH 会创建默认环境。"
+          : `配置里记的环境「${prefs.profile}」已经不在了，从下拉里重新选一个。`;
+      // 只有「已存进配置」且与当前环境不同的目标才需要重启生效。
+      profileRestartRow.classList.toggle("hidden", pendingProfile === null);
+    }
+
+    function fillProfilePicker(): void {
+      const selectable = profileList.filter((item) => item.webCapable && item.name !== "desktop");
+      profilePicker.setChoices(
+        selectable.map((item) => ({ value: item.name, label: `${item.name} · ${item.plugins} 个插件` })),
+      );
+      // 当前环境不在可选集里（被删了 / 还没读到）时不强行改 value，让下拉停在原值上，
+      // 由下面的说明文字告诉用户去重选。
+      if (selectable.some((item) => item.name === prefs.profile)) {
+        profilePicker.setValue(prefs.profile);
+      }
+    }
+
+    async function loadProfiles(): Promise<void> {
+      try {
+        profileList = await invoke<ProfileSummary[]>("list_profiles", { config: collectConfig() });
+        profileError.classList.add("hidden");
+      } catch (err) {
+        profileList = [];
+        profileError.textContent = `读取环境列表失败：${err}`;
+        profileError.classList.remove("hidden");
+      }
+      fillProfilePicker();
+      renderProfilesUI();
+    }
+
+    /** 切环境：写配置 → 需要时补装桥接 → 提示重启。不自动重启，免得断掉正在跑的会话。 */
+    async function selectProfile(name: string): Promise<void> {
+      if (name === prefs.profile) {
+        return;
+      }
+      profileError.classList.add("hidden");
+      const previous = prefs.profile;
+      prefs = { ...prefs, profile: name };
+      pendingProfile = name;
+      renderProfilesUI();
+      await persistConfigQuiet();
+      // 环境名进了配置文件，后续所有插件操作与启动都按新环境走（后端从磁盘读）。
+      const target = profileOf(name);
+      const running = currentStatus?.state === "running";
+      if (target && !target.bridgeInstalled) {
+        if (running) {
+          // 实例在跑的时候不能改它的 profile 文件（pnpm 会抢锁）：只提示，不打断。
+          profileNote.textContent = `「${name}」里还没装桥接插件；先停止 DSH，重启时会自动装好。`;
+          profileNote.classList.remove("hidden");
+        } else {
+          profileNote.textContent = `正在给「${name}」安装桥接插件…`;
+          profileNote.classList.remove("hidden");
+          try {
+            // 后端从磁盘读环境名，所以必须先落盘再调。
+            const outcome = await invoke<BridgeOutcome>("bridge_install", { config: collectConfig() });
+            profileNote.textContent = outcome.ok
+              ? `已给「${name}」装好桥接插件。`
+              : `给「${name}」装桥接插件没成功：${outcome.message}`;
+          } catch (err) {
+            profileNote.textContent = `给「${name}」装桥接插件失败：${err}`;
+          }
+        }
+      } else {
+        profileNote.classList.add("hidden");
+      }
+      // 切换后重读列表（桥接可能刚装上）与桥接卡状态。
+      await loadProfiles();
+      void refreshBridgeState();
+      void syncCliShim();
+      if (running) {
+        // 实例还在跑：写清「现在跑的还是旧环境」——这句比「已装好桥接」重要，覆盖它。
+        profileNote.classList.remove("hidden");
+        profileNote.textContent = `已切到「${name}」；正在跑的会话仍是「${previous}」，重启后才会用新环境。`;
+      }
+    }
+
+    const profilePicker = new Picker("profile-picker", (value) => {
+      void selectProfile(value);
+    });
+    // 这个 Picker 建得比上面那批晚（卡片内容在同一段代码里自成一个区块），
+    // 单独追加进 livePickers，切主题时同样要 dispose。
+    livePickers.push(profilePicker);
+
+    btnProfileRestart.addEventListener("click", () => {
+      pendingProfile = null;
+      renderProfilesUI();
+      beginRestartSpin();
+      void startOrRestart("restart_dsh");
     });
 
     // ---- 集成卡片：命令行集成（用户级 PATH + dsh 垫片） ------------------------
@@ -2339,6 +2488,7 @@ async function main(): Promise<void> {
     await refresh();
     void refreshBridgeState();
     void refreshCliState();
+    void loadProfiles();
     refreshNowHook = refresh;
     // 切主题会重建整个界面：转动状态与计时在模块级，这里把类重新贴到新的那颗「重启 DSH」上。
     applyRestartSpin();

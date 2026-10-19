@@ -106,8 +106,9 @@ fn start_session(
 ) -> Result<(), String> {
     // 先过校验并持久化（保留托盘单击等壳偏好）：非法输入在这里报错——不写配置、不启动进程。
     settings::save_launch(app, config)?;
-    let launcher_args = profile::port_overlay_args(app, config)?;
-    spawn_session(app, state, config, &launcher_args)?;
+    let profile = settings::load(app).prefs.profile;
+    let launcher_args = profile::port_overlay_args(app, config, &profile)?;
+    spawn_session(app, state, config, &profile, &launcher_args)?;
     remember_config(state, config);
     Ok(())
 }
@@ -140,6 +141,7 @@ fn spawn_session(
     app: &tauri::AppHandle,
     state: &AppState,
     config: &LaunchConfig,
+    profile: &str,
     launcher_args: &[String],
 ) -> Result<(), String> {
     let mut spawned_child = false;
@@ -158,7 +160,7 @@ fn spawn_session(
         // 确认是 DSH（多半是上次壳异常退出的残留，或用户自己起的）→ 按外部运行中报送；
         // 是别的程序占着端口 → 给出明确的占用提示，代替原先干巴巴的退出代码。
         // 地址跟随 profile 的 host：DSH 可以只绑在网卡 IP 上，探回环会漏判。
-        let endpoint = detect::effective_endpoint(config);
+        let endpoint = detect::effective_endpoint(config, profile);
         let tls_requested = launch::has_tls_args(&config.extra_args);
         if detect::port_alive(&endpoint) {
             if detect::dsh_fingerprint(&endpoint) == Some(true) {
@@ -183,7 +185,7 @@ fn spawn_session(
             if let Ok(mut slot) = state.external_port.lock() {
                 *slot = None;
             }
-            match launcher::spawn(config, launcher_args, endpoint) {
+            match launcher::spawn(config, profile, launcher_args, endpoint) {
                 Ok(session) => {
                     *guard = Some(session);
                     spawned_child = true;
@@ -198,16 +200,17 @@ fn spawn_session(
     }
     if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
-        query_dsh_version_async(app, config);
+        query_dsh_version_async(app, config, profile);
     }
     result
 }
 
 /// 启动成功后异步查询 DSH 版本号（失败只记日志：界面显示「DSH 版本未知」即可）。
-fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig) {
+fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig, profile: &str) {
     let app = app.clone();
     let config = config.clone();
-    std::thread::spawn(move || match query_dsh_version(&config) {
+    let profile = profile.to_string();
+    std::thread::spawn(move || match query_dsh_version(&config, &profile) {
         Ok(version) => {
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(mut slot) = state.dsh_version.lock() {
@@ -228,8 +231,9 @@ fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig) {
 ///
 /// 复用启动器的同一条通路（同样的启动方式、同样的 PATH 注入），所以四种启动方式都能查；
 /// 该命令只打印版本号后退出（实测 `dsh web --version` 不落盘、不起服务）。
-fn query_dsh_version(config: &LaunchConfig) -> Result<String, String> {
-    let plan = dsharbor_core::launch::build_launch_plan(config, &[], &[VERSION_ARG.to_string()])?;
+fn query_dsh_version(config: &LaunchConfig, profile: &str) -> Result<String, String> {
+    let plan =
+        dsharbor_core::launch::build_launch_plan(config, profile, &[], &[VERSION_ARG.to_string()])?;
     let mut command = launcher::command_for_plan(&plan);
     launcher::apply_no_window(&mut command);
     command
@@ -357,11 +361,17 @@ async fn set_cli_integration(
 /// async 命令：同步命令跑在主线程上，而读 target 环境配置在 WSL 模式下要起 wsl.exe
 /// （几百毫秒到数秒）——主线程一堵，窗口的拖动/滚动/点击全跟着僵（切换启动方式卡顿的根因）。
 #[tauri::command]
-async fn profile_port_hint(config: LaunchConfig) -> Result<profile::PortHint, String> {
+async fn profile_port_hint(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+) -> Result<profile::PortHint, String> {
     // spawn_blocking 错掉（JoinError）或 port_hint 自己报错都要传给界面。
-    let hint = tauri::async_runtime::spawn_blocking(move || profile::port_hint(&config))
-        .await
-        .map_err(|err| format!("后台读取端口信息失败：{err}"))??;
+    let hint = tauri::async_runtime::spawn_blocking(move || {
+        let profile = settings::load(&app).prefs.profile;
+        profile::port_hint(&config, &profile)
+    })
+    .await
+    .map_err(|err| format!("后台读取端口信息失败：{err}"))??;
     Ok(hint)
 }
 
@@ -453,7 +463,8 @@ fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option
                     guard.clone()
                 };
                 if let Some(config) = config {
-                    let endpoint = detect::effective_endpoint(&config);
+                    let profile = settings::load(app).prefs.profile;
+                    let endpoint = detect::effective_endpoint(&config, &profile);
                     if detect::port_alive(&endpoint)
                         && detect::dsh_fingerprint(&endpoint) == Some(true)
                     {
@@ -909,7 +920,8 @@ fn bridge_install(
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
     ensure_session_stopped(&state)?;
-    plugin::install(&app, &config)
+    let profile = settings::load(&app).prefs.profile;
+    plugin::install(&app, &config, &profile)
 }
 
 /// 卸载桥接插件（备份 → 官方 plugin remove → 校验 bundles 摘除）。
@@ -920,7 +932,8 @@ fn bridge_uninstall(
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
     ensure_session_stopped(&state)?;
-    plugin::uninstall(&app, &config)
+    let profile = settings::load(&app).prefs.profile;
+    plugin::uninstall(&app, &config, &profile)
 }
 
 /// 从备份恢复 profile 文件（回滚）。
@@ -932,7 +945,8 @@ fn bridge_restore(
     backup_dir: String,
 ) -> Result<String, String> {
     ensure_session_stopped(&state)?;
-    plugin::restore(&app, &config, &backup_dir)
+    let profile = settings::load(&app).prefs.profile;
+    plugin::restore(&app, &config, &profile, &backup_dir)
 }
 
 /// 查询桥接插件在当前目标环境中的状态。
@@ -944,10 +958,26 @@ async fn bridge_state(
     app: tauri::AppHandle,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeState, String> {
-    let bridge = tauri::async_runtime::spawn_blocking(move || plugin::state(&app, &config))
-        .await
-        .map_err(|err| format!("后台读取桥接状态失败：{err}"))??;
+    let bridge = tauri::async_runtime::spawn_blocking(move || {
+        let profile = settings::load(&app).prefs.profile;
+        plugin::state(&app, &config, &profile)
+    })
+    .await
+    .map_err(|err| format!("后台读取桥接状态失败：{err}"))??;
     Ok(bridge)
+}
+
+/// 列出当前目标环境下能起网页界面、可供「启动用」选择的环境。
+///
+/// async 命令：WSL 目标下要经 wsl.exe 读发行版里的目录（秒级），同步命令会让
+/// 换启动方式时整个窗口发僵（同 profile_port_hint）。
+#[tauri::command]
+async fn list_profiles(
+    config: LaunchConfig,
+) -> Result<Vec<dsharbor_core::profiles::ProfileSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || plugin::list_profiles(&config))
+        .await
+        .map_err(|err| format!("后台枚举环境失败：{err}"))?
 }
 
 /// 记录界面主题（Rust 侧镜像）。
@@ -1035,8 +1065,10 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                     .ok()
                     .and_then(|slot| slot.clone())
                     .unwrap_or_else(|| settings::load(app).launch);
-                let launcher_args = profile::port_overlay_args(app, &config).unwrap_or_default();
-                if let Err(err) = spawn_session(app, &state, &config, &launcher_args) {
+                let profile = settings::load(app).prefs.profile;
+                let launcher_args =
+                    profile::port_overlay_args(app, &config, &profile).unwrap_or_default();
+                if let Err(err) = spawn_session(app, &state, &config, &profile, &launcher_args) {
                     eprintln!("重启 DSH 失败：{err}");
                 }
             }
@@ -1286,10 +1318,12 @@ pub fn run() {
                 match serde_json::from_str::<LaunchConfig>(&raw) {
                     Ok(config) => {
                         let state = app.state::<AppState>();
+                        let profile = settings::load(app.handle()).prefs.profile;
                         let launcher_args =
-                            profile::port_overlay_args(app.handle(), &config).unwrap_or_default();
-                        let endpoint = detect::effective_endpoint(&config);
-                        match launcher::spawn(&config, &launcher_args, endpoint) {
+                            profile::port_overlay_args(app.handle(), &config, &profile)
+                                .unwrap_or_default();
+                        let endpoint = detect::effective_endpoint(&config, &profile);
+                        match launcher::spawn(&config, &profile, &launcher_args, endpoint) {
                             Ok(session) => {
                                 if let Ok(mut guard) = state.session.lock() {
                                     *guard = Some(session);
@@ -1321,6 +1355,7 @@ pub fn run() {
             load_shell_config,
             save_shell_config,
             profile_port_hint,
+            list_profiles,
             open_external,
             set_caption_color,
             save_ui_theme,
