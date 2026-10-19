@@ -292,17 +292,29 @@ pub fn rename(config: &LaunchConfig, old: &str, new: &str) -> Result<ProfileOutc
     // 目录换好了再改清单里的包名：改了名但目录没搬成会让环境彻底失联。
     // 传旧目录：清单里指回旧目录的依赖（如桥接插件的 file: 规格）随改名失效，直接剔掉。
     let package_json = plugin::read_file(&target, &join(&target, &new_dir, "package.json"))?;
-    if let Ok(rewrite) = profile_ops::retarget_manifest(&package_json, new, &old_dir) {
-        plugin::write_file(
-            &target,
-            &join(&target, &new_dir, "package.json"),
-            &rewrite.json,
-        )?;
-    }
+    // 改写失败（清单不是合法 JSON 等）不能静默吞掉：目录已经搬完了，回滚比留着可用，
+    // 但必须把「只改了一半」告诉用户，别让界面一边报「都改了」一边留着旧包名。
+    let manifest_error = match profile_ops::retarget_manifest(&package_json, new, &old_dir) {
+        Ok(rewrite) => {
+            plugin::write_file(
+                &target,
+                &join(&target, &new_dir, "package.json"),
+                &rewrite.json,
+            )?;
+            None
+        }
+        Err(err) => Some(err),
+    };
     let summary = summarize_dir(&target, new, &new_dir)?;
+    let message = match manifest_error {
+        None => format!("已把「{old}」重命名为「{new}」（目录与清单里的名字都改了）。"),
+        Some(err) => format!(
+            "已把目录「{old}」改名为「{new}」，但清单里的名字没跟着改：{err}\n现在清单还写着旧名字，需要手动改，否则 DSH 会把这份环境当成另一份。"
+        ),
+    };
     Ok(ProfileOutcome {
         ok: true,
-        message: format!("已把「{old}」重命名为「{new}」（目录与清单里的名字都改了）。"),
+        message,
         name: new.to_string(),
         summary: Some(summary),
     })
@@ -480,13 +492,43 @@ mod tests {
             renamed_json.contains("\"dsh-profile-lab3\""),
             "{renamed_json}"
         );
+        assert!(
+            renamed.message.contains("目录与清单"),
+            "{}",
+            renamed.message
+        );
+
+        // 重命名时清单改不动（这里是顶层不是对象；真实中的同类是手改坏的 JSON）：
+        // 目录已经搬过去了，但仍要把「只改了一半」带到返回的说明里，
+        // 不能让界面一边报「名字都改了」一边留着旧包名。
+        let broken = "[1, 2, 3]\n";
+        std::fs::write(renamed_dir.join("package.json"), broken).unwrap();
+        let partial = rename(&config, "lab3", "lab4").expect("目录不合法才会走 Err");
+        assert!(partial.ok, "{}", partial.message);
+        assert_eq!(partial.name, "lab4");
+        assert!(partial.message.contains("lab3"), "{}", partial.message);
+        assert!(partial.message.contains("lab4"), "{}", partial.message);
+        assert!(partial.message.contains("清单"), "{}", partial.message);
+        assert!(
+            !partial.message.contains("都改了"),
+            "改写失败时不能说成两边都改了：{}",
+            partial.message
+        );
+        let partial_dir = root.join("profiles").join("lab4");
+        assert!(partial_dir.is_dir(), "目录搬家本身应该已经完成");
+        assert!(!renamed_dir.exists());
+        assert_eq!(
+            std::fs::read_to_string(partial_dir.join("package.json")).unwrap(),
+            broken,
+            "改写失败时不该写一半"
+        );
 
         // 删除：当前启动用的环境被拒绝。
         let err = delete(&config, "lab", "lab").unwrap_err();
         assert!(err.contains("当前"), "{err}");
-        let deleted = delete(&config, "lab", "lab3").unwrap();
+        let deleted = delete(&config, "lab", "lab4").unwrap();
         assert!(deleted.ok, "{}", deleted.message);
-        assert!(!renamed_dir.exists());
+        assert!(!partial_dir.exists());
 
         let _ = std::fs::remove_dir_all(&root);
     }

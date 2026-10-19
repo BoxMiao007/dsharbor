@@ -212,16 +212,9 @@ pub fn state(app: &tauri::AppHandle, config: &LaunchConfig, enabled: bool) -> Cl
         Err(err) => (String::new(), Some(err.clone())),
     };
 
-    let message = state_message(
-        supported,
-        enabled,
-        on_path,
-        rendered.is_ok(),
-        &shim_error,
-        &shadow,
-    );
-
-    CliIntegrationState {
+    // 先把状态装起来，再由它自己算出那句话：两者看的是同一份事实，
+    // 免得六个位置参数（且参数顺序肉眼不可辨）一路对下去。
+    let mut state = CliIntegrationState {
         supported,
         enabled,
         bin_dir,
@@ -232,31 +225,34 @@ pub fn state(app: &tauri::AppHandle, config: &LaunchConfig, enabled: bool) -> Cl
         shim_error,
         system_dsh,
         shadow,
-        message,
-    }
+        message: String::new(),
+    };
+    state.message = state_message(&state);
+    state
 }
 
 /// 一行状态说明：把「开关 / 真实 PATH / 垫片能不能渲染 / 谁盖住了它」四件事讲清楚。
-fn state_message(
-    supported: bool,
-    enabled: bool,
-    on_path: bool,
-    shim_ok: bool,
-    shim_error: &Option<String>,
-    shadow: &Option<String>,
-) -> String {
+///
+/// 直接读 `CliIntegrationState`：`shim_error` 为空就等价于「垫片渲染得出来」
+/// （`state()` 里两者出自同一次 `render_shim`），不需要再传一个布尔。
+fn state_message(state: &CliIntegrationState) -> String {
+    let supported = state.supported;
+    let enabled = state.enabled;
+    let on_path = state.on_path;
+    let shim_ok = state.shim_error.is_none();
+
     if !supported {
         return "仅在 Windows 宿主可用：这里不会改动任何 shell 配置，可以复制下面的命令手动接入。"
             .to_string();
     }
     if enabled {
-        if let Some(err) = shim_error {
+        if let Some(err) = &state.shim_error {
             return format!("垫片暂时写不出来：{err}");
         }
         if !on_path {
             return "开关已打开，但用户 PATH 里没有垫片目录（可能被其它工具改回去了），重新开关一次即可补回。".to_string();
         }
-        if let Some(shadow) = shadow {
+        if let Some(shadow) = &state.shadow {
             return format!(
                 "已接入。注意：PATH 里还有一份排在更前面的 {shadow}，终端会先命中它；要改用壳里的这份，把它挪到后面或删掉。"
             );
@@ -335,28 +331,51 @@ pub fn refresh_on_start(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
 
+    /// 只关心那四个事实，其余字段填占位的：`state_message` 只看
+    /// supported / enabled / on_path / shim_error / shadow。
+    fn fixture(
+        supported: bool,
+        enabled: bool,
+        on_path: bool,
+        shim_error: Option<String>,
+        shadow: Option<String>,
+    ) -> CliIntegrationState {
+        CliIntegrationState {
+            supported,
+            enabled,
+            bin_dir: r"C:\Users\me\AppData\Roaming\DSHarbor\bin".to_string(),
+            shim_path: r"C:\Users\me\AppData\Roaming\DSHarbor\bin\dsh.cmd".to_string(),
+            on_path,
+            manual_command: String::new(),
+            shim_text: String::new(),
+            shim_error,
+            system_dsh: None,
+            shadow,
+            message: String::new(),
+        }
+    }
+
     #[test]
     fn message_explains_non_windows_case() {
-        let message = state_message(false, true, false, true, &None, &None);
+        let message = state_message(&fixture(false, true, false, None, None));
         assert!(message.contains("仅在 Windows 宿主可用"));
     }
 
     #[test]
     fn message_reports_render_error_first() {
-        let message = state_message(true, true, true, false, &Some("坏字符".to_string()), &None);
+        let message = state_message(&fixture(true, true, true, Some("坏字符".to_string()), None));
         assert!(message.contains("坏字符"));
     }
 
     #[test]
     fn message_warns_about_shadowing() {
-        let message = state_message(
+        let message = state_message(&fixture(
             true,
             true,
             true,
-            true,
-            &None,
-            &Some(r"C:\npm\dsh.cmd".to_string()),
-        );
+            None,
+            Some(r"C:\npm\dsh.cmd".to_string()),
+        ));
         assert!(message.contains(r"C:\npm\dsh.cmd"));
         assert!(message.contains("先命中"));
     }
@@ -364,21 +383,20 @@ mod tests {
     #[test]
     fn message_stays_quiet_about_render_errors_when_disabled() {
         // 开关关着时启动方式可能还没填完（比如程序路径空着），不该拿「垫片写不出来」吓人。
-        let message = state_message(
+        let message = state_message(&fixture(
             true,
             false,
             false,
-            false,
-            &Some("坏字符".to_string()),
-            &None,
-        );
+            Some("坏字符".to_string()),
+            None,
+        ));
         assert!(!message.contains("垫片暂时写不出来"));
     }
 
     #[test]
     fn message_distinguishes_enabled_and_disabled() {
-        assert!(state_message(true, true, true, true, &None, &None).contains("新开一个终端"));
-        assert!(state_message(true, false, false, true, &None, &None).contains("开关关闭"));
-        assert!(state_message(true, true, false, true, &None, &None).contains("没有垫片目录"));
+        assert!(state_message(&fixture(true, true, true, None, None)).contains("新开一个终端"));
+        assert!(state_message(&fixture(true, false, false, None, None)).contains("开关关闭"));
+        assert!(state_message(&fixture(true, true, false, None, None)).contains("没有垫片目录"));
     }
 }

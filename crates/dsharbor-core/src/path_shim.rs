@@ -292,8 +292,25 @@ pub fn encode_batch_file(text: &str) -> Vec<u8> {
 }
 
 /// 界面给的「手动接过这条 PATH」的命令：不改任何配置文件，只给可粘贴的文本。
+///
+/// 命令的形式跟着平台走——在 cmd / PowerShell 里粘 `export PATH=...` 什么也不会发生，
+/// 反之亦然。所以这里按宿主分岔，别拿一条 POSIX 文本糊弄 Windows 用户。
 pub fn manual_command(bin_dir: &str) -> String {
-    format!("export PATH=\"$PATH:{bin_dir}\"")
+    manual_command_for(bin_dir, cfg!(windows))
+}
+
+/// `manual_command` 的平台显式版本：两条分支都能在任一宿主上被单测覆盖。
+///
+/// Windows 走 `setx PATH "%PATH%;<目录>"`（粘进 cmd 或 PowerShell 都认；
+/// 不要用 `$env:PATH`，cmd 用户占多数）。副作用由界面提示：`setx` 会把 `%VAR%`
+/// 展开成当时的值，且值超过 1024 字符会被截断——所以自动接入那条路才用 `reg add`。
+/// 非 Windows 保持 `export PATH="$PATH:<目录>"`（粘进 shell 的启动文件或当前会话）。
+pub fn manual_command_for(bin_dir: &str, windows: bool) -> String {
+    if windows {
+        format!("setx PATH \"%PATH%;{bin_dir}\"")
+    } else {
+        format!("export PATH=\"$PATH:{bin_dir}\"")
+    }
 }
 
 /// 按 PATH 顺序把每个目录与 `names` 拼接成候选路径（**不检查是否存在**）。
@@ -605,9 +622,22 @@ mod tests {
     }
 
     #[test]
-    fn manual_command_mentions_bin_dir_once() {
-        let line = manual_command("/home/me/.config/DSHarbor/bin");
-        assert_eq!(line, "export PATH=\"$PATH:/home/me/.config/DSHarbor/bin\"");
+    fn manual_command_matches_platform() {
+        // 两条分支都断言：宿主是 Windows 时也得能把 POSIX 那条测到。
+        let dir = r"C:\Users\me\AppData\Roaming\DSHarbor\bin";
+        let win = manual_command_for(dir, true);
+        assert_eq!(
+            win,
+            "setx PATH \"%PATH%;C:\\Users\\me\\AppData\\Roaming\\DSHarbor\\bin\""
+        );
+        assert_eq!(win.matches(dir).count(), 1);
+
+        let posix = manual_command_for("/home/me/.config/DSHarbor/bin", false);
+        assert_eq!(posix, "export PATH=\"$PATH:/home/me/.config/DSHarbor/bin\"");
+        assert_eq!(posix.matches("/home/me/.config/DSHarbor/bin").count(), 1);
+
+        // 便捷入口跟随宿主，不再固定成 POSIX 形式（否则 Windows 上给的命令是废的）。
+        assert_eq!(manual_command(dir), manual_command_for(dir, cfg!(windows)));
     }
 
     #[test]

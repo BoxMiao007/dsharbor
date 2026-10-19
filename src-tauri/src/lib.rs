@@ -169,6 +169,10 @@ fn spawn_session(
     launcher_args: &[String],
 ) -> Result<(), String> {
     let mut spawned_child = false;
+    // 配置只读一次：拉起进程要注入的那份环境变量、启动后要不要自动清理，
+    // 都按同一个快照判定。`settings::load` 是纯读盘，不会因为读得早而不同，
+    // 但一次快照能让两处口径天然一致（半路有人改配置也不会出现「按 A 启动、按 B 清理」）。
+    let prefs = settings::load(app).prefs;
     let result = {
         let mut guard = state
             .session
@@ -210,7 +214,6 @@ fn spawn_session(
                 *slot = None;
             }
             // 代理与下载源注入被拉起的 DSH 进程（与版本查询、插件安装卸载同一份计划）。
-            let prefs = settings::load(app).prefs;
             let env = proxy::child_env(&prefs, prefs.download_source);
             match launcher::spawn(config, profile, launcher_args, &env, endpoint) {
                 Ok(session) => {
@@ -228,10 +231,10 @@ fn spawn_session(
     if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
         query_dsh_version_async(app, config, profile);
-        // 自动清理（开关在「集成」卡，默认关）：只在这次真的拉起了一个进程之后跑。
+        // 自动清理（开关在「集成」卡，默认关）：只在这一轮真的拉起了一个 DSH 进程之后跑。
         // 壳外已有 DSH 时启动命令也返回成功，但那次什么也没起（`spawned_child` 仍为 false），
-        // 不是「这次启动成功了」，不应因此删磁盘。
-        let prefs = settings::load(app).prefs;
+        // 不是「这一轮拉起过进程」，不应因此删磁盘。
+        // 除此之外不再附加条件：进程随后是否健康退出由会话状态单独反映，不在这里等。
         if cache_auto::should_run(prefs.cache_cleanup, spawned_child) {
             run_auto_cleanup_async(app, config);
         }
@@ -239,7 +242,7 @@ fn spawn_session(
     result
 }
 
-/// 启动成功后异步跑一次自动清理，结果存进 AppState 等界面来取。
+/// 真的拉起了一个 DSH 进程之后异步跑一次自动清理，结果存进 AppState 等界面来取。
 ///
 /// 复用与「立即清理」按钮完全相同的 `npxcache::cleanup`：保留哪几份、删哪几份只在一处定义，
 /// 开关打开后不另有一套规则。
