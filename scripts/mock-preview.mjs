@@ -103,6 +103,17 @@ const state = {
     { name: "headless", plugins: 2, bridgeInstalled: false, webCapable: false, depsInstalled: false },
     { name: "desktop", plugins: 9, bridgeInstalled: true, webCapable: true, depsInstalled: true },
   ],
+  /** 补丁层备份的假数据：按环境名分组（与后端 `<备份根>/patch/<目标>/<环境>/` 同构）。
+      删掉某个环境可预览「还没有任何备份」那段提示。 */
+  patchBackups: {
+    web: [
+      { name: "patch-1767000000.yml", path: "C:\\Users\\mock\\AppData\\Roaming\\DSHarbor\\backups\\patch\\host\\web\\patch-1767000000.yml", stamp: 1767000000 },
+      { name: "patch-1767100000.yml", path: "C:\\Users\\mock\\AppData\\Roaming\\DSHarbor\\backups\\patch\\host\\web\\patch-1767100000.yml", stamp: 1767100000 },
+    ],
+    lab: [],
+  },
+  /** 重装依赖失败的假开关：设成 true 可预览「命令报错原文带回界面」那条分支。 */
+  depsInstallFails: false,
   calls: {},
 };
 
@@ -125,6 +136,10 @@ window.__mockUnimplemented = [];
     if (list.some((item) => item.name === name)) return "已经有同名环境「" + name + "」了";
     return null;
   };
+  // DSH 正在运行时的拒绝文案：照核心库 dsharbor_core::patch_layer::session_busy 抄一份，
+  // 只为预览「运行中点这些按钮会被挡下来」那条分支（真正的判定在后端）。
+  const busyText = (action, profile) =>
+    "DSH 正在运行，现在" + action + "会和运行中的进程争用环境「" + profile + "」的目录（pnpm 与 DSH 互相覆盖，结果不可预测）。\\n请先停止 DSH，再" + action + "。";
   const status = () => {
     const running = S.session === "running";
     const failed = S.session === "failed";
@@ -440,7 +455,7 @@ window.__mockUnimplemented = [];
       seen("list_profiles");
       return S.profiles || [];
     },
-    // ---- 环境生命周期（新建 / 复制 / 重命名 / 删除 / 安装依赖）----------------
+    // ---- 环境生命周期（新建 / 复制 / 重命名 / 删除 / 重装依赖）----------------
     // 假后端把 S.profiles 当成真清单来改，所以预览里连着点几下就能看到下拉、徽章与
     // 管理面板一起变。名字校验也照核心库的规则在本文件里做一份，只为预览时能看到
     // 那些拒绝原因（真判在后端）。
@@ -461,7 +476,7 @@ window.__mockUnimplemented = [];
       const source = S.profiles.find((p) => p.name === (a && a.source));
       const item = { name: name, plugins: source ? source.plugins : 0, bridgeInstalled: false, webCapable: source ? source.webCapable : true, depsInstalled: false };
       S.profiles.push(item);
-      return { ok: true, message: "已复制「" + (a && a.source) + "」为「" + name + "」（3 项配置与数据，依赖目录与锁文件未复制）。跳过：node_modules、pnpm-lock.yaml。新环境还没装依赖，点「安装依赖」补齐后才能启动。", name: name, summary: item };
+      return { ok: true, message: "已复制「" + (a && a.source) + "」为「" + name + "」（3 项配置与数据，依赖目录与锁文件未复制）。跳过：node_modules、pnpm-lock.yaml。新环境还没装依赖，点「重装依赖」补齐后才能启动。", name: name, summary: item };
     },
     rename_profile: (a) => {
       seen("rename_profile:" + (a && a.oldName ? a.oldName : "?") + "->" + (a && a.name ? a.name : "?"));
@@ -488,8 +503,68 @@ window.__mockUnimplemented = [];
       seen("install_profile_deps:" + (a && a.name ? a.name : "?"));
       const item = S.profiles.find((p) => p.name === (a && a.name));
       if (!item) throw "找不到环境「" + (a && a.name) + "」。";
+      if (S.session === "running") throw busyText("重装依赖", item.name);
+      if (S.depsInstallFails) {
+        // 失败分支：与后端一样给退出码与输出尾部，看看界面能不能把原因完整转述。
+        return {
+          ok: false,
+          message:
+            "重装依赖：dsh plugin --profile " + item.name + " install（经 Windows）\\n退出码：1\\n校验：仍未看到 node_modules ✗（安装可能未生效）\\n输出：\\n" +
+            "ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/@deepseek-ai%2Fdsh-base: Not Found - 404\\n" +
+            "This error was caused by not finding a package in the npm registry.\\n" +
+            "Progress: resolved 1, reused 0, downloaded 0, added 0",
+          name: item.name,
+          summary: item,
+        };
+      }
       item.depsInstalled = true;
-      return { ok: true, message: "安装依赖：dsh plugin --profile " + item.name + " install（经 Windows）；退出码：0；校验：node_modules 已就位 ✓", name: item.name, summary: item };
+      return {
+        ok: true,
+        message:
+          "重装依赖：dsh plugin --profile " + item.name + " install（经 Windows）\\n退出码：0\\n校验：node_modules 已就位 ✓\\n输出：\\n" +
+          "Packages: +412\\nProgress: resolved 412, reused 402, downloaded 10, added 412, done\\nDone in 21.4s",
+        name: item.name,
+        summary: item,
+      };
+    },
+    // ---- 补丁层备份 / 还原 --------------------------------------------------
+    patch_backups: (a) => {
+      seen("patch_backups:" + (a && a.name ? a.name : "?"));
+      return (S.patchBackups && S.patchBackups[a && a.name]) || [];
+    },
+    patch_backup: (a) => {
+      seen("patch_backup:" + (a && a.name ? a.name : "?"));
+      const name = a && a.name;
+      if (S.session === "running") throw busyText("备份补丁层", name);
+      const list = (S.patchBackups[name] = S.patchBackups[name] || []);
+      const stamp = Math.max(Math.floor(Date.now() / 1000), (list[0] ? list[list.length - 1].stamp : 0) + 1);
+      const file = "patch-" + stamp + ".yml";
+      const path = "C:\\\\Users\\\\mock\\\\AppData\\\\Roaming\\\\DSHarbor\\\\backups\\\\patch\\\\host\\\\" + name + "\\\\" + file;
+      list.push({ name: file, path: path, stamp: stamp });
+      return {
+        message:
+          "已备份环境「" + name + "」的补丁层（cordis.patch.yml，经 Windows）到：\\n" + path + "\\n每个环境只保留最近 5 份补丁层备份。",
+        path: path,
+        backups: list,
+      };
+    },
+    patch_restore: (a) => {
+      seen("patch_restore:" + (a && a.name ? a.name : "?") + "/" + (a && a.backup ? a.backup : "?"));
+      const name = a && a.name;
+      if (S.session === "running") throw busyText("还原补丁层", name);
+      const list = (S.patchBackups[name] = S.patchBackups[name] || []);
+      const source = list.find((item) => item.name === (a && a.backup));
+      if (!source) throw "读不到补丁层备份：" + (a && a.backup);
+      const stamp = (list[0] ? list[list.length - 1].stamp : 0) + 1;
+      const savedName = "patch-" + stamp + ".yml";
+      const saved = "C:\\\\Users\\\\mock\\\\AppData\\\\Roaming\\\\DSHarbor\\\\backups\\\\patch\\\\host\\\\" + name + "\\\\" + savedName;
+      list.push({ name: savedName, path: saved, stamp: stamp });
+      return {
+        message:
+          "已把环境「" + name + "」的补丁层还原成：\\n" + source.path + "\\n（已写回 Windows 上的 cordis.patch.yml）\\n还原前的版本已另存一份，想反悔就再还原它：\\n" + saved + "\\n补丁层要重启 DSH 后才生效。",
+        path: saved,
+        backups: list,
+      };
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,

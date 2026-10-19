@@ -903,7 +903,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         <button id="btn-profile-copy" class="ghost">复制所选环境</button>
         <button id="btn-profile-rename" class="ghost">重命名所选环境</button>
         <button id="btn-profile-delete" class="ghost danger">删除所选环境</button>
-        <button id="btn-profile-deps" class="ghost hidden">安装依赖</button>
+        <button id="btn-profile-deps" class="ghost">重装依赖</button>
       </div>
       <div id="profile-manage-confirm" class="profile-confirm hidden">
         <p id="profile-manage-confirm-text" class="hint"></p>
@@ -912,8 +912,23 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
           <button id="btn-profile-confirm-no" class="ghost">取消</button>
         </div>
       </div>
+      <div id="profile-patch" class="patch-panel hidden">
+        <span class="subcard-title">补丁层（cordis.patch.yml）</span>
+        <p class="hint">补丁层是你手写的插件覆盖层，改坏了 DSH 可能起不来。改动前先备份一份，改坏了再还原回来：每个环境只保留最近 5 份备份；还原前会自动把当前版本另存一份，所以还原本身也能再退回去。补丁层与依赖都要重启 DSH 后才生效，操作前请先停止 DSH。</p>
+        <div class="actions">
+          <button id="btn-patch-backup" class="ghost">备份补丁层</button>
+        </div>
+        <div id="patch-backup-list" class="patch-backup-list"></div>
+      </div>
       <p id="profile-manage-note" class="hint hidden"></p>
       <p id="profile-manage-error" class="error hidden"></p>
+      <details class="log-box" id="manage-output-box">
+        <summary><span class="chev">▸</span>操作输出</summary>
+        <div class="log-area">
+          <pre id="manage-output">（暂无操作）</pre>
+          <button type="button" class="log-copy" id="btn-copy-manage-output">复制</button>
+        </div>
+      </details>
     </div>
   `;
   const profilesSection = cardSection(foldHead("profiles", "环境", profilesSummary), profilesBody);
@@ -2522,6 +2537,169 @@ async function main(): Promise<void> {
       summary: ProfileSummary | null;
     }
 
+    // ---- 管理环境：补丁层备份 / 还原 ---------------------------------------------
+    // 规则（文件名、保留份数、还原前另存与说明文案）全在后端 `patch_layer` 里算，
+    // 界面只负责：对选中的那个环境发命令、把备份列表列出来、把说明原文贴出来。
+    const profilePatchPanel = $<HTMLElement>("profile-patch");
+    const patchBackupList = $<HTMLElement>("patch-backup-list");
+    const manageOutput = $<HTMLPreElement>("manage-output");
+    const manageOutputBox = $<HTMLDetailsElement>("manage-output-box");
+    const btnPatchBackup = $<HTMLButtonElement>("btn-patch-backup");
+    const btnCopyManageOutput = $<HTMLButtonElement>("btn-copy-manage-output");
+
+    /** 与 Rust 侧 `patch_layer::PatchBackup` 对应（最旧在前）。 */
+    interface PatchBackup {
+      name: string;
+      path: string;
+      stamp: number;
+    }
+
+    /** 与 Rust 侧 `patch::PatchOutcome` 对应。 */
+    interface PatchOutcome {
+      message: string;
+      path: string;
+      backups: PatchBackup[];
+    }
+
+    /** 当前选中环境的补丁层备份（最旧在前，与后端返回顺序一致）。 */
+    let patchBackups: PatchBackup[] = [];
+    /** 补丁层动作是否在跑（忙时按钮置灰，防重复提交）。 */
+    let patchBusy = false;
+    /** 已拉取备份清单的那个环境；换环境才重新拉，避免每次渲染都打一趟后端。 */
+    let patchLoadedFor: string | null = null;
+
+    /** 备份时间戳（unix 秒）→ 本地时间文本；文件名里就是它，用户能对着看。 */
+    function stampLabel(stamp: number): string {
+      const date = new Date(stamp * 1000);
+      const pad = (value: number): string => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    /** 写管理面板的输出（带路径的说明原文，含重装依赖的输出尾部），并展开输出块——
+     *  失败原因必须一眼看到，不能埋在折叠块里。 */
+    function setManageOutput(text: string, open: boolean): void {
+      manageOutput.textContent = text;
+      if (open) {
+        manageOutputBox.open = true;
+      }
+    }
+
+    /** 备份清单：最新的在最上面，每行能直接点「还原」；路径原文照抄，方便自己去翻。 */
+    function renderPatchList(): void {
+      if (patchBackups.length === 0) {
+        patchBackupList.innerHTML = `<p class="hint">这个环境还没有补丁层备份。改补丁层之前先点「备份补丁层」留个底。</p>`;
+        return;
+      }
+      const newest = patchBackups[patchBackups.length - 1]?.name ?? "";
+      patchBackupList.innerHTML = [...patchBackups]
+        .reverse()
+        .map((item) => {
+          const tag = item.name === newest ? `<span class="profile-manage-tag">最新</span>` : "";
+          const disabled = patchBusy || manageBusy ? " disabled" : "";
+          return `<div class="patch-backup-row"><span class="patch-backup-time">${stampLabel(item.stamp)}</span><span class="patch-backup-path">${escapeHtml(item.path)}</span>${tag}<button type="button" class="kv-action" data-patch-restore="${escapeHtml(item.name)}"${disabled}>还原这一份</button></div>`;
+        })
+        .join("");
+      for (const button of patchBackupList.querySelectorAll<HTMLButtonElement>("[data-patch-restore]")) {
+        button.addEventListener("click", () => {
+          void restorePatchLayer(button.dataset.patchRestore ?? "");
+        });
+      }
+    }
+
+    /** 选中环境变了才重新拉备份清单；同一个环境只拉一次。 */
+    function syncPatchPanel(): void {
+      const target = manageTarget;
+      profilePatchPanel.classList.toggle("hidden", target === null);
+      if (target === null) {
+        patchBackups = [];
+        patchLoadedFor = null;
+        renderPatchList();
+        return;
+      }
+      if (patchLoadedFor !== target) {
+        patchLoadedFor = target;
+        patchBackups = [];
+        renderPatchList();
+        // 换环境才拉一次：每次重渲染都打一趟后端没必要（这只是一个目录列举）。
+        void refreshPatchBackups(target);
+        return;
+      }
+      renderPatchList();
+    }
+
+    /** 读一次备份清单（读失败只提示，不打断其它面板动作）。 */
+    async function refreshPatchBackups(name: string): Promise<void> {
+      try {
+        const list = await invoke<PatchBackup[]>("patch_backups", { config: collectConfig(), name });
+        if (manageTarget !== name) {
+          return; // 期间换了环境，丢弃这批结果
+        }
+        patchBackups = list;
+        renderPatchList();
+      } catch (err) {
+        if (manageTarget === name) {
+          setManageError(`读取补丁层备份失败：${String(err)}`);
+        }
+      }
+    }
+
+    /** 备份补丁层：成功与否都要落地一句原文（含路径），失败原因不吞。 */
+    async function backupPatchLayer(): Promise<void> {
+      const name = manageTarget;
+      if (!name || patchBusy || manageBusy) {
+        return;
+      }
+      patchBusy = true;
+      setManageError(null);
+      setManageNote(null);
+      renderManageUI();
+      try {
+        const outcome = await invoke<PatchOutcome>("patch_backup", { config: collectConfig(), name });
+        patchBackups = outcome.backups;
+        patchLoadedFor = name;
+        setManageOutput(outcome.message, true);
+      } catch (err) {
+        setManageError(String(err));
+        setManageOutput(`备份补丁层失败：${String(err)}`, true);
+      } finally {
+        patchBusy = false;
+        renderManageUI();
+      }
+    }
+
+    /**
+     * 还原到某一份备份。
+     *
+     * 不做二次确认：后端在覆盖前会先把当前版本另存一份，还原本身就可反悔，
+     * 再多一道确认只是多一次点击（说明里会直接给出那份另存副本的路径）。
+     */
+    async function restorePatchLayer(backup: string): Promise<void> {
+      const name = manageTarget;
+      if (!name || !backup || patchBusy || manageBusy) {
+        return;
+      }
+      patchBusy = true;
+      setManageError(null);
+      setManageNote(null);
+      renderManageUI();
+      try {
+        const outcome = await invoke<PatchOutcome>("patch_restore", {
+          config: collectConfig(),
+          name,
+          backup,
+        });
+        patchBackups = outcome.backups;
+        patchLoadedFor = name;
+        setManageOutput(outcome.message, true);
+      } catch (err) {
+        setManageError(String(err));
+        setManageOutput(`还原补丁层失败：${String(err)}`, true);
+      } finally {
+        patchBusy = false;
+        renderManageUI();
+      }
+    }
+
     function setManageNote(text: string | null): void {
       if (!text) {
         profileManageNote.textContent = "";
@@ -2590,10 +2768,11 @@ async function main(): Promise<void> {
       for (const btn of [btnProfileCreate]) {
         btn.disabled = manageBusy;
       }
-      // 「安装依赖」只在选中的环境确实缺依赖时露出来：按钮多摆一颗就多一个疑问。
-      btnProfileDeps.classList.toggle("hidden", !hasTarget || target.depsInstalled);
-      btnProfileDeps.disabled = manageBusy;
-      btnProfileDeps.textContent = manageBusy ? "安装中…" : "安装依赖";
+      // 「重装依赖」不随依赖是否已装而隐藏：新建/复制出来缺依赖时要装，装过之后
+      // 依赖坏了、装歪了也要能重来（票据要求的三个手动动作之一），所以一直露着。
+      btnProfileDeps.classList.toggle("hidden", !hasTarget);
+      btnProfileDeps.disabled = manageBusy || patchBusy;
+      btnProfileDeps.textContent = manageBusy ? "安装中…" : "重装依赖";
       // 删除要一次确认：第一次点「删除」只展开确认行，再点一次才真的删。
       const confirming = managePendingDelete !== null;
       profileManageConfirm.classList.toggle("hidden", !confirming);
@@ -2602,6 +2781,10 @@ async function main(): Promise<void> {
       }
       btnProfileConfirmYes.disabled = manageBusy;
       btnProfileConfirmNo.disabled = manageBusy;
+      // 补丁层面板跟着选中的环境走：没选中就没有可备份的东西。
+      btnPatchBackup.disabled = !hasTarget || patchBusy || manageBusy;
+      btnPatchBackup.textContent = patchBusy ? "处理中…" : "备份补丁层";
+      syncPatchPanel();
     }
 
     /**
@@ -2612,7 +2795,7 @@ async function main(): Promise<void> {
      */
     async function runManage(
       action: () => Promise<ProfileOutcome>,
-      options: { reloadPrefs?: boolean } = {},
+      options: { reloadPrefs?: boolean; output?: boolean } = {},
     ): Promise<void> {
       if (manageBusy) {
         return;
@@ -2625,7 +2808,20 @@ async function main(): Promise<void> {
       try {
         const outcome = await action();
         manageTarget = outcome.summary ? outcome.name : null;
-        setManageNote(outcome.message);
+        if (options.output) {
+          // 重装依赖的说明里有命令原文、退出码与输出尾部，整段贴进输出块；
+          // 面板上只留一句结论，否则一行 hint 会被几百行输出撞长。
+          setManageOutput(outcome.message, true);
+          if (outcome.ok) {
+            setManageNote(`环境「${outcome.name}」的依赖已就绪。`);
+          } else {
+            setManageError(
+              `重装依赖没有完成（环境「${outcome.name}」）：命令原文、退出码与输出尾部都在下面的「操作输出」里。`,
+            );
+          }
+        } else {
+          setManageNote(outcome.message);
+        }
         // 新建/复制/重命名都会改变清单，删掉的更得重读：一律重读一次。
         await loadProfiles();
         if (options.reloadPrefs) {
@@ -2685,7 +2881,7 @@ async function main(): Promise<void> {
 
     async function installDepsSelected(): Promise<ProfileOutcome> {
       const name = manageTarget ?? "";
-      setManageNote(`正在给「${name}」安装依赖，可能要几分钟…（期间请不要关窗口）`);
+      setManageNote(`正在给「${name}」重装依赖，可能要几分钟…（期间请不要关窗口）`);
       return invoke<ProfileOutcome>("install_profile_deps", { config: collectConfig(), name });
     }
 
@@ -2735,7 +2931,18 @@ async function main(): Promise<void> {
     });
 
     btnProfileDeps.addEventListener("click", () => {
-      void runManage(installDepsSelected);
+      void runManage(installDepsSelected, { output: true });
+    });
+
+    // 补丁层：备份一颗按钮，还原在备份列表的每一行上（用户选定哪一份就退到哪一份）。
+    btnPatchBackup.addEventListener("click", () => {
+      void backupPatchLayer();
+    });
+
+    btnCopyManageOutput.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      copyLog(manageOutput, btnCopyManageOutput);
     });
 
     // 环境名输入框回车 = 按当前选中的动作提交不了，只做一件事：

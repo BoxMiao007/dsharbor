@@ -169,7 +169,7 @@ fn ensure_dir(target: &Target, dir: &str, name: &str) -> Result<(), String> {
 /// 复制一份环境：不搬依赖、不搬锁文件，其余（补丁层、插件配置、缓存与数据目录）照搬。
 ///
 /// 复制瞬间完成的关键就是「依赖目录整份跳过」——它占一份环境的 99% 体积；
-/// 新环境会在返回结果里被标成「依赖未安装」，界面据此给「安装依赖」按钮。
+/// 新环境会在返回结果里被标成「依赖未安装」，界面据此给出「重装依赖」按钮。
 pub fn copy(config: &LaunchConfig, source: &str, name: &str) -> Result<ProfileOutcome, String> {
     let target = Target::of(config);
     let exists = profile_exists(&target, name)?;
@@ -217,7 +217,7 @@ pub fn copy(config: &LaunchConfig, source: &str, name: &str) -> Result<ProfileOu
                 .join("、")
         ));
     }
-    message.push_str("新环境还没装依赖，点「安装依赖」补齐后才能启动。");
+    message.push_str("新环境还没装依赖，点「重装依赖」补齐后才能启动。");
     Ok(ProfileOutcome {
         ok: true,
         message,
@@ -381,7 +381,7 @@ pub fn install_deps(
     let summary = summarize_dir(&target, name, &dir).ok();
     let installed = summary.as_ref().map(|s| s.deps_installed).unwrap_or(false);
     let message = format!(
-        "安装依赖：dsh plugin --profile {name} install（经 {}）\n退出码：{code}\n校验：{}\n输出：\n{}",
+        "重装依赖：dsh plugin --profile {name} install（经 {}）\n退出码：{code}\n校验：{}\n输出：\n{}",
         target.label(),
         if installed {
             "node_modules 已就位 ✓"
