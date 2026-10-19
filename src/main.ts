@@ -238,12 +238,16 @@ function proxyModeLabel(mode: ProxyMode): string {
 /** 与 Rust 侧 `proxy::ProxyState` 对应：生效地址、例外列表与那一行说明都由后端算好，
     界面只负责显示（地址归一化与提示文案只在核心库有一份，界面不另写一套）。 */
 interface ProxyState {
+  /** 这台宿主能不能真正生效：false 时整张网络卡换成一句「仅在 Windows 宿主可用」。 */
+  supported: boolean;
   /** 真正下发的代理地址；null 表示这次不注入任何代理变量。 */
   url: string | null;
   /** 例外列表（回环地址由后端兜底加在最前面，不在这里重复）。 */
   bypass: string[];
   /** 一行说明：生效了报走哪儿，没生效说原因。 */
   hint: string;
+  /** 当前代理状态的一句话，自检失败时拼在结论后面（文案在核心库一处定）。 */
+  stateText: string;
 }
 
 /** 与 Rust 侧 `net::SelfCheckReport` 对应：三态、结论依据的那条路、
@@ -954,6 +958,13 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         <div class="actions">
           <button id="btn-patch-backup" class="ghost">备份补丁层</button>
         </div>
+        <div id="patch-restore-confirm" class="profile-confirm hidden">
+          <p id="patch-restore-confirm-text" class="hint"></p>
+          <div class="actions">
+            <button id="btn-patch-confirm-yes" class="danger">确定还原</button>
+            <button id="btn-patch-confirm-no" class="ghost">取消</button>
+          </div>
+        </div>
         <div id="patch-backup-list" class="patch-backup-list"></div>
       </div>
       <div id="profile-plugins" class="patch-panel hidden">
@@ -987,6 +998,8 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <span id="network-summary" class="badge badge-stopped card-summary">沿用 npm 全局配置 · 跟随系统</span>
   `;
   const networkBody = `
+    <p id="network-windows-only" class="hint network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
+    <div id="network-content" class="network-content">
     <div class="fields network-fields">
       <span class="field-label">下载源</span>
       <div class="picker" id="download-source-picker"></div>
@@ -1007,6 +1020,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       </div>
       <p class="hint" id="self-check-status"></p>
       <p class="hint hidden" id="self-check-detail"></p>
+    </div>
     </div>
   `;
   const networkSection = cardSection(foldHead("network", "网络", networkSummary), networkBody);
@@ -1602,19 +1616,41 @@ async function main(): Promise<void> {
     // 下载源：「网络」卡的第一个控件。改完立刻生效于版本清单查询（选「官方源」
     // 就真的去官方地址拉），不必重启壳。
     const networkSummary = $<HTMLSpanElement>("network-summary");
+    const networkWindowsOnly = $<HTMLElement>("network-windows-only");
+    const networkContent = $<HTMLElement>("network-content");
+    /** 这台宿主能不能真正生效（后端给的平台标记）；还没读到代理状态时先按 true 留着。 */
+    let networkSupported = true;
     const downloadSourceHintEl = $<HTMLParagraphElement>("download-source-hint");
     const proxyHintEl = $<HTMLParagraphElement>("proxy-hint");
     const proxyManualRow = $<HTMLElement>("proxy-manual");
     const proxyAddressInput = $<HTMLInputElement>("proxy-address");
     /** 后端算好的代理状态（地址、例外列表与那一行说明）；还没读到时为 null。 */
     let proxyState: ProxyState | null = null;
+    /** 上一次提交地址时被后端拒绝的理由；成功存盘或切模式后清掉。 */
+    let proxySaveError: string | null = null;
+
+    /** 平台标记只决定「整卡还是只留一句」——单独拿出来，免得刷新代理状态时把自检结果也抹掉。 */
+    function renderNetworkSupport(): void {
+      networkWindowsOnly.classList.toggle("hidden", networkSupported);
+      networkContent.classList.toggle("hidden", !networkSupported);
+      if (!networkSupported) {
+        networkSummary.textContent = "仅 Windows 可用";
+      }
+    }
 
     function renderNetworkUI(): void {
+      // 非 Windows 宿主：整卡换成一句说明（跟环境卡用同一个写法：平台标记由后端给，
+      // 界面只负责 toggle）——不能让人在能点但不能生效的控件上白调。
+      renderNetworkSupport();
+      if (!networkSupported) {
+        return;
+      }
       // 收起时摘要把两个选择拼在一行：「镜像源 · 跟随系统」。
       networkSummary.textContent = `${downloadSourceLabel(prefs.downloadSource)} · ${proxyModeLabel(prefs.proxyMode)}`;
       downloadSourceHintEl.textContent = downloadSourceHint(prefs.downloadSource);
       // 地址输入框只在手动模式才露出来；另外两种模式那个值不参与计算，露出来只会让人以为要填。
       proxyManualRow.classList.toggle("hidden", prefs.proxyMode !== "manual");
+      proxySaveError = null;
       renderProxyHint();
       // 源或代理变了，上一次自检的结论就不适用了：清掉，别让人拿旧结论判断新配置。
       // 只有这条路径会清它：每秒的状态刷新走的不是 renderNetworkUI，
@@ -1626,6 +1662,13 @@ async function main(): Promise<void> {
     /** 提示行：手动模式填错了就把那句校验文案当错误显示，其它情形都是普通说明。 */
     function renderProxyHint(): void {
       const state = proxyState;
+      if (proxySaveError !== null) {
+        // 存盘被后端拦下：这是比「地址算不出来」更要紧的事实——整份配置根本没落地，
+        // 界面上的值只在这次会话里，重开就回到旧值。必须说出来，不能只 console.debug。
+        proxyHintEl.textContent = proxySaveError;
+        proxyHintEl.classList.add("error", "field-error");
+        return;
+      }
       if (state === null) {
         proxyHintEl.textContent = "正在读取系统代理设置…";
         proxyHintEl.classList.remove("error", "field-error");
@@ -1662,9 +1705,11 @@ async function main(): Promise<void> {
     async function refreshProxyState(): Promise<void> {
       try {
         proxyState = await invoke<ProxyState>("proxy_state");
+        networkSupported = proxyState?.supported !== false;
       } catch (err) {
-        proxyState = { url: null, bypass: [], hint: `读取代理设置失败：${err}` };
+        proxyState = { supported: true, url: null, bypass: [], hint: `读取代理设置失败：${err}`, stateText: "" };
       }
+      renderNetworkSupport();
       renderProxyHint();
     }
 
@@ -1692,7 +1737,11 @@ async function main(): Promise<void> {
       }
       prefs = { ...prefs, proxyAddress: next };
       void (async () => {
-        await persistConfigQuiet();
+        // 这条路径单独看存盘结果：地址填错时后端会拒收整份配置，
+        // 不报出来的话输入框里留着「看起来已经生效」的地址，重开才回到旧值。
+        const err = await persistConfigQuiet();
+        proxySaveError = err;
+        renderProxyHint();
         await refreshProxyState();
       })();
     }
@@ -1719,15 +1768,17 @@ async function main(): Promise<void> {
     /** 结果行的文案：三态各一句，通了要说清是走代理通的还是直连通的。 */
     function selfCheckLine(report: SelfCheckReport): string {
       const source = report.registry ?? "npm 全局配置里的源";
+      // 当前代理状态由后端一句话给出（跟卡片上方 hint 同一套口径），这里只负责拼上去。
+      const proxyNow = proxyState?.stateText ? ` ${proxyState.stateText}。` : "";
       switch (report.state) {
         case "proxyOk":
           return report.via === "proxy" && report.proxy
             ? `通了：经代理 ${report.proxy} 访问 ${source} 成功，下载会走这条路。`
             : `通了：直连 ${source} 成功（这次没走代理），下载会走这条路。`;
         case "directOnly":
-          return `只有直连能通：去掉代理后访问 ${source} 成功了。真实下载仍然会带代理，所以很可能下不动——建议检查代理设置，或者选「不走代理」。`;
+          return `只有直连能通：去掉代理后访问 ${source} 成功了。真实下载仍然会带代理，所以很可能下不动——建议检查代理设置，或者选「不走代理」。${proxyNow}`;
         default:
-          return `两种都不通：带代理和不带代理都没拿到 ${source} 的数据。先看下面的原因，再检查代理设置或换一个下载源。`;
+          return `两种都不通：带代理和不带代理都没拿到 ${source} 的数据。先看下面的原因，再检查代理设置或换一个下载源。${proxyNow}`;
       }
     }
 
@@ -2054,11 +2105,16 @@ async function main(): Promise<void> {
       renderPortHint();
     }
 
-    /** 静默保存当前配置（编辑中暂时不合法时跳过，启动时会再校验）。 */
-    async function persistConfigQuiet(): Promise<void> {
+    /**
+     * 静默保存当前配置（编辑中暂时不合法时跳过，启动时会再校验）。
+     *
+     * 返回存盘失败的理由；存成功了返回 null。大多数调用方不关心，但代理地址那条路径
+     * 必须把错误报给用户：后端会拒收填错的地址，静静吞掉就成了「看起来生效、重开就没了」。
+     */
+    async function persistConfigQuiet(): Promise<string | null> {
       if (portFieldError()) {
         renderPortHint();
-        return;
+        return null;
       }
       try {
         const shell: ShellConfig = {
@@ -2078,8 +2134,10 @@ async function main(): Promise<void> {
           localError = null;
           await refresh();
         }
+        return null;
       } catch (err) {
         console.debug("配置暂未保存:", err);
+        return String(err);
       }
     }
 
@@ -2715,6 +2773,10 @@ async function main(): Promise<void> {
     const manageOutput = $<HTMLPreElement>("manage-output");
     const manageOutputBox = $<HTMLDetailsElement>("manage-output-box");
     const btnPatchBackup = $<HTMLButtonElement>("btn-patch-backup");
+    const patchRestoreConfirm = $<HTMLElement>("patch-restore-confirm");
+    const patchRestoreConfirmText = $<HTMLParagraphElement>("patch-restore-confirm-text");
+    const btnPatchConfirmYes = $<HTMLButtonElement>("btn-patch-confirm-yes");
+    const btnPatchConfirmNo = $<HTMLButtonElement>("btn-patch-confirm-no");
     const btnCopyManageOutput = $<HTMLButtonElement>("btn-copy-manage-output");
 
     /** 与 Rust 侧 `patch_layer::PatchBackup` 对应（最旧在前）。 */
@@ -2737,6 +2799,8 @@ async function main(): Promise<void> {
     let patchBusy = false;
     /** 已拉取备份清单的那个环境；换环境才重新拉，避免每次渲染都打一趟后端。 */
     let patchLoadedFor: string | null = null;
+    /** 待确认的还原目标（备份文件名）；非 null 时确认行展开（与删除那处同一个写法）。 */
+    let patchPendingRestore: string | null = null;
 
     // ---- 管理环境：插件开关 ------------------------------------------------------
     // 哪些插件、现在开没开、该往补丁层写什么，规则全在后端
@@ -2809,7 +2873,11 @@ async function main(): Promise<void> {
         .join("");
       for (const button of patchBackupList.querySelectorAll<HTMLButtonElement>("[data-patch-restore]")) {
         button.addEventListener("click", () => {
-          void restorePatchLayer(button.dataset.patchRestore ?? "");
+          // 第一下只展开确认行；真正改文件要再点一次「确定还原」。
+          patchPendingRestore = button.dataset.patchRestore ?? "";
+          setManageError(null);
+          setManageNote(null);
+          renderManageUI();
         });
       }
     }
@@ -2878,14 +2946,15 @@ async function main(): Promise<void> {
     /**
      * 还原到某一份备份。
      *
-     * 不做二次确认：后端在覆盖前会先把当前版本另存一份，还原本身就可反悔，
-     * 再多一道确认只是多一次点击（说明里会直接给出那份另存副本的路径）。
+     * 会覆盖当前的补丁层文件，所以界面上先要一次确认（与删除同一个写法）：
+     * 后端覆盖前会把当前版本另存一份备份，因此这一步可反悔，但那不等于不用问。
      */
     async function restorePatchLayer(backup: string): Promise<void> {
       const name = manageTarget;
       if (!name || !backup || patchBusy || manageBusy) {
         return;
       }
+      patchPendingRestore = null;
       patchBusy = true;
       setManageError(null);
       setManageNote(null);
@@ -3104,6 +3173,7 @@ async function main(): Promise<void> {
         item.addEventListener("click", () => {
           manageTarget = item.dataset.profile ?? null;
           managePendingDelete = null;
+          patchPendingRestore = null;
           renderManageUI();
         });
       }
@@ -3134,6 +3204,14 @@ async function main(): Promise<void> {
       }
       btnProfileConfirmYes.disabled = manageBusy;
       btnProfileConfirmNo.disabled = manageBusy;
+      // 补丁层还原也要一次确认：跟删除用同一个写法（第一次展开确认行，第二次才真改）。
+      const restoring = patchPendingRestore !== null;
+      patchRestoreConfirm.classList.toggle("hidden", !restoring);
+      if (restoring) {
+        patchRestoreConfirmText.textContent = `确定把补丁层还原成「${patchPendingRestore}」？这会覆盖当前那份 cordis.patch.yml（现有内容会先另存一份备份，改坏了还能再退回来）。`;
+      }
+      btnPatchConfirmYes.disabled = patchBusy || manageBusy;
+      btnPatchConfirmNo.disabled = patchBusy || manageBusy;
       // 补丁层面板跟着选中的环境走：没选中就没有可备份的东西。
       btnPatchBackup.disabled = !hasTarget || patchBusy || manageBusy || pluginBusy;
       btnPatchBackup.textContent = patchBusy ? "处理中…" : "备份补丁层";
@@ -3248,6 +3326,7 @@ async function main(): Promise<void> {
       btnProfileManage.textContent = open ? "管理环境" : "收起管理";
       if (!open) {
         managePendingDelete = null;
+        patchPendingRestore = null;
         renderManageUI();
       }
     });
@@ -3300,6 +3379,20 @@ async function main(): Promise<void> {
     // 补丁层：备份一颗按钮，还原在备份列表的每一行上（用户选定哪一份就退到哪一份）。
     btnPatchBackup.addEventListener("click", () => {
       void backupPatchLayer();
+    });
+
+    // 还原分两拍：第一下点备份行只展开确认行，这里才真的改文件。
+    btnPatchConfirmYes.addEventListener("click", () => {
+      const backup = patchPendingRestore;
+      if (!backup) {
+        return;
+      }
+      void restorePatchLayer(backup);
+    });
+
+    btnPatchConfirmNo.addEventListener("click", () => {
+      patchPendingRestore = null;
+      renderManageUI();
     });
 
     btnCopyManageOutput.addEventListener("click", (event) => {
