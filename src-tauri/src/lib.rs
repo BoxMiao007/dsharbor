@@ -6,6 +6,7 @@
 
 mod detect;
 mod launcher;
+mod npxcache;
 mod plugin;
 mod profile;
 mod registry;
@@ -354,6 +355,26 @@ async fn set_cli_integration(
         eprintln!("[dsharbor] 命令行集成：开关状态未能落盘：{err}");
     }
     Ok(next)
+}
+
+/// 「集成」卡缓存段：扫一遍 npx 缓存，返回本包占用与可回收量（只读）。
+///
+/// async + spawn_blocking：要跑 `npm config get cache`、递归 stat 整棵目录，同步命令会堵主线程。
+#[tauri::command]
+async fn cache_state(config: LaunchConfig) -> Result<npxcache::CacheState, String> {
+    tauri::async_runtime::spawn_blocking(move || npxcache::scan(&config))
+        .await
+        .map_err(|err| format!("读取缓存占用失败：{err}"))
+}
+
+/// 「立即清理」：删掉判定为可回收的 npx 缓存目录，返回逐条结果与刷新后的状态。
+///
+/// 与将来的自动清理开关无关：手动点一下就用同一套判定（开关是另一张票的事）。
+#[tauri::command]
+async fn cleanup_cache(config: LaunchConfig) -> Result<npxcache::CleanupResult, String> {
+    tauri::async_runtime::spawn_blocking(move || npxcache::cleanup(&config))
+        .await
+        .map_err(|err| format!("清理缓存失败：{err}"))?
 }
 
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
@@ -1362,7 +1383,9 @@ pub fn run() {
             check_binary_path,
             open_shell_dir,
             cli_integration_state,
-            set_cli_integration
+            set_cli_integration,
+            cache_state,
+            cleanup_cache
         ])
         .build(tauri::generate_context!())
         .expect("构建 DSHarbor 外壳失败")

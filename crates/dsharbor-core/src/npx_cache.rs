@@ -11,7 +11,7 @@
 //! 的近似——`npx` 复用已有目录时不会刷新目录内文件的 mtime，所以这只是近似，不是精确的
 //! 使用时间），其余可删。
 
-use crate::launch::NPX_PACKAGE;
+use crate::launch::{self, LaunchConfig, LaunchMode, NPX_PACKAGE};
 
 /// 缓存根下的这一层目录名。
 pub const NPX_DIR_NAME: &str = "_npx";
@@ -206,6 +206,54 @@ pub fn plan(dirs: &[DirEntry], current_spec: Option<&str>, keep_count: usize) ->
         remove,
         reclaimable_bytes,
     }
+}
+
+/// 当前启动配置用的 npx spec；启动方式不是「官方 npx 命令」时为 None。
+///
+/// 自定义命令里可能也写着 `npx @deepseek-ai/dsh@next …`，但那是用户手写的字符串（
+/// 可能带 `-p`、`--yes`、另一个包…），从里面猜包规格只会猜错，所以直接不算：
+/// 这种情况下只按 mtime 保留（`plan` 会当成「当前那份命中不到」处理）。
+/// 非 Windows 宿主（WSL 发行版）的 npm 缓存是另一份，本版不统计，同样不影响这里。
+pub fn current_spec(config: &LaunchConfig) -> Option<String> {
+    match &config.mode {
+        LaunchMode::Npx { channel, version } => {
+            Some(launch::npx_spec(*channel, version.as_deref()))
+        }
+        _ => None,
+    }
+}
+
+/// 界面上给一份缓存目录起个名。
+///
+/// 目录名是一串 hash，单看没意义；它 `_npx.packages` 里记的 spec 才是人能读的
+/// （`@deepseek-ai/dsh@next`）。同一份 spec 可能同时有多份目录，所以后面缀上目录名
+/// 的前 8 位以区别于彼此。
+pub fn dir_label(dir: &DirEntry) -> String {
+    let short: String = dir.name.chars().take(8).collect();
+    let spec = dir
+        .manifest
+        .packages
+        .iter()
+        .map(|item| item.trim())
+        .find(|item| !item.is_empty());
+    match spec {
+        Some(spec) => format!("{spec}（{short}）"),
+        None => short,
+    }
+}
+
+/// 从 `npm config get cache` 的输出里抽出缓存根。
+///
+/// 不能直接取第一行：采集 stdout 与 stderr 是合并的，npm 可能把升级提示、警告排在前面。
+/// 所以倒着找最后一条看起来像路径的行（含路径分隔符），去掉两侧引号。
+pub fn parse_cache_root(text: &str) -> Option<String> {
+    let mut found: Option<&str> = None;
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if line.contains('\\') || line.contains('/') {
+            found = Some(line);
+        }
+    }
+    found.map(|line| line.trim_matches('"').to_string())
 }
 
 /// 把字节数写成界面上好读的形式（1024 进制；`B` 取整，其余保留一位小数）。
@@ -518,6 +566,75 @@ mod tests {
         ];
         let plan = plan(&dirs, None, 1);
         assert_eq!(plan.keep, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn current_spec_only_comes_from_the_official_npx_mode() {
+        let npx = |channel, version: Option<&str>| LaunchConfig {
+            mode: LaunchMode::Npx {
+                channel,
+                version: version.map(|text| text.to_string()),
+            },
+            runtime: crate::launch::Runtime::Default,
+            extra_args: Vec::new(),
+            port: None,
+        };
+        assert_eq!(
+            current_spec(&npx(crate::launch::Channel::Latest, None)).as_deref(),
+            Some(NPX_PACKAGE)
+        );
+        assert_eq!(
+            current_spec(&npx(crate::launch::Channel::Next, None)).as_deref(),
+            Some("@deepseek-ai/dsh@next")
+        );
+        assert_eq!(
+            current_spec(&npx(crate::launch::Channel::Rc, Some("0.2.1-rc.2"))).as_deref(),
+            Some("@deepseek-ai/dsh@0.2.1-rc.2")
+        );
+        let custom = LaunchConfig {
+            mode: LaunchMode::Custom {
+                command: "npx --yes @deepseek-ai/dsh@next web".to_string(),
+            },
+            runtime: crate::launch::Runtime::Default,
+            extra_args: Vec::new(),
+            port: None,
+        };
+        assert_eq!(current_spec(&custom), None, "手写的命令行里不猜包规格");
+    }
+
+    #[test]
+    fn parse_cache_root_skips_npm_chatter_and_takes_the_last_path() {
+        assert_eq!(
+            parse_cache_root("C:\\Users\\me\\AppData\\Local\\npm-cache\n").as_deref(),
+            Some("C:\\Users\\me\\AppData\\Local\\npm-cache")
+        );
+        // 升级提示在前、真正的值在后（stdout/stderr 合并后的常见样子）。
+        let noisy = "npm warn New minor version of npm available!\nnpm warn run `npm install -g npm` to update\nD:\\cache\\npm\n";
+        assert_eq!(parse_cache_root(noisy).as_deref(), Some("D:\\cache\\npm"));
+        // 值带引号时去掉引号。
+        assert_eq!(
+            parse_cache_root("\"/home/me/.npm\"\n").as_deref(),
+            Some("/home/me/.npm")
+        );
+        assert_eq!(parse_cache_root(""), None);
+        assert_eq!(parse_cache_root("npm warn something broke"), None);
+    }
+
+    #[test]
+    fn dir_label_prefers_the_recorded_spec_and_falls_back_to_the_hash() {
+        let tagged = ours("1a2b3c4d5e6f", 0, 0, "@deepseek-ai/dsh@next");
+        assert_eq!(dir_label(&tagged), "@deepseek-ai/dsh@next（1a2b3c4d）");
+        // 只有 dependencies 的目录读不出 spec，用 hash 前 8 位，不要凭猜写字串。
+        let bare = DirEntry {
+            name: "deadbeefcafe".to_string(),
+            mtime: 0,
+            bytes: 0,
+            manifest: Manifest {
+                packages: Vec::new(),
+                dependencies: vec![NPX_PACKAGE.to_string()],
+            },
+        };
+        assert_eq!(dir_label(&bare), "deadbeef");
     }
 
     #[test]
