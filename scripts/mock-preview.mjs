@@ -79,6 +79,14 @@ const state = {
   /** 命令行集成的假状态：改它能预览开关打开/关闭、PATH 里没有目录、被别的 dsh 盖住、
       以及非 Windows 宿主（supported: false）等分支。enabled 默认跟 savedShell 走。 */
   cli: { supported: true, enabled: false, onPath: false, shadow: null },
+  /** 环境列表（`list_profiles`）的假数据：删掉某项可预览「配置里记的环境已不在」，
+      把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。 */
+  profiles: [
+    { name: "web", plugins: 17, bridgeInstalled: true, webCapable: true },
+    { name: "lab", plugins: 4, bridgeInstalled: false, webCapable: true },
+    { name: "headless", plugins: 2, bridgeInstalled: false, webCapable: false },
+    { name: "desktop", plugins: 9, bridgeInstalled: true, webCapable: true },
+  ],
   calls: {},
 };
 
@@ -225,6 +233,11 @@ window.__mockUnimplemented = [];
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
     profile_port_hint: () => S.portHint,
+    // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」。
+    list_profiles: () => {
+      seen("list_profiles");
+      return S.profiles || [];
+    },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,
     // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 重新读取按钮」。
