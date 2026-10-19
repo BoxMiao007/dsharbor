@@ -474,7 +474,10 @@ impl BasePlan {
 /// 运行环境，`dsh` 与用户挑的 `.exe` 也都在 Windows 侧。否则用户在「官方 npx」
 /// 选了 WSL 再切到「系统全局命令」，就会在发行版里跑 `dsh web`——发行版里未必
 /// 装了它，界面上也看不到那个选择。
-fn runtime_of(config: &LaunchConfig) -> &Runtime {
+///
+/// 这是「实际生效」的运行环境。外壳判断插件目标环境与探测地址时必须用它，
+/// 不要直接读 `config.runtime`：配置文件里可能残留着旧启动方式下的 WSL 值。
+pub fn runtime_of(config: &LaunchConfig) -> &Runtime {
     match &config.mode {
         LaunchMode::Npx { .. } | LaunchMode::Custom { .. } => &config.runtime,
         LaunchMode::System | LaunchMode::Binary { .. } => &Runtime::Default,
@@ -1077,6 +1080,34 @@ mod tests {
                 wrap: ShellWrap::Cmd
             }
         );
+    }
+
+    #[test]
+    fn runtime_of_reports_effective_runtime() {
+        // 外壳判断插件目标环境与探测地址都走这个公开函数。System / Binary
+        // 即使配置里残留 WSL 运行环境也恒为 Windows 宿主；Npx / Custom 则原样
+        // 返回用户选的运行环境。
+        for mode in [
+            LaunchMode::System,
+            LaunchMode::Binary {
+                path: "D:\\tools\\dsh.exe".into(),
+            },
+        ] {
+            let mut config = cfg(mode, &[]);
+            config.runtime = wsl("Ubuntu");
+            assert_eq!(runtime_of(&config), &Runtime::Default);
+        }
+
+        for mode in [
+            npx(Channel::Latest, None),
+            LaunchMode::Custom {
+                command: "dsh web".into(),
+            },
+        ] {
+            let mut config = cfg(mode, &[]);
+            config.runtime = wsl("Ubuntu");
+            assert_eq!(runtime_of(&config), &config.runtime);
+        }
     }
 
     #[test]

@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dsharbor_core::launch::{
-    build_plugin_plan, LaunchConfig, LaunchPlan, PluginOp, Runtime, PROFILE_NAME,
+    build_plugin_plan, runtime_of, LaunchConfig, LaunchPlan, PluginOp, Runtime, PROFILE_NAME,
 };
 use dsharbor_core::paths::windows_path_to_wsl;
 use serde::Serialize;
@@ -49,9 +49,11 @@ pub enum Target {
 
 impl Target {
     pub fn of(config: &LaunchConfig) -> Target {
-        // 看运行环境而不是启动方式：官方 npx 与自定义命令都能跑在发行版里，
-        // 插件要装到 DSH 真正运行的那一侧文件系统。
-        match &config.runtime {
+        // 按「实际生效」的运行环境判断：官方 npx 与自定义命令都能跑在发行版里，
+        // 插件要装到 DSH 真正运行的那一侧文件系统；系统全局命令与指定程序路径
+        // 恒为 Windows 宿主。所以这里走 `launch::runtime_of`，不直接读
+        // `config.runtime`——后者可能残留旧启动方式下的 WSL 值。
+        match runtime_of(config) {
             Runtime::Wsl { distro } => Target::Wsl {
                 distro: distro.clone(),
             },

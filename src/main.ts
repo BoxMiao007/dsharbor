@@ -1459,8 +1459,14 @@ async function main(): Promise<void> {
       // 端口输入非法时调用方（启动/保存）会先报错拦截；这里兜底按 null 处理。
       const parsed = raw === "" ? null : Number.parseInt(raw, 10);
       const port = parsed !== null && Number.isFinite(parsed) ? parsed : null;
-      const base = { runtime, extraArgs, port };
-      switch (currentMode()) {
+      // 运行环境只对「官方 npx」「自定义命令」生效；另外两种固定跑 Windows 宿主，
+      // 写盘时按默认值序列化，避免下拉里残留的 WSL 值跟着进配置文件（否则壳会
+      // 把桥接插件装进发行版、按 WSL 算探测地址）。壳级共享的 runtime 不变。
+      const mode = currentMode();
+      const effectiveRuntime: LaunchRuntime =
+        mode === "npx" || mode === "custom" ? runtime : { kind: "default" };
+      const base = { runtime: effectiveRuntime, extraArgs, port };
+      switch (mode) {
         case "system":
           return { ...base, mode: { kind: "system" } };
         case "binary":
