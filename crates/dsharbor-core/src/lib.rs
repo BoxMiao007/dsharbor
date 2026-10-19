@@ -12,6 +12,7 @@ pub mod launch;
 pub mod lifecycle;
 pub mod links;
 pub mod logparse;
+pub mod net;
 pub mod overlay;
 pub mod paths;
 pub mod prefs;
