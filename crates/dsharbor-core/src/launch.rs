@@ -14,8 +14,9 @@ pub const NPX_PACKAGE: &str = "@deepseek-ai/dsh";
 /// 默认环境名。
 ///
 /// DSH 的命令行把「启动哪个环境」做成了位置参数：`dsh web` 等价于
-/// `dsh --profile web`。所以这个位置放的是**环境名**，不是固定的子命令——
-/// 用户切到别的环境时，壳把它换成那个环境名。
+/// `dsh --profile web`（实测 `dsh web --help` 打印的就是 `Usage: dsh --profile web`）。
+/// 所以这个位置放的是**环境名**，不是固定的子命令——用户切到别的环境时，
+/// 壳把它换成那个环境名。历史上这处注释按「子命令」理解过，已更正。
 pub const WEB_SUBCOMMAND: &str = "web";
 /// 已下线的「通过 WSL 启动」模式的默认内部命令。
 /// 只在迁移旧配置时用来判断该还原成「官方 npx（latest）」还是「自定义命令」。
@@ -25,7 +26,7 @@ pub const LEGACY_WSL_INNER: &str = "npx --yes @deepseek-ai/dsh web";
 /// 浏览器（浏览器占内存大）。DSH 默认 openBrowser=true 会自己拉一次默认浏览器，
 /// 必须显式关掉；用户附加参数里已写了 `--no-open` 时不重复追加。
 pub const DEFAULT_APP_ARGS: [&str; 1] = ["--no-open"];
-/// 系统命令前缀（不含子命令）。
+/// 系统命令前缀（不含后面的环境名位置参数）。
 pub const SYSTEM_DSH: &str = "dsh";
 /// 默认环境名（DSH 自带的 `web` 环境）。首次启动与配置缺项时用它。
 pub const PROFILE_NAME: &str = WEB_SUBCOMMAND;
@@ -559,8 +560,8 @@ pub fn build_spawn_plan_with_launcher_args(
                 args,
             }
         }
-        // 自定义命令原样透传：用户可能已经写了 `dsh --profile lab web`
-        // 或别的子命令，壳再插一个环境名会改坏语义。
+        // 自定义命令原样透传：用户可能已经写了环境名（`dsh lab`）或
+        // `--profile lab` 旗标形式，壳再补一个位置参数会变成两条环境名。
         LaunchMode::Custom { command } => {
             let mut tokens = split_line(command);
             tokens.extend(extra.iter().cloned());
@@ -599,6 +600,9 @@ fn looks_like_version(line: &str) -> bool {
 }
 
 /// 插件管理操作（桥接插件的安装/卸载；经官方 `dsh plugin` 子命令）。
+///
+/// 注意与启动不同：`plugin` 是**真的子命令**，而启动命令里那个位置参数是环境名；
+/// 两者不能混为一谈（`dsh web` ≡ `dsh --profile web`，但没有 `dsh plugin web` 这种写法）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginOp {
     /// 安装一个包引用（如 `file:/path/to/dsharbor-bridge-0.1.0.tgz`）。
@@ -670,7 +674,8 @@ pub fn build_plugin_plan(
 /// 去掉末尾的环境名位置参数，得到插件管理前缀。
 ///
 /// 自定义命令与 WSL 内部命令都遵循 DSH 的 `<启动器> <环境名> [参数]` 写法
-/// （界面上的默认值与示例都是），所以换个子命令就能复用同一个启动器：
+/// （界面上的默认值与示例都是），所以把末尾那个环境名换成 `plugin --profile <名字>`
+/// 就能复用同一个启动器：
 /// 版本标签（`@next`）、包管理器、发行版内的 PATH 全部保持不变。
 fn plugin_prefix(inner: &str, profile: &str) -> Vec<String> {
     let mut tokens = split_line(inner);
@@ -1017,8 +1022,8 @@ mod tests {
     }
 
     #[test]
-    fn custom_command_plugin_plan_swaps_web_subcommand() {
-        // 插件管理复用同一启动器：只把末尾的 web 换成 plugin --profile web add。
+    fn custom_command_plugin_plan_swaps_the_web_profile_argument() {
+        // 插件管理复用同一启动器：只把末尾的环境名 web 换成 plugin --profile web add。
         let plan = build_plugin_plan(
             &cfg(
                 LaunchMode::Custom {
@@ -1818,7 +1823,7 @@ mod tests {
 
     #[test]
     fn custom_command_is_passed_through_untouched() {
-        // 用户可能已经自己写了 `--profile` 或别的子命令，壳不能再往里插环境名。
+        // 用户可能已经自己写了环境名或 `--profile` 旗标，壳不能再往里插环境名。
         let plan = build_spawn_plan(
             &cfg(
                 LaunchMode::Custom {
@@ -1885,7 +1890,7 @@ mod tests {
 
     #[test]
     fn custom_plugin_prefix_drops_the_current_environment_name() {
-        // 自定义命令末尾写的就是当前环境名时才剥掉，返回插件子命令。
+        // 自定义命令末尾写的就是当前环境名时才剥掉，剩下的就是启动器前缀。
         let plan = build_plugin_plan(
             &cfg(
                 LaunchMode::Custom {
