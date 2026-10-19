@@ -332,6 +332,28 @@ pub fn status_hint(mode: ProxyMode, resolution: &ProxyResolution) -> String {
     format!("{head}；回环地址始终直连{tail}。")
 }
 
+/// 自检失败时补在结论后面的那句「当前代理到底是什么状态」。
+///
+/// 自检说的是「这次连接通不通」，用户真正要判断的是「我的代理设置对不对」。
+/// 失败文案里不写清当前用的是哪个代理（或者压根没走代理），用户就只能靠猜。
+/// 文案在核心库定，界面只负责把它接到结论后面。
+pub fn proxy_state_text(mode: ProxyMode, resolution: &ProxyResolution) -> String {
+    if let Some(url) = resolution.url.as_deref() {
+        let how = match mode {
+            ProxyMode::Manual => "手动填写",
+            _ => "跟随系统",
+        };
+        return format!("当前代理：{url}（{how}）");
+    }
+    match mode {
+        ProxyMode::Off => "当前代理：不走代理".to_string(),
+        // 手动模式没有可用地址（没填、写错了或写的是 socks）：实际就是没下发代理。
+        ProxyMode::Manual => "当前代理：还没填地址".to_string(),
+        // 跟随系统但系统里没探到：同样没有可用地址。
+        ProxyMode::System => "当前代理：跟随系统（系统里没检测到代理）".to_string(),
+    }
+}
+
 /// 下载自检失败原因的类别。
 ///
 /// 「网络」卡的「测试连接」拿到的是 npm 的一堆英文报错，直接给用户看没用；
@@ -1291,6 +1313,50 @@ mod tests {
         assert_eq!(
             status_hint(ProxyMode::Manual, &bad),
             ProxyUrlError::Socks.message()
+        );
+    }
+
+    // ---- 自检失败时补上「当前代理到底是什么状态」 ----
+
+    #[test]
+    fn proxy_state_text_names_the_resolved_url() {
+        let working = probe("127.0.0.1:7890", &[], ProxySource::Env);
+        let system = resolve_proxy(ProxyMode::System, "", &working);
+        assert_eq!(
+            proxy_state_text(ProxyMode::System, &system),
+            "当前代理：http://127.0.0.1:7890（跟随系统）"
+        );
+        let manual = resolve_proxy(
+            ProxyMode::Manual,
+            "127.0.0.1:7890",
+            &SystemProxyProbe::none(),
+        );
+        assert_eq!(
+            proxy_state_text(ProxyMode::Manual, &manual),
+            "当前代理：http://127.0.0.1:7890（手动填写）"
+        );
+    }
+
+    #[test]
+    fn proxy_state_text_says_off_without_naming_an_address() {
+        // 「不走代理」时即便系统里配了代理，也不能把它写进来：实际没下发。
+        let working = probe("127.0.0.1:7890", &[], ProxySource::Env);
+        let off = resolve_proxy(ProxyMode::Off, "", &working);
+        assert_eq!(proxy_state_text(ProxyMode::Off, &off), "当前代理：不走代理");
+    }
+
+    #[test]
+    fn proxy_state_text_points_at_the_empty_field() {
+        // 选了手动但没填（或填坏了）：代理实际不生效，要说得具体。
+        let empty = resolve_proxy(ProxyMode::Manual, "", &SystemProxyProbe::none());
+        assert_eq!(
+            proxy_state_text(ProxyMode::Manual, &empty),
+            "当前代理：还没填地址"
+        );
+        let bad = resolve_proxy(ProxyMode::Manual, "随便写的", &SystemProxyProbe::none());
+        assert_eq!(
+            proxy_state_text(ProxyMode::Manual, &bad),
+            "当前代理：还没填地址"
         );
     }
 

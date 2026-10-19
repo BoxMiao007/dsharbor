@@ -24,6 +24,7 @@ pub mod prefs;
 pub mod profile_ops;
 pub mod profiles;
 pub mod registry;
+pub mod registry_query;
 
 /// 对外展示的应用名（窗口标题、安装包、界面文案共用一个来源）。
 pub const APP_NAME: &str = "DSHarbor";

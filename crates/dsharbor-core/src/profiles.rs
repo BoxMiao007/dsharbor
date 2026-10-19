@@ -4,6 +4,8 @@
 //! 三件事：它能不能起网页界面、登记了多少个插件、桥接插件是否已经在里面。
 //! 读盘与枚举目录在壳那一层做，这里只吃文本，方便全自动测试。
 
+use crate::launch::PROFILE_NAME;
+
 /// 官方桌面端（Electron 外壳）独占的环境名。
 ///
 /// 它同样能起网页界面，但 DSH 的 CLI 明确拒绝针对它的启动与插件管理请求；
@@ -153,7 +155,9 @@ pub fn summarize(name: &str, package_json: &str) -> Result<ProfileSummary, Strin
         name: name.to_string(),
         plugins: bundles.len(),
         bridge_installed: bundles.contains(&BRIDGE_PLUGIN),
-        web_capable: bundles.contains(&WEB_APP_BUNDLE),
+        // DSH 自带的 `web` 环境本身就是网页界面，它的 bundles 里不一定有
+        // `@deepseek-ai/dsh-web-app`；只看 bundles 会把默认环境判成「起不了网页」。
+        web_capable: name == PROFILE_NAME || bundles.contains(&WEB_APP_BUNDLE),
         // 目录里有没有 node_modules 从 package.json 看不出来，见 `with_deps`。
         deps_installed: false,
     })
@@ -245,10 +249,26 @@ mod tests {
 
     #[test]
     fn summary_counts_bundles_and_spots_the_bridge() {
-        let summary = summarize("web", &manifest(&["a", "b", "dsharbor-bridge"])).unwrap();
+        let summary = summarize("lab", &manifest(&["a", "b", "dsharbor-bridge"])).unwrap();
         assert_eq!(summary.plugins, 3);
         assert!(summary.bridge_installed);
         assert!(!summary.web_capable);
+    }
+
+    #[test]
+    fn the_default_environment_is_web_capable_without_the_bundle_entry() {
+        // DSH 自带的 web 环境不必自己登记网页 bundle：它就是网页界面本身。
+        // 只看 bundles 会把它判成「起不了网页」，整份清单于是在下拉里空掉。
+        let summary = summarize("web", "{}").unwrap();
+        assert!(summary.web_capable);
+        assert!(summary.is_selectable());
+    }
+
+    #[test]
+    fn other_environments_need_the_bundle_entry_to_be_web_capable() {
+        let summary = summarize("lab", "{}").unwrap();
+        assert!(!summary.web_capable);
+        assert!(!summary.is_selectable());
     }
 
     #[test]
