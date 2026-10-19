@@ -45,33 +45,38 @@
 
 ## 开发
 
-### 一次性准备（WSL2 / Ubuntu）
+### 一次性准备（Windows）
 
-```bash
-sudo apt-get install -y clang lld llvm nsis        # LLVM 工具链 + NSIS
-rustup target add x86_64-pc-windows-msvc           # Windows 目标
-cargo install --locked cargo-xwin                  # 交叉编译工具
+```powershell
+# 1) Visual Studio Build Tools：勾选「使用 C++ 的桌面开发」（含 Windows SDK，提供 link.exe）
+# 2) Rust：宿主工具链就是 x86_64-pc-windows-msvc，需带 rustfmt / clippy
+# 3) Node.js + pnpm
 pnpm install                                       # 前端依赖
 ```
 
+NSIS 不用手装：首次 `tauri build` 会自动下载到 `%LOCALAPPDATA%\tauri\NSIS`（需要能访问 GitHub，墙内先开代理）。
+
 ### 验证门（提交前必过）
 
-```bash
+```powershell
 cargo fmt --check
 cargo test -p dsharbor-core
 node --test plugins/dsharbor-bridge/test/bridge.test.js
 pnpm build
-cargo xwin clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+pnpm pack:bridge
+cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+`pnpm build` 会清空 `dist` 但不会生成桥接插件包；缺了 `src-tauri/resources/*.tgz` 时 clippy 与打包会报 `glob pattern resources/*.tgz path not found`，所以打安装包前先跑 `pnpm pack:bridge`。
 
 ### 一条命令出 Windows 安装包
 
-```bash
-pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
-# 产物：target/x86_64-pc-windows-msvc/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe
+```powershell
+pnpm exec tauri build
+# 产物：target/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe
 ```
 
-别把 `cargo xwin build --release`（或 `cargo build`）单独编出来的 `target/.../release/dsharbor.exe` 直接拷去运行或替换安装目录：那是不带 tauri `custom-protocol` 的**开发版**，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server，脱离 dev server 只会看到「localhost 拒绝连接」的错误页。能独立运行的产物只有上面这条命令出的安装包（或它装出来的安装目录里的 exe）。
+别把 `cargo build --release` 单独编出来的 `target/release/dsharbor.exe` 直接拷去运行或替换安装目录：那是不带 tauri `custom-protocol` 的**开发版**，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server，脱离 dev server 只会看到「localhost 拒绝连接」的错误页。能独立运行的产物只有上面这条命令出的安装包（或它装出来的安装目录里的 exe）。
 
 ### 仓库结构
 
@@ -89,7 +94,7 @@ pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 
 ### 技术栈
 
-Tauri 2（Rust + 系统 WebView2）和 Vite 8 / TypeScript 7；在 WSL2 用 `cargo-xwin` 交叉编译、NSIS 打安装包。为什么这么选、放弃了什么，都记在 `docs/decisions.md`。
+Tauri 2（Rust + 系统 WebView2）和 Vite 8 / TypeScript 7；在 Windows 本机用 MSVC 工具链编译、NSIS 打安装包。为什么这么选、放弃了什么，都记在 `docs/decisions.md`。
 
 ## 给 AI agent 的约定
 

@@ -106,7 +106,10 @@ fn scalar_of(line: &str, key: &str) -> Option<String> {
 }
 
 /// 生成端口覆盖用的 launcher 层 patch 文本。
-pub fn build_port_overlay(block: Option<&WebserverBlock>, port: u16) -> String {
+///
+/// `via_wsl` 指本次启动落在 WSL 发行版内，只影响 host 的归一：发行版里连不到
+/// Windows 侧的网卡地址，必须归一回环。
+pub fn build_port_overlay(block: Option<&WebserverBlock>, port: u16, via_wsl: bool) -> String {
     let mut out = String::new();
     out.push_str("# DSHarbor 生成：本次启动的端口覆盖（launcher 层，不改动你的配置文件）\n");
     out.push_str("- id: webserver\n");
@@ -137,8 +140,10 @@ pub fn build_port_overlay(block: Option<&WebserverBlock>, port: u16) -> String {
                     // DSH 起不来，主机名（localhost）同样不合法。照抄旧块会把用户带进
                     // 这个坑里，所以这里归一成可用的具体地址：通配地址换成这块网卡的
                     // IP（保住局域网访问），其余情况见 resolve_host 的规则。
+                    // WSL 目标例外：发行版里连不到 Windows 网卡 IP，归一成发行版内的
+                    // 回环，Windows 侧经 WSL 的 localhost 转发仍然可达。
                     let indent = &line[..line.len() - t.len()];
-                    let host = endpoint::resolve_reachable_host(Some(&value), false);
+                    let host = endpoint::resolve_reachable_host(Some(&value), via_wsl);
                     out.push_str(&format!("{indent}host: '{host}'\n"));
                 } else {
                     out.push_str(line);
@@ -211,7 +216,7 @@ mod tests {
     #[test]
     fn overlay_replaces_port_and_keeps_other_keys() {
         let block = find_webserver_block(MANAGED_BLOCK).unwrap();
-        let yaml = build_port_overlay(Some(&block), 3099);
+        let yaml = build_port_overlay(Some(&block), 3099, false);
         assert!(yaml.contains("- id: webserver"));
         assert!(yaml.contains("name: '@deepseek-ai/dsh-host-webserver'"));
         // 旧块的通配 host 被归一成具体地址（DSH 0.2.1-rc.2 会拒绝 0.0.0.0）。
@@ -239,8 +244,33 @@ mod tests {
     fn overlay_keeps_concrete_lan_host() {
         let text = "- id: webserver\n  config:\n    host: '192.168.1.7'\n    port: 3080\n";
         let block = find_webserver_block(text).unwrap();
-        let yaml = build_port_overlay(Some(&block), 3099);
+        let yaml = build_port_overlay(Some(&block), 3099, false);
         assert!(yaml.contains("host: '192.168.1.7'"));
+        assert!(yaml.contains("port: 3099"));
+    }
+
+    #[test]
+    fn overlay_wsl_normalizes_wildcard_host_to_loopback() {
+        // WSL 目标下 0.0.0.0 不能归一成 Windows 网卡 IP：发行版里那个地址不是本机，
+        // DSH 绑不上会整只起不来；只能是发行版内的回环。
+        let block = find_webserver_block(MANAGED_BLOCK).unwrap();
+        let yaml = build_port_overlay(Some(&block), 3099, true);
+        assert!(yaml.contains("host: '127.0.0.1'"), "{yaml}");
+        assert!(!yaml.contains("0.0.0.0"));
+        assert!(!yaml.contains("host: '192.168"));
+        assert!(yaml.contains("compression: gzip"));
+        assert!(yaml.contains("port: 3099"));
+    }
+
+    #[test]
+    fn overlay_wsl_normalizes_concrete_lan_host_to_loopback() {
+        // 具体 LAN host 在 WSL 目标下同样归一回环：resolve_host 在 via_wsl 时直接
+        // 短路返回回环，因为 Windows 网卡 IP 在发行版内不可达。
+        let text = "- id: webserver\n  config:\n    host: '192.168.1.7'\n    port: 3080\n";
+        let block = find_webserver_block(text).unwrap();
+        let yaml = build_port_overlay(Some(&block), 3099, true);
+        assert!(yaml.contains("host: '127.0.0.1'"), "{yaml}");
+        assert!(!yaml.contains("192.168.1.7"));
         assert!(yaml.contains("port: 3099"));
     }
 
@@ -249,14 +279,14 @@ mod tests {
         let text = "- id: webserver\n  config:\n    host: 127.0.0.1\n";
         let block = find_webserver_block(text).unwrap();
         assert_eq!(block.port, None);
-        let yaml = build_port_overlay(Some(&block), 3100);
+        let yaml = build_port_overlay(Some(&block), 3100, false);
         assert!(yaml.contains("host: '127.0.0.1'"));
         assert!(yaml.contains("port: 3100"));
     }
 
     #[test]
     fn overlay_falls_back_without_block() {
-        let yaml = build_port_overlay(None, 3099);
+        let yaml = build_port_overlay(None, 3099, false);
         assert!(yaml.contains("name: '@deepseek-ai/dsh-host-webserver'"));
         assert!(yaml.contains("!!js ctx.webStartup.host"));
         assert!(yaml.contains("port: 3099"));

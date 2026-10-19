@@ -4,10 +4,10 @@
 
 > 开发机参考：自动化脚本与截图存放于 `C:\Users\<你>\AppData\Local\Temp\dsharbor-test`（`launch-app.ps1`、`capture-window2.ps1`、`kill-app.ps1` 等）。正式验收只需按本手册手动操作。
 
-## 0. 构建与产物（WSL2 侧）
+## 0. 构建与产物（Windows 本机）
 
-- 操作：发布验收用性能优先构建——`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc`（本地快速测试用默认速度优先构建即可，见 README「开发」）。
-- 期望：退出码 0；产物 `target/x86_64-pc-windows-msvc/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe`（2 MiB 量级；打包会连带前端构建与桥接插件 tgz）。
+- 操作：发布验收用性能优先构建——`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 pnpm exec tauri build`（本地快速测试用默认速度优先构建即可，见 README「开发」）。
+- 期望：退出码 0；产物 `target/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe`（2 MiB 量级；打包会连带前端构建；桥接插件 tgz 要先跑 `pnpm pack:bridge` 生成，否则 build script 报 `glob pattern resources/*.tgz path not found`）。
 
 ## 1. 安装
 
@@ -94,7 +94,7 @@
 
 ## 排查
 
-- **打开只有一个「无法访问此页面 / localhost 拒绝连接（ERR_CONNECTION_REFUSED）」的错误页，而且窗口没有关闭按钮**：安装目录里的 exe 是裸 `cargo build` 编出来的开发版——没开 tauri 的 `custom-protocol`，前端没嵌进去，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server。主窗口是无边框的（`decorations: false`），页面没渲染出来就没有自绘标题栏、也就没有关闭按钮。退出方式：`Alt+F4`、任务栏图标右键「关闭窗口」，或托盘图标右键「完全退出」。修复：用 `pnpm exec tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc` 出的安装包重装（安装目录里那份安装包也可以 `<setup>.exe /S` 静默重装）；不要用裸构建的 `target/.../release/dsharbor.exe` 去替换安装目录。
+- **打开只有一个「无法访问此页面 / localhost 拒绝连接（ERR_CONNECTION_REFUSED）」的错误页，而且窗口没有关闭按钮**：安装目录里的 exe 是裸 `cargo build` 编出来的开发版——没开 tauri 的 `custom-protocol`，前端没嵌进去，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server。主窗口是无边框的（`decorations: false`），页面没渲染出来就没有自绘标题栏、也就没有关闭按钮。退出方式：`Alt+F4`、任务栏图标右键「关闭窗口」，或托盘图标右键「完全退出」。修复：用 `pnpm exec tauri build` 出的安装包重装（安装目录里那份安装包也可以 `<setup>.exe /S` 静默重装）；不要用裸构建的 `target/release/dsharbor.exe` 去替换安装目录。
 - **端口被占用（EADDRINUSE）**：profile 里 webserver 端口被别的程序占用（注意 WSL 镜像网络下 Windows/WSL 共用 localhost 端口，刚停过 DSH 时等 1~2 分钟 TIME_WAIT 消散）。改「端口」字段用自定义端口，或释放占用。
 - **桥接未启用**：DSH 启动时没带 nonce（例如你自己在终端跑 `dsh web`），属预期降级（登录徽章显示「日志兜底就绪」）。
 - **WSL 插件安装报 pnpm 错误**：确认壳运行时已注入清洗后的 PATH（4.0 起内置）；发行版内 pnpm 版本冲突时 `npx @deepseek-ai/dsh plugin --profile web …` 手动复核。

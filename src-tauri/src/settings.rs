@@ -6,6 +6,7 @@
 //! 兼容旧格式：此前该文件顶层直接就是 `LaunchConfig`，加载时自动迁移。
 
 use dsharbor_core::launch::{Channel, LaunchConfig, LaunchMode, Runtime};
+use dsharbor_core::prefs::ShellPrefs;
 use serde::{Deserialize, Serialize};
 
 /// 托盘图标单击（左键）时默认打开的目标。
@@ -62,6 +63,11 @@ pub struct ShellConfig {
     /// 界面下次启动会写回合法值。
     #[serde(default)]
     pub ui_theme: Option<UiTheme>,
+    /// 「环境 / 网络 / 集成」三张卡承载的六个字段（JSON 里与上面几个键平级）。
+    /// 取值、默认值与宽容读取都在核心库（`dsharbor_core::prefs`）里定义与测试：
+    /// 缺键取默认，枚举认不出的名字只让那一个字段回默认，不牵连其余设置。
+    #[serde(flatten)]
+    pub prefs: ShellPrefs,
 }
 
 impl Default for ShellConfig {
@@ -79,6 +85,7 @@ impl Default for ShellConfig {
             tray_click: TrayClick::Launcher,
             light_delay_secs: 0,
             ui_theme: None,
+            prefs: ShellPrefs::default(),
         }
     }
 }
@@ -117,9 +124,7 @@ pub fn load(app: &tauri::AppHandle) -> ShellConfig {
     match serde_json::from_str::<LaunchConfig>(&text) {
         Ok(launch) => ShellConfig {
             launch,
-            tray_click: TrayClick::default(),
-            light_delay_secs: 0,
-            ui_theme: None,
+            ..ShellConfig::default()
         },
         Err(_) => ShellConfig::default(),
     }
@@ -128,6 +133,7 @@ pub fn load(app: &tauri::AppHandle) -> ShellConfig {
 /// 写盘（先过核心库校验：非法输入不会落盘）。
 fn store(app: &tauri::AppHandle, config: &ShellConfig) -> Result<(), String> {
     dsharbor_core::launch::validate(&config.launch)?;
+    validate_proxy(&config.prefs)?;
     let path = path(app)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|err| format!("创建配置目录失败：{err}"))?;
@@ -135,6 +141,27 @@ fn store(app: &tauri::AppHandle, config: &ShellConfig) -> Result<(), String> {
     let text =
         serde_json::to_string_pretty(config).map_err(|err| format!("序列化配置失败：{err}"))?;
     std::fs::write(&path, text).map_err(|err| format!("写入配置失败：{err}"))
+}
+
+/// 代理地址的落盘前校验。
+///
+/// 只校验「手动模式且真的填了东西」这一种：
+/// - 其它模式下留着的地址只是没被清理的残留，拦住它会让「切回系统代理后啥也没改却存不了盘」；
+/// - 手动模式下空地址是刚切过来的中间状态，界面已经用提示行说了「还没填」，
+///   不需要用「整份配置存不下去」再拦一次。
+///
+/// 真正要拦的是「填了一个用不出去的地址」：这种值一经落盘就会静默带到代理变量、
+/// 下载源自检与命令行接入上，事后很难看出是哪一步坏的。
+fn validate_proxy(prefs: &ShellPrefs) -> Result<(), String> {
+    if prefs.proxy_mode != dsharbor_core::prefs::ProxyMode::Manual {
+        return Ok(());
+    }
+    if prefs.proxy_address.trim().is_empty() {
+        return Ok(());
+    }
+    dsharbor_core::net::normalize_proxy_url(&prefs.proxy_address)
+        .map(|_| ())
+        .map_err(|err| format!("代理地址填错了：{}", err.message()))
 }
 
 /// 保存整份设置（界面自动保存用）。
@@ -184,4 +211,144 @@ pub fn save_launch(app: &tauri::AppHandle, launch: &LaunchConfig) -> Result<(), 
     let mut config = load(app);
     config.launch = launch.clone();
     store(app, &config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 壳配置里六个新字段的完整往返：界面改 → 存盘（序列化）→ 重启（反序列化）。
+    #[test]
+    fn shell_config_round_trips_the_six_new_fields() {
+        let config = ShellConfig {
+            prefs: ShellPrefs {
+                profile: "自定义环境".into(),
+                download_source: dsharbor_core::prefs::DownloadSource::Mirror,
+                proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+                proxy_address: "http://127.0.0.1:7890".into(),
+                cli_integration: true,
+                cache_cleanup: true,
+            },
+            ..ShellConfig::default()
+        };
+
+        let text = serde_json::to_string_pretty(&config).expect("序列化壳配置失败");
+        let back: ShellConfig = serde_json::from_str(&text).expect("反序列化壳配置失败");
+
+        assert_eq!(back.prefs, config.prefs, "六个新字段应原样往返");
+    }
+
+    /// 老配置文件（没有六个新键）与新配置（六个键齐全）混着读都要成立。
+    #[test]
+    fn missing_new_keys_take_defaults_without_dropping_other_settings() {
+        // 旧配置文件：只有壳自己的键，没有环境/网络/集成的字段。
+        let text = r#"{
+  "launch": { "mode": { "kind": "npx" }, "runtime": { "kind": "default" } },
+  "trayClick": "dsh",
+  "lightDelaySecs": 15,
+  "uiTheme": "nativeDark"
+}"#;
+        let config: ShellConfig = serde_json::from_str(text).expect("旧配置应能读出来");
+
+        assert_eq!(config.tray_click, TrayClick::Dsh, "其余设置不能丢");
+        assert_eq!(config.light_delay_secs, 15, "其余设置不能丢");
+        assert_eq!(config.ui_theme, Some(UiTheme::NativeDark), "其余设置不能丢");
+        assert_eq!(
+            config.prefs,
+            ShellPrefs::default(),
+            "缺键时六个字段取默认值"
+        );
+    }
+
+    /// 手改坏了枚举值只让那一个字段回默认，壳照样能打开、其余设置照样在。
+    #[test]
+    fn unknown_enum_literal_in_file_falls_back_per_field() {
+        let text = r#"{
+  "launch": { "mode": { "kind": "npx" }, "runtime": { "kind": "default" } },
+  "trayClick": "launcher",
+  "lightDelaySecs": 30,
+  "downloadSource": "某个不存在的源",
+  "proxyMode": 42,
+  "proxyAddress": "http://127.0.0.1:1080",
+  "cliIntegration": true
+}"#;
+        let config: ShellConfig =
+            serde_json::from_str(text).expect("坏枚举值不该让整份配置读不出来");
+
+        assert_eq!(config.light_delay_secs, 30, "坏枚举只影响自己那一个字段");
+        assert_eq!(
+            config.prefs.download_source,
+            dsharbor_core::prefs::DownloadSource::Inherit,
+            "认不出的下载源退回默认"
+        );
+        assert_eq!(
+            config.prefs.proxy_mode,
+            dsharbor_core::prefs::ProxyMode::System,
+            "类型都不对的代理模式也退回默认"
+        );
+        assert_eq!(
+            config.prefs.proxy_address, "http://127.0.0.1:1080",
+            "字符串照读"
+        );
+        assert!(config.prefs.cli_integration, "布尔照读");
+    }
+
+    /// 手动模式填了个写不出来的地址：存盘前就要被拦住，不能落盘。
+    ///
+    /// 不拦的话坏地址会静默写进 config.json，下次启动依次污染代理变量、
+    /// 下载源自检与「命令行接入」，排查时看不出是哪一步坏的。
+    #[test]
+    fn a_broken_manual_proxy_address_is_refused_before_it_is_written() {
+        let prefs = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+            proxy_address: "socks5://127.0.0.1:7890".into(),
+            ..ShellPrefs::default()
+        };
+
+        let err = validate_proxy(&prefs).expect_err("socks 地址在手动模式下应被拒");
+        assert!(err.contains("http"), "拒绝理由要直接说人话，实际是：{err}");
+    }
+
+    /// 手动模式但还没填地址：这是界面上的中间状态（刚切到手动），不能拦住整份配置。
+    #[test]
+    fn an_empty_manual_proxy_address_is_not_a_save_blocker() {
+        let prefs = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+            proxy_address: "  ".into(),
+            ..ShellPrefs::default()
+        };
+
+        assert!(validate_proxy(&prefs).is_ok());
+    }
+
+    /// 别的模式下留着的地址只是残留（切回系统代理后再也没碰过它），不该挡整份配置保存。
+    #[test]
+    fn a_leftover_address_in_other_modes_does_not_block_saving() {
+        for mode in [
+            dsharbor_core::prefs::ProxyMode::System,
+            dsharbor_core::prefs::ProxyMode::Off,
+        ] {
+            let prefs = ShellPrefs {
+                proxy_mode: mode,
+                proxy_address: "socks5://127.0.0.1:7890".into(),
+                ..ShellPrefs::default()
+            };
+            assert!(
+                validate_proxy(&prefs).is_ok(),
+                "{mode:?} 模式下的残留地址不该挡住保存"
+            );
+        }
+    }
+
+    /// 手动模式下能归一化的地址（不写协议、纯主机名）也算合格：归一化规则跟下发同一套。
+    #[test]
+    fn a_manual_address_that_normalizes_is_accepted() {
+        let prefs = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+            proxy_address: "127.0.0.1:7890".into(),
+            ..ShellPrefs::default()
+        };
+
+        assert!(validate_proxy(&prefs).is_ok());
+    }
 }

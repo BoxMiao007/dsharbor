@@ -27,9 +27,9 @@ pub struct PortHint {
 }
 
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息。
-pub fn port_hint(config: &LaunchConfig) -> Result<PortHint, String> {
+pub fn port_hint(config: &LaunchConfig, profile: &str) -> Result<PortHint, String> {
     let target = Target::of(config);
-    match read_profile_patch(&target)
+    match read_profile_patch(&target, profile)
         .as_deref()
         .and_then(find_webserver_block)
     {
@@ -51,6 +51,7 @@ pub fn port_hint(config: &LaunchConfig) -> Result<PortHint, String> {
 pub fn port_overlay_args(
     app: &tauri::AppHandle,
     config: &LaunchConfig,
+    profile: &str,
 ) -> Result<Vec<String>, String> {
     let Some(port) = config.port else {
         return Ok(Vec::new());
@@ -58,10 +59,13 @@ pub fn port_overlay_args(
     let target = Target::of(config);
     // 尽量照抄现有 webserver 块的字段（保留 host / compression 等）；
     // 读不到块就按出厂形状兜底（见核心库 overlay.rs 的注释）。
-    let block = read_profile_patch(&target)
+    // WSL 目标下 host 要归一成发行版内的回环：发行版里连不到 Windows 侧网卡地址，
+    // 沿用旧块的 host 会让发行版内的 DSH 绑不上、整只起不来。
+    let via_wsl = matches!(&target, Target::Wsl { .. });
+    let block = read_profile_patch(&target, profile)
         .as_deref()
         .and_then(find_webserver_block);
-    let yaml = build_port_overlay(block.as_ref(), port);
+    let yaml = build_port_overlay(block.as_ref(), port, via_wsl);
     let dir = crate::app_data_root(app)?.join("runtime");
     std::fs::create_dir_all(&dir).map_err(|err| format!("创建运行目录失败：{err}"))?;
     let path = dir.join("port-overlay.yml");
@@ -78,7 +82,7 @@ pub fn port_overlay_args(
 
 /// 读取目标 profile 的 cordis.patch.yml（跨 Windows / WSL 两种目标环境）。
 /// 文件不存在或读不动时返回 None（界面回退到默认提示、覆盖层走兜底形状）。
-fn read_profile_patch(target: &Target) -> Option<String> {
-    let profile = plugin::profile_dir(target).ok()?;
-    plugin::read_file(target, &format!("{profile}/cordis.patch.yml")).ok()
+fn read_profile_patch(target: &Target, profile: &str) -> Option<String> {
+    let dir = plugin::profile_dir(target, profile).ok()?;
+    plugin::read_file(target, &format!("{dir}/cordis.patch.yml")).ok()
 }

@@ -6,15 +6,25 @@
 //! - 后续的启动命令构造、参数校验、窗口状态机都进这个库。
 
 pub mod bridge;
+pub mod cache_auto;
 pub mod console;
 pub mod endpoint;
 pub mod launch;
 pub mod lifecycle;
 pub mod links;
 pub mod logparse;
+pub mod net;
+pub mod npx_cache;
 pub mod overlay;
+pub mod patch_layer;
+pub mod path_shim;
 pub mod paths;
+pub mod plugin_switch;
+pub mod prefs;
+pub mod profile_ops;
+pub mod profiles;
 pub mod registry;
+pub mod registry_query;
 
 /// 对外展示的应用名（窗口标题、安装包、界面文案共用一个来源）。
 pub const APP_NAME: &str = "DSHarbor";

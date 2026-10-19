@@ -6,15 +6,22 @@
 
 mod detect;
 mod launcher;
+mod npxcache;
+mod patch;
 mod plugin;
+mod plugin_switch;
 mod profile;
+mod profile_ops;
+mod proxy;
 mod registry;
 mod settings;
+mod shellpath;
 mod tray;
 mod wsl;
 
 use std::sync::Mutex;
 
+use dsharbor_core::cache_auto;
 use dsharbor_core::launch::{self, LaunchConfig};
 use dsharbor_core::lifecycle::{ShellAction, ShellEvent, ShellMachine, ShellState};
 use dsharbor_core::links::{navigation_decision, NavigationDecision};
@@ -68,6 +75,24 @@ struct AppState {
     /// 延迟销毁主窗口的世代号：每次重新计时或撤销计时都自增，
     /// 上一轮的计时线程醒来发现不是最新一代就直接放弃（见 arm_light_destroy）。
     light_generation: std::sync::atomic::AtomicU64,
+    /// 最近一次「启动后自动清理」的结果，等界面来取。
+    /// 不放日志里：清理是用户看不见又删了磁盘的事，必须在界面上告诉他清掉了什么。
+    auto_cleanup: Mutex<Option<AutoCleanupReport>>,
+    /// 自动清理的次数号（每跑完一次自增，写进 `AutoCleanupReport::seq`）。
+    auto_cleanup_seq: std::sync::atomic::AtomicU64,
+}
+
+/// 一次「启动后自动清理」的结果，留给界面来取。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoCleanupReport {
+    /// 第几次自动清理。界面靠它只播报新增的那一次，不把同一次结果反复重建。
+    seq: u64,
+    /// 说明文字：成功时是「启动后自动清理：…」，失败时写明为什么没能清理。
+    message: String,
+    /// 成功时的逐条结果，界面复用它渲染「清掉哪些」并刷新占用数字；
+    /// 缓存根都定位不到时没有可展示的条目，界面只显示 `message`。
+    result: Option<npxcache::CleanupResult>,
 }
 
 #[tauri::command]
@@ -105,8 +130,9 @@ fn start_session(
 ) -> Result<(), String> {
     // 先过校验并持久化（保留托盘单击等壳偏好）：非法输入在这里报错——不写配置、不启动进程。
     settings::save_launch(app, config)?;
-    let launcher_args = profile::port_overlay_args(app, config)?;
-    spawn_session(app, state, config, &launcher_args)?;
+    let profile = settings::load(app).prefs.profile;
+    let launcher_args = profile::port_overlay_args(app, config, &profile)?;
+    spawn_session(app, state, config, &profile, &launcher_args)?;
     remember_config(state, config);
     Ok(())
 }
@@ -139,9 +165,14 @@ fn spawn_session(
     app: &tauri::AppHandle,
     state: &AppState,
     config: &LaunchConfig,
+    profile: &str,
     launcher_args: &[String],
 ) -> Result<(), String> {
     let mut spawned_child = false;
+    // 配置只读一次：拉起进程要注入的那份环境变量、启动后要不要自动清理，
+    // 都按同一个快照判定。`settings::load` 是纯读盘，不会因为读得早而不同，
+    // 但一次快照能让两处口径天然一致（半路有人改配置也不会出现「按 A 启动、按 B 清理」）。
+    let prefs = settings::load(app).prefs;
     let result = {
         let mut guard = state
             .session
@@ -157,7 +188,7 @@ fn spawn_session(
         // 确认是 DSH（多半是上次壳异常退出的残留，或用户自己起的）→ 按外部运行中报送；
         // 是别的程序占着端口 → 给出明确的占用提示，代替原先干巴巴的退出代码。
         // 地址跟随 profile 的 host：DSH 可以只绑在网卡 IP 上，探回环会漏判。
-        let endpoint = detect::effective_endpoint(config);
+        let endpoint = detect::effective_endpoint(config, profile);
         let tls_requested = launch::has_tls_args(&config.extra_args);
         if detect::port_alive(&endpoint) {
             if detect::dsh_fingerprint(&endpoint) == Some(true) {
@@ -182,7 +213,9 @@ fn spawn_session(
             if let Ok(mut slot) = state.external_port.lock() {
                 *slot = None;
             }
-            match launcher::spawn(config, launcher_args, endpoint) {
+            // 代理与下载源注入被拉起的 DSH 进程（与版本查询、插件安装卸载同一份计划）。
+            let env = proxy::child_env(&prefs, prefs.download_source);
+            match launcher::spawn(config, profile, launcher_args, &env, endpoint) {
                 Ok(session) => {
                     *guard = Some(session);
                     spawned_child = true;
@@ -197,16 +230,71 @@ fn spawn_session(
     }
     if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
-        query_dsh_version_async(app, config);
+        query_dsh_version_async(app, config, profile);
+        // 自动清理（开关在「集成」卡，默认关）：只在这一轮真的拉起了一个 DSH 进程之后跑。
+        // 壳外已有 DSH 时启动命令也返回成功，但那次什么也没起（`spawned_child` 仍为 false），
+        // 不是「这一轮拉起过进程」，不应因此删磁盘。
+        // 除此之外不再附加条件：进程随后是否健康退出由会话状态单独反映，不在这里等。
+        if cache_auto::should_run(prefs.cache_cleanup, spawned_child) {
+            run_auto_cleanup_async(app, config);
+        }
     }
     result
 }
 
-/// 启动成功后异步查询 DSH 版本号（失败只记日志：界面显示「DSH 版本未知」即可）。
-fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig) {
+/// 真的拉起了一个 DSH 进程之后异步跑一次自动清理，结果存进 AppState 等界面来取。
+///
+/// 复用与「立即清理」按钮完全相同的 `npxcache::cleanup`：保留哪几份、删哪几份只在一处定义，
+/// 开关打开后不另有一套规则。
+fn run_auto_cleanup_async(app: &tauri::AppHandle, config: &LaunchConfig) {
     let app = app.clone();
     let config = config.clone();
-    std::thread::spawn(move || match query_dsh_version(&config) {
+    std::thread::spawn(move || {
+        let outcome = npxcache::cleanup(&config);
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        let seq = state
+            .auto_cleanup_seq
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        let report = match outcome {
+            Ok(result) => {
+                let message = cache_auto::auto_message(
+                    result.removed.len(),
+                    result.freed_bytes,
+                    result.failed.len(),
+                );
+                eprintln!("[dsharbor] {message}");
+                AutoCleanupReport {
+                    seq,
+                    message,
+                    result: Some(result),
+                }
+            }
+            Err(err) => {
+                // 缓存根都定位不到（npm 坏了 / 没装 Node）：不删任何东西，但要让用户看见。
+                let message = format!("启动后自动清理没做成：{err}");
+                eprintln!("[dsharbor] {message}");
+                AutoCleanupReport {
+                    seq,
+                    message,
+                    result: None,
+                }
+            }
+        };
+        if let Ok(mut slot) = state.auto_cleanup.lock() {
+            *slot = Some(report);
+        };
+    });
+}
+
+/// 启动成功后异步查询 DSH 版本号（失败只记日志：界面显示「DSH 版本未知」即可）。
+fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig, profile: &str) {
+    let app = app.clone();
+    let config = config.clone();
+    let profile = profile.to_string();
+    std::thread::spawn(move || match query_dsh_version(&config, &profile) {
         Ok(version) => {
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(mut slot) = state.dsh_version.lock() {
@@ -227,8 +315,9 @@ fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig) {
 ///
 /// 复用启动器的同一条通路（同样的启动方式、同样的 PATH 注入），所以四种启动方式都能查；
 /// 该命令只打印版本号后退出（实测 `dsh web --version` 不落盘、不起服务）。
-fn query_dsh_version(config: &LaunchConfig) -> Result<String, String> {
-    let plan = dsharbor_core::launch::build_launch_plan(config, &[], &[VERSION_ARG.to_string()])?;
+fn query_dsh_version(config: &LaunchConfig, profile: &str) -> Result<String, String> {
+    let plan =
+        dsharbor_core::launch::build_launch_plan(config, profile, &[], &[VERSION_ARG.to_string()])?;
     let mut command = launcher::command_for_plan(&plan);
     launcher::apply_no_window(&mut command);
     command
@@ -295,9 +384,147 @@ fn load_shell_config(app: tauri::AppHandle) -> settings::ShellConfig {
 }
 
 /// 保存整份壳设置（非法输入报错、不写盘——配置界面的输入校验兜底）。
+///
+/// 下载源变了就清掉版本清单缓存：旧清单里的版本号来自另一个 registry，
+/// 不作废会让人以为切换没生效。
 #[tauri::command]
 fn save_shell_config(app: tauri::AppHandle, config: settings::ShellConfig) -> Result<(), String> {
-    settings::save(&app, &config)
+    let previous = settings::load(&app).prefs;
+    settings::save(&app, &config)?;
+    // 下载源或代理变了就清掉版本清单缓存：旧清单是在另一个源/另一条代理下取的，
+    // 不作废会让人以为切换没生效。代理探测结果也一起作废——用户可能刚改过系统设置。
+    let proxy_changed = previous.proxy_mode != config.prefs.proxy_mode
+        || previous.proxy_address != config.prefs.proxy_address;
+    if proxy_changed {
+        proxy::invalidate_probe();
+    }
+    if previous.download_source != config.prefs.download_source || proxy_changed {
+        registry::invalidate_all();
+    }
+    Ok(())
+}
+
+/// 「网络」卡代理段的状态：现在到底走不走代理、走的是哪个地址、例外列表有多大。
+///
+/// async + spawn_blocking：跟随系统时要读环境变量并在 Windows 上跑 `reg.exe`，
+/// 同步命令会把这段算在主线程上（有 30 秒缓存，但仍不动主线程）。
+#[tauri::command]
+async fn proxy_state(app: tauri::AppHandle) -> Result<proxy::ProxyState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let prefs = settings::load(&app).prefs;
+        proxy::state(&prefs)
+    })
+    .await
+    .map_err(|err| format!("读取代理状态失败：{err}"))
+}
+
+/// 「网络」卡的「测试连接」：拿当前下载源与当前代理设置真的跑一次 npm，
+/// 告诉用户到底通不通、是怎么通的、不通是卡在哪。
+///
+/// async + spawn_blocking：要拉 npm 子进程并等它结束（最多两条），同步命令会堵主线程。
+///
+/// 下载源由界面随请求一起传，与 `query_dsh_versions` 同一个理由：它才是
+/// 「这次用哪个源」的权威，不必先去读盘；代理由已保存的设置决定，
+/// 与真实下载走同一条注入路径。
+///
+/// 不写入缓存（见 `registry::self_check`）：自检的结果是「此刻这条网络」的快照，
+/// 与「有多少版本可选」是两回事，互相覆盖只会让两边都不准。
+#[tauri::command]
+async fn self_check_network(
+    app: tauri::AppHandle,
+    runtime: launch::Runtime,
+    source: String,
+) -> Result<dsharbor_core::net::SelfCheckReport, String> {
+    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
+        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
+        dsharbor_core::prefs::DownloadSource::default()
+    });
+    let prefs = settings::load(&app).prefs;
+    tauri::async_runtime::spawn_blocking(move || registry::self_check(&runtime, &prefs, source))
+        .await
+        .map_err(|err| format!("后台自检失败：{err}"))
+}
+
+/// 「集成」卡命令行集成段的当前状态：开关值、真实 PATH 情况、垫片预览与状态说明。
+///
+/// async + spawn_blocking：读 PATH 要起 `reg.exe`、探测 dsh 要看磁盘，同步命令会堵主线程。
+#[tauri::command]
+async fn cli_integration_state(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+) -> Result<shellpath::CliIntegrationState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let enabled = settings::load(&app).prefs.cli_integration;
+        shellpath::state(&app, &config, enabled)
+    })
+    .await
+    .map_err(|err| format!("读取命令行集成状态失败：{err}"))
+}
+
+/// 打开 / 关闭命令行集成：写（或删）`dsh.cmd` 垫片，并改当前用户 PATH 里的那一条。
+///
+/// 开关值随同落盘：不改 `cliIntegration` 的话，壳下次启动看不出「该不该刷垫片」，
+/// 与用户刚看到的开关状态会对不上。
+#[tauri::command]
+async fn set_cli_integration(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    enabled: bool,
+) -> Result<shellpath::CliIntegrationState, String> {
+    let next = {
+        let app = app.clone();
+        let config = config.clone();
+        tauri::async_runtime::spawn_blocking(move || shellpath::apply(&app, &config, enabled))
+            .await
+            .map_err(|err| format!("切换命令行集成失败：{err}"))??
+    };
+    let mut settings = settings::load(&app);
+    settings.prefs.cli_integration = enabled;
+    settings.launch = config;
+    // PATH 已经改完了，这里存配置失败不该报「整个操作失败」（那样用户会以为 PATH 没动）。
+    if let Err(err) = settings::save(&app, &settings) {
+        eprintln!("[dsharbor] 命令行集成：开关状态未能落盘：{err}");
+    }
+    Ok(next)
+}
+
+/// 「集成」卡缓存段：扫一遍 npx 缓存，返回本包占用与可回收量（只读）。
+///
+/// async + spawn_blocking：要跑 `npm config get cache`、递归 stat 整棵目录，同步命令会堵主线程。
+#[tauri::command]
+async fn cache_state(config: LaunchConfig) -> Result<npxcache::CacheState, String> {
+    tauri::async_runtime::spawn_blocking(move || npxcache::scan(&config))
+        .await
+        .map_err(|err| format!("读取缓存占用失败：{err}"))
+}
+
+/// 「立即清理」：删掉判定为可回收的 npx 缓存目录，返回逐条结果与刷新后的状态。
+///
+/// 与「启动后自动清理」跑的是同一个函数，两条路径的保留策略完全一致（开关在
+/// `prefs.cache_cleanup`，何时自动跑见 `spawn_session`）。
+#[tauri::command]
+async fn cleanup_cache(config: LaunchConfig) -> Result<npxcache::CleanupResult, String> {
+    tauri::async_runtime::spawn_blocking(move || npxcache::cleanup(&config))
+        .await
+        .map_err(|err| format!("清理缓存失败：{err}"))?
+}
+
+/// 取最近一次「启动后自动清理」的结果。
+///
+/// `since` 是界面已经播报过的序号：只有新一次的结果（`seq > since`）才返回，
+/// 否则返回 `None`。拉取式而不是推送：壳里没有事件通道，界面本来就每秒轮询状态，
+/// 再顺手问一句比新开一条推送通道简单。结果不取走即清：同一份结果可以被多个
+/// 页面读到，界面自己用 `seq` 去重。
+#[tauri::command]
+fn auto_cleanup_report(
+    state: tauri::State<'_, AppState>,
+    since: u64,
+) -> Result<Option<AutoCleanupReport>, String> {
+    let guard = state
+        .auto_cleanup
+        .lock()
+        .map_err(|_| "内部状态异常".to_string())?;
+    Ok(guard.as_ref().filter(|report| report.seq > since).cloned())
 }
 
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
@@ -305,11 +532,17 @@ fn save_shell_config(app: tauri::AppHandle, config: settings::ShellConfig) -> Re
 /// async 命令：同步命令跑在主线程上，而读 target 环境配置在 WSL 模式下要起 wsl.exe
 /// （几百毫秒到数秒）——主线程一堵，窗口的拖动/滚动/点击全跟着僵（切换启动方式卡顿的根因）。
 #[tauri::command]
-async fn profile_port_hint(config: LaunchConfig) -> Result<profile::PortHint, String> {
+async fn profile_port_hint(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+) -> Result<profile::PortHint, String> {
     // spawn_blocking 错掉（JoinError）或 port_hint 自己报错都要传给界面。
-    let hint = tauri::async_runtime::spawn_blocking(move || profile::port_hint(&config))
-        .await
-        .map_err(|err| format!("后台读取端口信息失败：{err}"))??;
+    let hint = tauri::async_runtime::spawn_blocking(move || {
+        let profile = settings::load(&app).prefs.profile;
+        profile::port_hint(&config, &profile)
+    })
+    .await
+    .map_err(|err| format!("后台读取端口信息失败：{err}"))??;
     Ok(hint)
 }
 
@@ -401,7 +634,8 @@ fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option
                     guard.clone()
                 };
                 if let Some(config) = config {
-                    let endpoint = detect::effective_endpoint(&config);
+                    let profile = settings::load(app).prefs.profile;
+                    let endpoint = detect::effective_endpoint(&config, &profile);
                     if detect::port_alive(&endpoint)
                         && detect::dsh_fingerprint(&endpoint) == Some(true)
                     {
@@ -487,11 +721,25 @@ async fn wsl_distro_info() -> Result<Vec<wsl::DistroInfo>, String> {
 ///
 /// async 命令：要拉起 npm（WSL 下还要先起 wsl.exe），同步命令会把主线程堵住。
 /// 查询失败就返回错误字符串，界面自己降级成「稳定版 + 默认环境」继续可用。
+///
+/// 下载源由界面随请求一起传（`source`）：它才是「这次要用哪个源」的权威，
+/// 不必先去读盘——否则一旦保存没落盘，界面显示的选项与实际请求的源就对不上。
+/// 认不出的值退回默认并只记日志，不影响使用。
 #[tauri::command]
 async fn query_dsh_versions(
+    app: tauri::AppHandle,
     runtime: launch::Runtime,
+    source: String,
 ) -> Result<dsharbor_core::registry::RegistryInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime))
+    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
+        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
+        dsharbor_core::prefs::DownloadSource::default()
+    });
+    // 注入给 npm 的环境变量在这里算好：源用界面这次传的（它才是权威），
+    // 代理用已保存的设置（见壳设置里的「网络」卡）。
+    let prefs = settings::load(&app).prefs;
+    let env = proxy::child_env(&prefs, source);
+    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime, source, &env))
         .await
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }
@@ -794,6 +1042,8 @@ fn open_shell_dir(app: tauri::AppHandle, kind: String) -> Result<String, String>
         "config" => app_data_root(&app)?,
         "logs" => std::path::PathBuf::from(plugin::host_dsh_home()?).join("logs"),
         "backups" => plugin::backups_root(&app)?,
+        // 命令行集成的垫片目录（与版本目录解耦，PATH 里那条永远指这里）。
+        "bin" => shellpath::bin_dir(&app)?,
         other => return Err(format!("不认识的目录：{other}")),
     };
     // 目录可能还不存在（重装后首次启动、DSH 还没写过日志）：先建出来，否则资源管理器报错。
@@ -824,15 +1074,23 @@ fn open_in_file_manager(dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// 安装/卸载桥接插件时要求会话已停止（pnpm 需要独占 profile 目录）。
-fn ensure_session_stopped(state: &tauri::State<'_, AppState>) -> Result<(), String> {
+/// 要求会话已停止才能做的目录操作。
+///
+/// 重装依赖要走 pnpm 写 `node_modules`，备份/还原补丁层要改 DSH 自己加载的
+/// 配置文件；运行中的 DSH 同时读写这些位置，谁后写谁赢——所以先停下来，别抢。
+/// 提示里带上具体动作与环境名：同一个判断服务四种操作，说法必须对得上刚点的按钮。
+fn ensure_session_stopped(
+    state: &tauri::State<'_, AppState>,
+    action: &str,
+    profile: &str,
+) -> Result<(), String> {
     let mut guard = state
         .session
         .lock()
         .map_err(|_| "内部状态异常".to_string())?;
     if let Some(session) = guard.as_mut() {
         if session.is_alive() {
-            return Err("请先停止 DSH 再操作桥接插件：pnpm 需要独占 profile 目录。".to_string());
+            return Err(dsharbor_core::patch_layer::session_busy(action, profile));
         }
     }
     Ok(())
@@ -845,8 +1103,9 @@ fn bridge_install(
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state)?;
-    plugin::install(&app, &config)
+    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
+    let profile = settings::load(&app).prefs.profile;
+    plugin::install(&app, &config, &profile)
 }
 
 /// 卸载桥接插件（备份 → 官方 plugin remove → 校验 bundles 摘除）。
@@ -856,8 +1115,9 @@ fn bridge_uninstall(
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state)?;
-    plugin::uninstall(&app, &config)
+    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
+    let profile = settings::load(&app).prefs.profile;
+    plugin::uninstall(&app, &config, &profile)
 }
 
 /// 从备份恢复 profile 文件（回滚）。
@@ -868,8 +1128,9 @@ fn bridge_restore(
     config: LaunchConfig,
     backup_dir: String,
 ) -> Result<String, String> {
-    ensure_session_stopped(&state)?;
-    plugin::restore(&app, &config, &backup_dir)
+    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
+    let profile = settings::load(&app).prefs.profile;
+    plugin::restore(&app, &config, &profile, &backup_dir)
 }
 
 /// 查询桥接插件在当前目标环境中的状态。
@@ -881,10 +1142,210 @@ async fn bridge_state(
     app: tauri::AppHandle,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeState, String> {
-    let bridge = tauri::async_runtime::spawn_blocking(move || plugin::state(&app, &config))
-        .await
-        .map_err(|err| format!("后台读取桥接状态失败：{err}"))??;
+    let bridge = tauri::async_runtime::spawn_blocking(move || {
+        let profile = settings::load(&app).prefs.profile;
+        plugin::state(&app, &config, &profile)
+    })
+    .await
+    .map_err(|err| format!("后台读取桥接状态失败：{err}"))??;
     Ok(bridge)
+}
+
+/// 列出当前目标环境下能起网页界面、可供「启动用」选择的环境。
+///
+/// 返回值是带 `supported` 标记的包装结构而不是裸数组：非 Windows 宿主上环境卡
+/// 要收起并说「仅在 Windows 宿主可用」，而一份空数组表达不了这个区别（分不清
+/// 「这里不支持」与「一个环境都没有」）。
+///
+/// async 命令：WSL 目标下要经 wsl.exe 读发行版里的目录（秒级），同步命令会让
+/// 换启动方式时整个窗口发僵（同 profile_port_hint）。
+#[tauri::command]
+async fn list_profiles(
+    config: LaunchConfig,
+) -> Result<dsharbor_core::profiles::ProfileListing, String> {
+    tauri::async_runtime::spawn_blocking(move || plugin::list_profiles(&config))
+        .await
+        .map_err(|err| format!("后台枚举环境失败：{err}"))?
+}
+
+/// 新建一个空白环境（只写骨架文件，不装依赖）。
+///
+/// async 命令：WSL 目标下每个动作都要经 wsl.exe 来回（秒级），同步命令会让窗口发僵
+/// （同 list_profiles）。
+#[tauri::command]
+async fn create_profile(
+    config: LaunchConfig,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || profile_ops::create(&config, &name))
+        .await
+        .map_err(|err| format!("后台新建环境失败：{err}"))?
+}
+
+/// 复制一份环境（不搬依赖目录与锁文件）。
+#[tauri::command]
+async fn copy_profile(
+    config: LaunchConfig,
+    source: String,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || profile_ops::copy(&config, &source, &name))
+        .await
+        .map_err(|err| format!("后台复制环境失败：{err}"))?
+}
+
+/// 重命名环境：目录与清单里的名字一起改；改的是当前启动用的环境时同步改配置。
+///
+/// 配置更新放在返回之前做：界面拿到成功结果后会重新读配置，顺序反了会读到旧名字。
+#[tauri::command]
+async fn rename_profile(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    old_name: String,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    let (outcome, config_error) = tauri::async_runtime::spawn_blocking(move || {
+        let outcome = profile_ops::rename(&config, &old_name, &name)?;
+        // 选中态存在配置文件里（不是内存里），改名成功后必须跟着改，否则下次启动
+        // 会去找一个已经不存在的老名字。配置写失败不算动作失败（目录已经搬完了），
+        // 但要带回去告诉用户。
+        let mut shell = settings::load(&app);
+        let mut error = None;
+        if shell.prefs.profile == old_name {
+            shell.prefs.profile = name.clone();
+            if let Err(err) = settings::save(&app, &shell) {
+                error = Some(format!("环境已改名，但启动用环境没跟着改：{err}"));
+            }
+        }
+        Ok::<_, String>((outcome, error))
+    })
+    .await
+    .map_err(|err| format!("后台重命名环境失败：{err}"))??;
+    let mut outcome = outcome;
+    if let Some(error) = config_error {
+        outcome.ok = false;
+        outcome.message = format!("{}\n{error}", outcome.message);
+    }
+    Ok(outcome)
+}
+
+/// 删除环境：当前启动用的环境与官方桌面端目录会被拒绝（守卫在核心库）。
+#[tauri::command]
+async fn delete_profile(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let current = settings::load(&app).prefs.profile;
+        profile_ops::delete(&config, &current, &name)
+    })
+    .await
+    .map_err(|err| format!("后台删除环境失败：{err}"))?
+}
+
+/// 给某个环境安装依赖（新建/复制出来的环境都缺这一步）。
+///
+/// 异步命令且可能跑几分钟：`dsh plugin ... install` 要拉几百 MB，期间界面靠
+/// 按钮的忙碌态提示，不能阻塞主线程。
+///
+/// 先要求会话已停止：pnpm 要独占环境目录，与运行中的 DSH 抢同一份 `node_modules`
+/// 会互相覆盖，结果不可预测（票据 #20 留下的已知风险）。
+#[tauri::command]
+async fn install_profile_deps(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+) -> Result<profile_ops::ProfileOutcome, String> {
+    ensure_session_stopped(&state, "重装依赖", &name)?;
+    tauri::async_runtime::spawn_blocking(move || profile_ops::install_deps(&app, &config, &name))
+        .await
+        .map_err(|err| format!("后台安装依赖失败：{err}"))?
+}
+
+/// 备份某个环境的补丁层（`cordis.patch.yml`），产生一份带时间戳的副本。
+///
+/// 异步命令：WSL 目标要经 `wsl.exe` 读发行版里的文件（秒级）。
+#[tauri::command]
+async fn patch_backup(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+) -> Result<patch::PatchOutcome, String> {
+    ensure_session_stopped(&state, "备份补丁层", &name)?;
+    tauri::async_runtime::spawn_blocking(move || patch::backup(&app, &config, &name))
+        .await
+        .map_err(|err| format!("后台备份补丁层失败：{err}"))?
+}
+
+/// 把补丁层还原到某一份备份（还原前自动把当前版本另存一份）。
+#[tauri::command]
+async fn patch_restore(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+    backup: String,
+) -> Result<patch::PatchOutcome, String> {
+    ensure_session_stopped(&state, "还原补丁层", &name)?;
+    tauri::async_runtime::spawn_blocking(move || patch::restore(&app, &config, &name, &backup))
+        .await
+        .map_err(|err| format!("后台还原补丁层失败：{err}"))?
+}
+
+/// 列出某个环境现有的补丁层备份（按时间从旧到新）。
+#[tauri::command]
+async fn patch_backups(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+) -> Result<Vec<dsharbor_core::patch_layer::PatchBackup>, String> {
+    tauri::async_runtime::spawn_blocking(move || patch::list(&app, &config, &name))
+        .await
+        .map_err(|err| format!("后台读取补丁层备份失败：{err}"))?
+}
+
+/// 列出某个环境当前加载的插件（带启用状态、是否桥接、是否可开关）。
+///
+/// 只读：要读环境的 `package.json` 与各插件的 bundle 补丁文件，WSL 目标还要经
+/// `wsl.exe`，所以放后台线程。
+#[tauri::command]
+async fn plugin_list(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+) -> Result<Vec<dsharbor_core::plugin_switch::PluginItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || plugin_switch::items(&app, &config, &name))
+        .await
+        .map_err(|err| format!("后台读取插件清单失败：{err}"))?
+}
+
+/// 开关某个环境里的一个插件（作用在补丁层的禁用表达上，不是卸载）。
+///
+/// 会写 DSH 自己加载的配置文件，所以要求会话已停止：运行中的 DSH 同时读它，
+/// 谁后写谁赢。
+#[tauri::command]
+async fn plugin_toggle(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+    plugin: String,
+    enabled: bool,
+) -> Result<plugin_switch::ToggleOutcome, String> {
+    let action = if enabled {
+        "打开插件开关"
+    } else {
+        "关闭插件开关"
+    };
+    ensure_session_stopped(&state, action, &name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_switch::toggle(&app, &config, &name, &plugin, enabled)
+    })
+    .await
+    .map_err(|err| format!("后台切换插件开关失败：{err}"))?
 }
 
 /// 记录界面主题（Rust 侧镜像）。
@@ -972,8 +1433,10 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                     .ok()
                     .and_then(|slot| slot.clone())
                     .unwrap_or_else(|| settings::load(app).launch);
-                let launcher_args = profile::port_overlay_args(app, &config).unwrap_or_default();
-                if let Err(err) = spawn_session(app, &state, &config, &launcher_args) {
+                let profile = settings::load(app).prefs.profile;
+                let launcher_args =
+                    profile::port_overlay_args(app, &config, &profile).unwrap_or_default();
+                if let Err(err) = spawn_session(app, &state, &config, &profile, &launcher_args) {
                     eprintln!("重启 DSH 失败：{err}");
                 }
             }
@@ -1214,16 +1677,23 @@ pub fn run() {
             // 托盘：轻量模式的入口。这里失败会直接终止启动——
             // 没有托盘的轻量态意味着窗口关掉后应用再也回不来。
             tray::setup(app.handle())?;
+            // 命令行集成开着时按当前启动配置重写垫片（跟随启动方式变化）。
+            // 失败只记日志，不阻塞启动：垫片是便利功能，坏掉不该让壳起不来。
+            shellpath::refresh_on_start(app.handle());
             // 无人值守的自测/截图钩子：DSHARBOR_AUTOSTART 里放 LaunchConfig 的 JSON
             // 时，应用启动后自动拉起 DSH。正常使用不会设置这个变量。
             if let Ok(raw) = std::env::var("DSHARBOR_AUTOSTART") {
                 match serde_json::from_str::<LaunchConfig>(&raw) {
                     Ok(config) => {
                         let state = app.state::<AppState>();
+                        let profile = settings::load(app.handle()).prefs.profile;
                         let launcher_args =
-                            profile::port_overlay_args(app.handle(), &config).unwrap_or_default();
-                        let endpoint = detect::effective_endpoint(&config);
-                        match launcher::spawn(&config, &launcher_args, endpoint) {
+                            profile::port_overlay_args(app.handle(), &config, &profile)
+                                .unwrap_or_default();
+                        let endpoint = detect::effective_endpoint(&config, &profile);
+                        let prefs = settings::load(app.handle()).prefs;
+                        let env = proxy::child_env(&prefs, prefs.download_source);
+                        match launcher::spawn(&config, &profile, &launcher_args, &env, endpoint) {
                             Ok(session) => {
                                 if let Ok(mut guard) = state.session.lock() {
                                     *guard = Some(session);
@@ -1254,12 +1724,30 @@ pub fn run() {
             lifecycle_action,
             load_shell_config,
             save_shell_config,
+            proxy_state,
+            self_check_network,
             profile_port_hint,
+            list_profiles,
+            create_profile,
+            copy_profile,
+            rename_profile,
+            delete_profile,
+            install_profile_deps,
+            patch_backup,
+            patch_restore,
+            patch_backups,
+            plugin_list,
+            plugin_toggle,
             open_external,
             set_caption_color,
             save_ui_theme,
             check_binary_path,
-            open_shell_dir
+            open_shell_dir,
+            cli_integration_state,
+            set_cli_integration,
+            cache_state,
+            cleanup_cache,
+            auto_cleanup_report
         ])
         .build(tauri::generate_context!())
         .expect("构建 DSHarbor 外壳失败")

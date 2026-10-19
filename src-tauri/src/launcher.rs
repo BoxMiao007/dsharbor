@@ -24,8 +24,7 @@ use dsharbor_core::bridge::{
 use dsharbor_core::console::ConsoleDecoder;
 use dsharbor_core::endpoint::Endpoint;
 use dsharbor_core::launch::{
-    build_launch_plan, extract_configured_port, extract_port, LaunchConfig, LaunchPlan, ShellWrap,
-    SpawnPlan,
+    build_launch_plan, extract_port, LaunchConfig, LaunchPlan, ShellWrap, SpawnPlan,
 };
 use dsharbor_core::logparse::{parse_announcement, Announcement};
 use serde::Serialize;
@@ -336,19 +335,23 @@ impl SessionHandle {
 ///
 /// `launcher_args`：壳内部追加的启动器层参数（如端口覆盖的 `--patch <文件>`），
 /// 由 lib.rs 在启动前准备好；没有时传空数组。
+/// `env`：要注入 DSH 进程的额外环境变量（下载源 + 代理），同样由调用方用
+/// `dsharbor_core::net::plan_env` 算好——三条注入路径共用一份计划。
 pub fn spawn(
     config: &LaunchConfig,
+    profile: &str,
     launcher_args: &[String],
+    env: &[(String, String)],
     bridge_endpoint: Endpoint,
 ) -> Result<SessionHandle, String> {
     // 每次启动现生成 nonce，经环境变量注入 DSH 进程；桥接插件在运行时从
     // process.env 读取它（见插件的 dsh.bundle.patch.yml）。nonce 不落盘。
     let nonce = generate_nonce()?;
-    let plan = build_launch_plan(
-        config,
-        &[(NONCE_ENV.to_string(), nonce.clone())],
-        launcher_args,
-    )?;
+    // nonce 与代理/源一起进同一个环境变量列表：WSL 下它们都会变成 `env K=V` 的 argv，
+    // 分两次注入反而容易漏掉其中一份。
+    let mut injected = vec![(NONCE_ENV.to_string(), nonce.clone())];
+    injected.extend_from_slice(env);
+    let plan = build_launch_plan(config, profile, &injected, launcher_args)?;
     let mut command = command_for_plan(&plan);
     command
         .stdin(Stdio::null())
@@ -366,14 +369,12 @@ pub fn spawn(
     if let Some(stderr) = child.stderr.take() {
         pump(stderr, shared.clone(), false);
     }
-    let configured_port = extract_configured_port(&config.extra_args);
     let shared_for_login = shared.clone();
-    // 桥接探测地址跟随 profile 的 host（LAN 绑定时回环连不进去）。
-    let endpoint = Endpoint::new(
-        bridge_endpoint.host,
-        configured_port.unwrap_or(bridge_endpoint.port),
-    );
-    std::thread::spawn(move || acquire_login(shared_for_login, nonce, endpoint));
+    // 桥接探测地址直接用 detect::effective_endpoint 算好的端点：host 跟随 profile
+    // （LAN 绑定时回环连不进去），端口沿用 detect::resolved_port 的优先级链
+    // （界面自定义端口 > profile 写死的端口 > 附加参数 --port > 3080），
+    // 与后续探测保持一致；只认附加参数里的 --port 会压过更高优先级的来源。
+    std::thread::spawn(move || acquire_login(shared_for_login, nonce, bridge_endpoint));
     Ok(SessionHandle {
         child,
         pid,
