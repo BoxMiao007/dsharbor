@@ -228,7 +228,9 @@ window.__mockUnimplemented = [];
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,
     // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 重新读取按钮」。
-    query_dsh_versions: () => {
+    // 下载源记进 calls（键名形如 query_dsh_versions:official），预览时一眼能看出这次请求带的是哪个源。
+    query_dsh_versions: (a) => {
+      seen("query_dsh_versions:" + (a && a.source ? a.source : "?"));
       if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
       return S.registry;
     },

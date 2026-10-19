@@ -177,6 +177,30 @@ interface BridgeState {
   latestBackup: string | null;
 }
 
+/** 下载源候选：标签用界面上的原文，value 与 Rust 侧 `DownloadSource::as_str()` 一致。 */
+const DOWNLOAD_SOURCE_CHOICES: PickerChoice[] = [
+  { value: "inherit", label: "沿用 npm 全局配置" },
+  { value: "mirror", label: "镜像源" },
+  { value: "official", label: "官方源" },
+];
+
+/** 下载源选中后那行说明：随选项变化，说清代价而不是只报名字。 */
+function downloadSourceHint(source: DownloadSource): string {
+  switch (source) {
+    case "mirror":
+      return "镜像源：国内直连较快；新版本可能稍晚才同步到。";
+    case "official":
+      return "官方源：更新及时；国内直连可能较慢。";
+    default:
+      return "沿用 npm 全局配置：不向 DSH 下发任何源，npm 自己读你的 .npmrc；行为与没有这项设置时一致。";
+  }
+}
+
+/** 收起卡片时显示的摘要：与下拉选项同一个名字。 */
+function downloadSourceLabel(source: DownloadSource): string {
+  return DOWNLOAD_SOURCE_CHOICES.find((choice) => choice.value === source)?.label ?? "沿用 npm 全局配置";
+}
+
 /** 与 Rust 侧 `plugin::BridgeOutcome` 对应。 */
 interface BridgeOutcome {
   ok: boolean;
@@ -739,8 +763,8 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
   const bridgeSummary = `
     <span id="bridge-summary" class="badge badge-stopped card-summary">读取中…</span>
   `;
-  // 「环境」「网络」「集成」三张卡本轮只铺承载：标题、折叠头、摘要徽章与一行占位说明。
-  // 卡片的具体内容（环境列表 / 下载源与代理 / 命令行与缓存）由后续版本逐张接入，
+  // 「环境」「集成」两张卡本轮只铺承载：标题、折叠头、摘要徽章与一行占位说明。
+  // 卡片的具体内容（环境列表 / 命令行与缓存）由后续版本逐张接入，
   // 字段本身已经在读写链路上，不再变动。摘要徽章先给占位文案，免得收起后一片空白。
   const placeholderCard = (key: CardKey, title: string, note: string): string =>
     cardSection(
@@ -748,7 +772,18 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       `<p class="hint">${note}</p>`,
     );
   const profilesSection = placeholderCard("profiles", "环境", "当前使用哪一份 DSH 环境、装了哪些插件，将在后续版本显示在这里。");
-  const networkSection = placeholderCard("network", "网络", "下载源与代理设置的选项，将在后续版本显示在这里。");
+  // 「网络」卡：本版接管下载源；代理设置的控件由后续版本接进来。
+  const networkSummary = `
+    <span id="network-summary" class="badge badge-stopped card-summary">沿用 npm 全局配置</span>
+  `;
+  const networkBody = `
+    <div class="fields network-fields">
+      <span class="field-label">下载源</span>
+      <div class="picker" id="download-source-picker"></div>
+      <p class="hint" id="download-source-hint"></p>
+    </div>
+  `;
+  const networkSection = cardSection(foldHead("network", "网络", networkSummary), networkBody);
   // 「集成」卡：本轮先接命令行集成（PATH 与 dsh 垫片），缓存清理随后续版本补上。
   // 卡片内容全部由后端算好（目录、垫片内容、手动命令、状态说明），界面只负责显示，
   // 避免两边各算一套口径。非 Windows 宿主把「自动接入」那半截整段藏起来，只留手动命令。
@@ -1257,7 +1292,7 @@ async function main(): Promise<void> {
       registryError = null;
       renderChannelUI();
       try {
-        registry = await invoke<RegistryInfo>("query_dsh_versions", { runtime });
+        registry = await invoke<RegistryInfo>("query_dsh_versions", { runtime, source: prefs.downloadSource });
       } catch (err) {
         registry = null;
         registryError = String(err);
@@ -1311,6 +1346,34 @@ async function main(): Promise<void> {
     });
     themePicker.setChoices(THEME_CHOICES.map((choice) => ({ value: choice.value, label: choice.label })));
     themePicker.setValue(theme);
+    // 下载源：「网络」卡的第一个控件。改完立刻生效于版本清单查询（选「官方源」
+    // 就真的去官方地址拉），不必重启壳。
+    const networkSummary = $<HTMLSpanElement>("network-summary");
+    const downloadSourceHintEl = $<HTMLParagraphElement>("download-source-hint");
+    function renderNetworkUI(): void {
+      const label = downloadSourceLabel(prefs.downloadSource);
+      networkSummary.textContent = label;
+      downloadSourceHintEl.textContent = downloadSourceHint(prefs.downloadSource);
+    }
+    const downloadSourcePicker = new Picker("download-source-picker", (value) => {
+      const next = normalizePrefs({ downloadSource: value as DownloadSource }).downloadSource;
+      if (next === prefs.downloadSource) {
+        return;
+      }
+      prefs = { ...prefs, downloadSource: next };
+      renderNetworkUI();
+      // 先存盘（壳在保存时作废版本清单缓存），再重新查一次：旧清单里的版本号
+      // 是从另一个 registry 拉到的，留着会让人以为切换没生效。
+      void (async () => {
+        await persistConfigQuiet();
+        registry = null;
+        registryError = null;
+        await loadRegistry();
+      })();
+    });
+    downloadSourcePicker.setChoices(DOWNLOAD_SOURCE_CHOICES);
+    downloadSourcePicker.setValue(prefs.downloadSource);
+    renderNetworkUI();
     // 重建界面时旧实例要 dispose（它们各自挂着 document 监听）。
     livePickers = [
       trayPicker,
@@ -1320,6 +1383,7 @@ async function main(): Promise<void> {
       npxChannelPicker,
       npxVersionPicker,
       themePicker,
+      downloadSourcePicker,
     ];
     const modesSummary = $<HTMLSpanElement>("modes-summary");
     const bridgeSummary = $<HTMLSpanElement>("bridge-summary");
@@ -2262,6 +2326,9 @@ async function main(): Promise<void> {
       syncModeFields();
       renderPortHint();
       renderChannelUI();
+      // 下载源：读回来的值可能不是界面上的默认项，回填下拉与摘要。
+      downloadSourcePicker.setValue(prefs.downloadSource);
+      renderNetworkUI();
     }
 
     await loadSavedConfig();
