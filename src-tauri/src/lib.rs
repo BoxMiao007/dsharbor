@@ -1153,12 +1153,16 @@ async fn bridge_state(
 
 /// 列出当前目标环境下能起网页界面、可供「启动用」选择的环境。
 ///
+/// 返回值是带 `supported` 标记的包装结构而不是裸数组：非 Windows 宿主上环境卡
+/// 要收起并说「仅在 Windows 宿主可用」，而一份空数组表达不了这个区别（分不清
+/// 「这里不支持」与「一个环境都没有」）。
+///
 /// async 命令：WSL 目标下要经 wsl.exe 读发行版里的目录（秒级），同步命令会让
 /// 换启动方式时整个窗口发僵（同 profile_port_hint）。
 #[tauri::command]
 async fn list_profiles(
     config: LaunchConfig,
-) -> Result<Vec<dsharbor_core::profiles::ProfileSummary>, String> {
+) -> Result<dsharbor_core::profiles::ProfileListing, String> {
     tauri::async_runtime::spawn_blocking(move || plugin::list_profiles(&config))
         .await
         .map_err(|err| format!("后台枚举环境失败：{err}"))?

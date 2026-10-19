@@ -104,6 +104,36 @@ impl ProfileSummary {
     }
 }
 
+/// 环境卡下发的一整份清单：支持标记 + 内容。
+///
+/// 为什么不在 `Vec<ProfileSummary>` 上再套一层字段：环境列表要读盘/枚举目录，
+/// 而这件事只在 Windows 宿主上有意义（其它平台没有 `~/.dsh/profiles` 这套布局，
+/// 也不该假装读到了空目录）。把标记和内容裹在一起下发，界面就只有一个真相来源，
+/// 不会出现「列表是空的」与「这里根本不支持」两种含义混在同一份空数组里。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileListing {
+    /// 当前宿主能不能枚举环境（只 Windows 为 true）。
+    pub supported: bool,
+    /// 枚举到的环境；不支持时恒为空。
+    pub profiles: Vec<ProfileSummary>,
+}
+
+impl ProfileListing {
+    /// 支持平台上的清单。不支持时清空内容：界面收起时不该有半份数据在背后。
+    pub fn new(supported: bool, profiles: Vec<ProfileSummary>) -> Self {
+        Self {
+            supported,
+            profiles: if supported { profiles } else { Vec::new() },
+        }
+    }
+
+    /// 非 Windows 宿主的空清单。
+    pub fn unsupported() -> Self {
+        Self::new(false, Vec::new())
+    }
+}
+
 /// 从环境目录里的 `package.json` 文本解析摘要。
 ///
 /// 只看 `dsh.profile.bundles`：它是 DSH 自己的插件登记表，`dependencies` 里有包
@@ -311,5 +341,41 @@ mod tests {
         assert_eq!(summary.badge(), "web · 2 个插件 · 桥接已装");
         let summary = summarize("lab", &manifest(&[WEB_APP_BUNDLE])).unwrap();
         assert_eq!(summary.badge(), "lab · 1 个插件 · 桥接未装");
+    }
+
+    #[test]
+    fn listing_carries_the_platform_flag_for_the_interface() {
+        let profiles = parse_listing(&format!("web\t1\t{}\n", manifest(&[WEB_APP_BUNDLE])));
+        let listing = ProfileListing::new(true, profiles);
+        assert!(listing.supported);
+        assert_eq!(listing.profiles.len(), 1);
+        assert_eq!(listing.profiles[0].name, "web");
+    }
+
+    #[test]
+    fn unsupported_listing_is_empty_and_says_so() {
+        let listing = ProfileListing::unsupported();
+        assert!(!listing.supported);
+        assert!(listing.profiles.is_empty());
+        // 不支持平台的清单即便硬塞进来也不下发：界面收起时不该有半份数据在背后。
+        let forced = ProfileListing::new(
+            false,
+            vec![ProfileSummary {
+                name: "web".to_string(),
+                plugins: 1,
+                bridge_installed: false,
+                web_capable: true,
+                deps_installed: false,
+            }],
+        );
+        assert!(forced.profiles.is_empty());
+    }
+
+    #[test]
+    fn listing_serializes_with_the_flag_the_interface_reads() {
+        let listing = ProfileListing::unsupported();
+        let json = serde_json::to_value(&listing).unwrap();
+        assert_eq!(json["supported"], serde_json::json!(false));
+        assert_eq!(json["profiles"], serde_json::json!([]));
     }
 }

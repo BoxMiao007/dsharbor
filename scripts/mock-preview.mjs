@@ -106,7 +106,9 @@ const state = {
     ],
   },
   /** 环境列表（`list_profiles`）的假数据：删掉某项可预览「配置里记的环境已不在」，
-      把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。 */
+      把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。
+      把 profilesUnsupported 改成 true 可预览非 Windows 宿主下的「仅在 Windows 宿主可用」。 */
+  profilesUnsupported: false,
   profiles: [
     { name: "web", plugins: 17, bridgeInstalled: true, webCapable: true, depsInstalled: true },
     { name: "lab", plugins: 4, bridgeInstalled: false, webCapable: true, depsInstalled: true },
@@ -235,8 +237,8 @@ window.__mockUnimplemented = [];
       shim_path: binDir + "\\\\dsh.cmd",
       onPath: onPath,
       on_path: onPath,
-      manualCommand: 'export PATH="$PATH:' + binDir + '"',
-      manual_command: 'export PATH="$PATH:' + binDir + '"',
+      manualCommand: 'setx PATH "%PATH%;' + binDir + '"',
+      manual_command: 'setx PATH "%PATH%;' + binDir + '"',
       shimText: cli.shimText === undefined ? "@echo off\\r\\nnpx --yes @deepseek-ai/dsh %*\\r\\n" : cli.shimText,
       shim_text: cli.shimText === undefined ? "@echo off\\r\\nnpx --yes @deepseek-ai/dsh %*\\r\\n" : cli.shimText,
       shimError: cli.shimError === undefined ? null : cli.shimError,
@@ -505,10 +507,14 @@ window.__mockUnimplemented = [];
       return report && report.seq > since ? report : null;
     },
     profile_port_hint: () => S.portHint,
-    // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」。
+    // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」；
+    // S.profilesUnsupported 改成 true 可预览非 Windows 宿主（整卡收起、只说一句）。
     list_profiles: () => {
       seen("list_profiles");
-      return S.profiles || [];
+      if (S.profilesUnsupported) {
+        return { supported: false, profiles: [] };
+      }
+      return { supported: true, profiles: S.profiles || [] };
     },
     // ---- 环境生命周期（新建 / 复制 / 重命名 / 删除 / 重装依赖）----------------
     // 假后端把 S.profiles 当成真清单来改，所以预览里连着点几下就能看到下拉、徽章与

@@ -21,7 +21,7 @@ use dsharbor_core::launch::{
     build_plugin_plan, runtime_of, LaunchConfig, LaunchPlan, PluginOp, Runtime,
 };
 use dsharbor_core::paths::windows_path_to_wsl;
-use dsharbor_core::profiles::{self, ProfileSummary};
+use dsharbor_core::profiles::{self, ProfileListing};
 use serde::Serialize;
 use tauri::Manager;
 
@@ -143,9 +143,17 @@ pub fn profile_dir(target: &Target, profile: &str) -> Result<String, String> {
 ///
 /// 读盘/枚举留在这一层，只把内容拼成 `名字<TAB>package.json` 的文本交给
 /// 核心库的 `profiles::parse_listing` 判定——「哪个环境能列出来」不在这里重复一遍。
-pub fn list_profiles(config: &LaunchConfig) -> Result<Vec<ProfileSummary>, String> {
+///
+/// 非 Windows 宿主直接回一个带 `supported: false` 的空清单：`~/.dsh/profiles`
+/// 这套布局与枚举方式只对 Windows 宿主成立，在不支持的平台上装作「读到 0 个环境」
+/// 会让人以为是环境全丢了。
+pub fn list_profiles(config: &LaunchConfig) -> Result<ProfileListing, String> {
+    if !cfg!(windows) {
+        return Ok(ProfileListing::unsupported());
+    }
     let target = Target::of(config);
-    Ok(profiles::parse_listing(&read_listing(&target)?))
+    let profiles = profiles::parse_listing(&read_listing(&target)?);
+    Ok(ProfileListing::new(true, profiles))
 }
 
 /// 读「名字<TAB>单行 package.json」清单（宿主直连与 WSL 各一条路径）。

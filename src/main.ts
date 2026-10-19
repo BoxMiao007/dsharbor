@@ -190,6 +190,15 @@ interface ProfileSummary {
   depsInstalled: boolean;
 }
 
+/** `list_profiles` 的返回值：支持标记 + 清单。
+ * 与 Rust 侧 `dsharbor_core::profiles::ProfileListing` 对应。
+ * 为什么不只下发数组：非 Windows 宿主上环境卡要收起并说「仅在 Windows 宿主可用」，
+ * 而一份空数组分不清「这里不支持」与「一个环境都没有」。 */
+interface ProfileListing {
+  supported: boolean;
+  profiles: ProfileSummary[];
+}
+
 /** 下载源候选：标签用界面上的原文，value 与 Rust 侧 `DownloadSource::as_str()` 一致。 */
 const DOWNLOAD_SOURCE_CHOICES: PickerChoice[] = [
   { value: "inherit", label: "沿用 npm 全局配置" },
@@ -902,6 +911,8 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <span id="profiles-summary" class="badge badge-stopped card-summary">读取中…</span>
   `;
   const profilesBody = `
+    <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
+    <div id="profiles-content" class="profiles-content">
     <div class="fields profiles-fields">
       <span class="field-label">启动用环境 <span class="info-dot" role="img" tabindex="0" aria-label="环境说明" data-tip="环境是 ~/.dsh/profiles 下的一份独立 DSH 安装，各自有自己的插件与配置。只有登记了网页应用的环境才能起界面；切换后需要重启 DSH 才生效。">!</span></span>
       <div class="picker" id="profile-picker"></div>
@@ -968,6 +979,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         </div>
       </details>
     </div>
+    </div>
   `;
   const profilesSection = cardSection(foldHead("profiles", "环境", profilesSummary), profilesBody);
   // 「网络」卡：下载源与代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
@@ -1021,6 +1033,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <div class="kv">
         <div class="kv-row kv-row-action"><span class="kv-key">手动命令</span><span class="kv-value cli-command" id="cli-manual">—</span><button id="btn-cli-copy" class="kv-action">复制</button></div>
       </div>
+      <p class="hint">不想打开上面的开关时，把这条命令粘进 <b>命令提示符（cmd）</b> 或 <b>PowerShell</b> 回车执行，也就是自己把它追加到当前用户的 PATH 末尾；开新终端后生效。注意 <code>setx</code> 会把 <code>%VAR%</code> 展开成当前值、超过 1024 个字符会被截断，所以它只适合手动救场，日常用上面那个开关（那边是原值回写，不会被展开也不会截断）。</p>
       <p id="cli-message" class="hint">读取中…</p>
       <p id="cli-error" class="error hidden"></p>
       <div class="cli-windows-only">
@@ -1038,9 +1051,9 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <p class="hint">只统计明确记录着本包的缓存目录，别的包既不计入也不删。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。</p>
       <label class="switch-line">
         <input type="checkbox" id="cache-auto-toggle" />
-        <span>每次启动成功后自动清理一次：保留当前启动配置对应的那份与最近用过的几份，其余删掉</span>
+        <span>真的拉起一个 DSH 进程之后自动清理一次：保留当前启动配置对应的那份与最近用过的几份，其余删掉</span>
       </label>
-      <p class="hint">默认关闭。打开后只在这一回真的拉起了 DSH 并且启动成功时修剪一次（壳外已经有一份在跑时什么也不删）；清掉了哪些、释放了多少会显示在下面。</p>
+      <p class="hint">默认关闭。打开后，只在这一回真的拉起了一个 DSH 进程之后修剪一次（壳外已经有一份在跑时什么也不拉起，所以什么也不删）；进程起来了但随后又崩了也照样清理，这里不等它健康退出。清掉了哪些、释放了多少会显示在下面。</p>
       <div class="kv">
         <div class="kv-row"><span class="kv-key">本包占用</span><span class="kv-value" id="cache-own">—</span></div>
         <div class="kv-row"><span class="kv-key">可回收</span><span class="kv-value" id="cache-reclaimable">—</span></div>
@@ -2346,7 +2359,7 @@ async function main(): Promise<void> {
       } catch (err) {
         console.error("查询状态失败:", err);
       }
-      // 自动清理是后端在启动成功后自己跑的，没有推送通道：顺路问一句有没有新结果。
+      // 自动清理是后端在真的拉起 DSH 进程之后自己跑的，没有推送通道：顺路问一句有没有新结果。
       await pollAutoCleanup();
     }
     requestStatusRefresh = refresh;
@@ -2526,8 +2539,13 @@ async function main(): Promise<void> {
     const profileError = $<HTMLParagraphElement>("profile-error");
     const profileRestartRow = $<HTMLElement>("profile-restart-row");
     const btnProfileRestart = $<HTMLButtonElement>("btn-profile-restart");
+    // 非 Windows 宿主把整卡内容收起、只留一条说明（同集成卡的 .cli-windows-only）。
+    const profilesWindowsOnly = $<HTMLElement>("profiles-windows-only");
+    const profilesContent = $<HTMLElement>("profiles-content");
     /** 后端枚举回来的全部环境（含不能选的，便于提示「当前环境不可用」）。 */
     let profileList: ProfileSummary[] = [];
+    /** 当前宿主能不能枚举环境；false 时环境卡收起并只说这一件事。 */
+    let profilesSupported = true;
     /** 已切换但还没重启时记住目标名字，用来决定「提示重启」那一行显不显示。 */
     let pendingProfile: string | null = null;
 
@@ -2536,6 +2554,9 @@ async function main(): Promise<void> {
 
     /** 徽章文案：优先说当前选中的那份，选中的找不到时（环境被删了）如实说。 */
     function profileBadgeText(): string {
+      if (!profilesSupported) {
+        return "仅 Windows 可用";
+      }
       const current = profileOf(prefs.profile);
       if (!current) {
         return profileList.length === 0 ? "没有可用环境" : `${prefs.profile}（找不到）`;
@@ -2544,16 +2565,20 @@ async function main(): Promise<void> {
     }
 
     function renderProfilesUI(): void {
+      // 不支持的环境下收起整卡内容，只留一条「仅在 Windows 宿主可用」的说明，
+      // 免得在下拉里看到一个永远为空的列表还以为环境全丢了。
+      profilesWindowsOnly.classList.toggle("hidden", profilesSupported);
+      profilesContent.classList.toggle("hidden", !profilesSupported);
       const current = profileOf(prefs.profile);
       profilesSummary.textContent = profileBadgeText();
-      profilesSummary.className = `badge ${current ? "badge-running" : "badge-stopped"} card-summary`;
+      profilesSummary.className = `badge ${profilesSupported && current ? "badge-running" : "badge-stopped"} card-summary`;
       profileHintEl.textContent = current
         ? `已登记 ${current.plugins} 个插件，${current.bridgeInstalled ? "桥接插件已装（能直接取带 token 的登录链接）" : "桥接插件未装（登录链接走日志兜底）"}。`
         : profileList.length === 0
           ? "还没读到任何能起网页界面的环境；先启动一次 DSH 会创建默认环境。"
           : `配置里记的环境「${prefs.profile}」已经不在了，从下拉里重新选一个。`;
       // 只有「已存进配置」且与当前环境不同的目标才需要重启生效。
-      profileRestartRow.classList.toggle("hidden", pendingProfile === null);
+      profileRestartRow.classList.toggle("hidden", pendingProfile === null || !profilesSupported);
     }
 
     function fillProfilePicker(): void {
@@ -2570,9 +2595,14 @@ async function main(): Promise<void> {
 
     async function loadProfiles(): Promise<void> {
       try {
-        profileList = await invoke<ProfileSummary[]>("list_profiles", { config: collectConfig() });
+        const listing = await invoke<ProfileListing>("list_profiles", { config: collectConfig() });
+        profilesSupported = listing.supported;
+        profileList = listing.profiles;
         profileError.classList.add("hidden");
       } catch (err) {
+        // 读取失败不等于不支持：把失败原因如实反映出来，卡内容照旧展开，
+        // 免得把一次暂时读盘失败说成「这个平台不支持」。
+        profilesSupported = true;
         profileList = [];
         profileError.textContent = `读取环境列表失败：${err}`;
         profileError.classList.remove("hidden");
@@ -3404,7 +3434,7 @@ async function main(): Promise<void> {
       void applyCliIntegration(cliToggle.checked);
     });
 
-    // 自动清理开关：只改一个持久化的偏好，真正的触发在后端启动成功后。
+    // 自动清理开关：只改一个持久化的偏好，真正的触发在后端真的拉起 DSH 进程之后。
     // 先回写 prefs 再保存，否则下一次任何字段的自动保存都会把刚打开的值抹回默认。
     cacheAutoToggle.addEventListener("change", () => {
       prefs.cacheCleanup = cacheAutoToggle.checked;
