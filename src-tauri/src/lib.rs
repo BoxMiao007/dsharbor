@@ -19,6 +19,7 @@ mod wsl;
 
 use std::sync::Mutex;
 
+use dsharbor_core::cache_auto;
 use dsharbor_core::launch::{self, LaunchConfig};
 use dsharbor_core::lifecycle::{ShellAction, ShellEvent, ShellMachine, ShellState};
 use dsharbor_core::links::{navigation_decision, NavigationDecision};
@@ -72,6 +73,24 @@ struct AppState {
     /// 延迟销毁主窗口的世代号：每次重新计时或撤销计时都自增，
     /// 上一轮的计时线程醒来发现不是最新一代就直接放弃（见 arm_light_destroy）。
     light_generation: std::sync::atomic::AtomicU64,
+    /// 最近一次「启动后自动清理」的结果，等界面来取。
+    /// 不放日志里：清理是用户看不见又删了磁盘的事，必须在界面上告诉他清掉了什么。
+    auto_cleanup: Mutex<Option<AutoCleanupReport>>,
+    /// 自动清理的次数号（每跑完一次自增，写进 `AutoCleanupReport::seq`）。
+    auto_cleanup_seq: std::sync::atomic::AtomicU64,
+}
+
+/// 一次「启动后自动清理」的结果，留给界面来取。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoCleanupReport {
+    /// 第几次自动清理。界面靠它只播报新增的那一次，不把同一次结果反复重建。
+    seq: u64,
+    /// 说明文字：成功时是「启动后自动清理：…」，失败时写明为什么没能清理。
+    message: String,
+    /// 成功时的逐条结果，界面复用它渲染「清掉哪些」并刷新占用数字；
+    /// 缓存根都定位不到时没有可展示的条目，界面只显示 `message`。
+    result: Option<npxcache::CleanupResult>,
 }
 
 #[tauri::command]
@@ -207,8 +226,62 @@ fn spawn_session(
     if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
         query_dsh_version_async(app, config, profile);
+        // 自动清理（开关在「集成」卡，默认关）：只在这次真的拉起了一个进程之后跑。
+        // 壳外已有 DSH 时启动命令也返回成功，但那次什么也没起（`spawned_child` 仍为 false），
+        // 不是「这次启动成功了」，不应因此删磁盘。
+        let prefs = settings::load(app).prefs;
+        if cache_auto::should_run(prefs.cache_cleanup, spawned_child) {
+            run_auto_cleanup_async(app, config);
+        }
     }
     result
+}
+
+/// 启动成功后异步跑一次自动清理，结果存进 AppState 等界面来取。
+///
+/// 复用与「立即清理」按钮完全相同的 `npxcache::cleanup`：保留哪几份、删哪几份只在一处定义，
+/// 开关打开后不另有一套规则。
+fn run_auto_cleanup_async(app: &tauri::AppHandle, config: &LaunchConfig) {
+    let app = app.clone();
+    let config = config.clone();
+    std::thread::spawn(move || {
+        let outcome = npxcache::cleanup(&config);
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        let seq = state
+            .auto_cleanup_seq
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        let report = match outcome {
+            Ok(result) => {
+                let message = cache_auto::auto_message(
+                    result.removed.len(),
+                    result.freed_bytes,
+                    result.failed.len(),
+                );
+                eprintln!("[dsharbor] {message}");
+                AutoCleanupReport {
+                    seq,
+                    message,
+                    result: Some(result),
+                }
+            }
+            Err(err) => {
+                // 缓存根都定位不到（npm 坏了 / 没装 Node）：不删任何东西，但要让用户看见。
+                let message = format!("启动后自动清理没做成：{err}");
+                eprintln!("[dsharbor] {message}");
+                AutoCleanupReport {
+                    seq,
+                    message,
+                    result: None,
+                }
+            }
+        };
+        if let Ok(mut slot) = state.auto_cleanup.lock() {
+            *slot = Some(report);
+        };
+    });
 }
 
 /// 启动成功后异步查询 DSH 版本号（失败只记日志：界面显示「DSH 版本未知」即可）。
@@ -395,12 +468,31 @@ async fn cache_state(config: LaunchConfig) -> Result<npxcache::CacheState, Strin
 
 /// 「立即清理」：删掉判定为可回收的 npx 缓存目录，返回逐条结果与刷新后的状态。
 ///
-/// 与将来的自动清理开关无关：手动点一下就用同一套判定（开关是另一张票的事）。
+/// 与「启动后自动清理」跑的是同一个函数，两条路径的保留策略完全一致（开关在
+/// `prefs.cache_cleanup`，何时自动跑见 `spawn_session`）。
 #[tauri::command]
 async fn cleanup_cache(config: LaunchConfig) -> Result<npxcache::CleanupResult, String> {
     tauri::async_runtime::spawn_blocking(move || npxcache::cleanup(&config))
         .await
         .map_err(|err| format!("清理缓存失败：{err}"))?
+}
+
+/// 取最近一次「启动后自动清理」的结果。
+///
+/// `since` 是界面已经播报过的序号：只有新一次的结果（`seq > since`）才返回，
+/// 否则返回 `None`。拉取式而不是推送：壳里没有事件通道，界面本来就每秒轮询状态，
+/// 再顺手问一句比新开一条推送通道简单。结果不取走即清：同一份结果可以被多个
+/// 页面读到，界面自己用 `seq` 去重。
+#[tauri::command]
+fn auto_cleanup_report(
+    state: tauri::State<'_, AppState>,
+    since: u64,
+) -> Result<Option<AutoCleanupReport>, String> {
+    let guard = state
+        .auto_cleanup
+        .lock()
+        .map_err(|_| "内部状态异常".to_string())?;
+    Ok(guard.as_ref().filter(|report| report.seq > since).cloned())
 }
 
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
@@ -1515,7 +1607,8 @@ pub fn run() {
             cli_integration_state,
             set_cli_integration,
             cache_state,
-            cleanup_cache
+            cleanup_cache,
+            auto_cleanup_report
         ])
         .build(tauri::generate_context!())
         .expect("构建 DSHarbor 外壳失败")
