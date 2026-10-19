@@ -295,9 +295,17 @@ fn load_shell_config(app: tauri::AppHandle) -> settings::ShellConfig {
 }
 
 /// 保存整份壳设置（非法输入报错、不写盘——配置界面的输入校验兜底）。
+///
+/// 下载源变了就清掉版本清单缓存：旧清单里的版本号来自另一个 registry，
+/// 不作废会让人以为切换没生效。
 #[tauri::command]
 fn save_shell_config(app: tauri::AppHandle, config: settings::ShellConfig) -> Result<(), String> {
-    settings::save(&app, &config)
+    let previous = settings::load(&app).prefs.download_source;
+    settings::save(&app, &config)?;
+    if previous != config.prefs.download_source {
+        registry::invalidate_all();
+    }
+    Ok(())
 }
 
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
@@ -487,11 +495,20 @@ async fn wsl_distro_info() -> Result<Vec<wsl::DistroInfo>, String> {
 ///
 /// async 命令：要拉起 npm（WSL 下还要先起 wsl.exe），同步命令会把主线程堵住。
 /// 查询失败就返回错误字符串，界面自己降级成「稳定版 + 默认环境」继续可用。
+///
+/// 下载源由界面随请求一起传（`source`）：它才是「这次要用哪个源」的权威，
+/// 不必先去读盘——否则一旦保存没落盘，界面显示的选项与实际请求的源就对不上。
+/// 认不出的值退回默认并只记日志，不影响使用。
 #[tauri::command]
 async fn query_dsh_versions(
     runtime: launch::Runtime,
+    source: String,
 ) -> Result<dsharbor_core::registry::RegistryInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime))
+    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
+        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
+        dsharbor_core::prefs::DownloadSource::default()
+    });
+    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime, source))
         .await
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }

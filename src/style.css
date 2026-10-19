@@ -1275,6 +1275,11 @@ html::-webkit-scrollbar {
   padding-left: 0;
 }
 
+/* 「网络」卡的下载源也是卡片顶层字段，同样不需要单选组的左缩进 */
+.network-fields {
+  padding-left: 0;
+}
+
 .grid-2 {
   display: grid;
   /* minmax(0, 1fr) 而不是 1fr：1fr 的最小值是 min-content，端口行里的输入框会把轨道顶宽
