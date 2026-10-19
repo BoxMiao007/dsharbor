@@ -17,6 +17,7 @@ pub mod overlay;
 pub mod path_shim;
 pub mod paths;
 pub mod prefs;
+pub mod profile_ops;
 pub mod profiles;
 pub mod registry;
 
