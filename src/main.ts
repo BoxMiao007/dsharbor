@@ -269,6 +269,77 @@ interface CliIntegrationState {
   message: string;
 }
 
+/** 与 Rust 侧 `npxcache::CacheDir` 对应：缓存里属于本包的一个目录。 */
+interface CacheDir {
+  /** 目录名（`_npx` 下的那串哈希）。 */
+  name: string;
+  /** 界面直接显示的标签。 */
+  label: string;
+  /** 字节数。 */
+  bytes: number;
+  /** 上面那个数给界面显示的样子（`1.8 GB`）。 */
+  bytesText: string;
+  /** 当前配置是否保留这一份。 */
+  keep: boolean;
+  /** 是不是当前启动配置对应的那份。 */
+  current: boolean;
+}
+
+/** 与 Rust 侧 `npxcache::CacheState` 对应：缓存盘面。 */
+interface CacheState {
+  /** 当前宿主能不能扫（只有 Windows 动文件）。 */
+  supported: boolean;
+  /** 缓存根（`npm config get cache` 问出来的那个目录）。 */
+  root: string | null;
+  /** 根是从哪来的：`npm` 或 `fallback`。 */
+  rootSource: string;
+  /** 本包占用字节数。 */
+  ownBytes: number;
+  /** 本包占用字节数的显示形式。 */
+  ownBytesText: string;
+  /** 本包目录份数。 */
+  ownCount: number;
+  /** 可回收字节数。 */
+  reclaimableBytes: number;
+  /** 可回收字节数的显示形式。 */
+  reclaimableBytesText: string;
+  /** 可删目录份数。 */
+  removableCount: number;
+  /** 保留份数（当前那份 + 最近用过的几份）。 */
+  keepCount: number;
+  /** 当前启动配置对应的那份目录名。 */
+  current: string | null;
+  /** 一行状态说明。 */
+  message: string;
+  /** 扫描时的告警（例如没问出 npm 缓存位置）。 */
+  warning: string | null;
+  /** 属于本包的目录明细。 */
+  dirs: CacheDir[];
+}
+
+/** 与 Rust 侧 `npxcache::CleanedDir` 对应：清掉的一个目录。 */
+interface CleanedDir {
+  label: string;
+  bytes: number;
+  bytesText: string;
+}
+
+/** 与 Rust 侧 `npxcache::CleanupFailure` 对应：没清掉的一个目录与原因。 */
+interface CleanupFailure {
+  label: string;
+  path: string;
+  reason: string;
+}
+
+/** 与 Rust 侧 `npxcache::CleanupResult` 对应：清理结果与清理后的新盘面。 */
+interface CleanupResult {
+  removed: CleanedDir[];
+  failed: CleanupFailure[];
+  freedBytes: number;
+  message: string;
+  state: CacheState;
+}
+
 /** 渠道候选：中文名在前、npm 标签在后；圆点靠 CSS 画（emoji 在 WebView2 里会渲染成黑白方块）。 */
 const CHANNEL_CHOICES: PickerChoice[] = [
   { value: "latest", label: "稳定版（latest）", dot: "latest" },
@@ -836,9 +907,9 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     </div>
   `;
   const networkSection = cardSection(foldHead("network", "网络", networkSummary), networkBody);
-  // 「集成」卡：本轮先接命令行集成（PATH 与 dsh 垫片），缓存清理随后续版本补上。
-  // 卡片内容全部由后端算好（目录、垫片内容、手动命令、状态说明），界面只负责显示，
-  // 避免两边各算一套口径。非 Windows 宿主把「自动接入」那半截整段藏起来，只留手动命令。
+  // 「集成」卡：命令行集成（PATH 与 dsh 垫片）+ npx 缓存盘面。卡片内容全部由后端算好
+  // （目录、垫片内容、手动命令、占用字节与状态说明），界面只负责显示，避免两边各算一套口径。
+  // 非 Windows 宿主把「自动接入」与缓存那两段整段藏起来，只留手动命令。
   const integrationsSummary = `
     <span id="integrations-summary" class="badge badge-stopped card-summary">读取中…</span>
   `;
@@ -870,6 +941,27 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
           </div>
         </details>
       </div>
+    </div>
+    <div class="subcard cache-windows-only">
+      <div class="subcard-title">npx 缓存</div>
+      <p class="hint">只统计明确记录着本包的缓存目录，别的包既不计入也不删。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。</p>
+      <div class="kv">
+        <div class="kv-row"><span class="kv-key">本包占用</span><span class="kv-value" id="cache-own">—</span></div>
+        <div class="kv-row"><span class="kv-key">可回收</span><span class="kv-value" id="cache-reclaimable">—</span></div>
+        <div class="kv-row kv-row-action"><span class="kv-key">缓存目录</span><span class="kv-value" id="cache-root">—</span><button id="btn-cache-clean" class="kv-action">立即清理</button></div>
+      </div>
+      <p id="cache-message" class="hint">读取中…</p>
+      <p id="cache-warning" class="hint hidden"></p>
+      <p id="cache-error" class="error hidden"></p>
+      <div id="cache-results" class="hidden">
+        <div class="kv" id="cache-results-body"></div>
+      </div>
+      <details class="log-box">
+        <summary><span class="chev">▸</span>缓存明细（保留的与可回收的）</summary>
+        <div class="log-area">
+          <pre id="cache-dirs">（读取中）</pre>
+        </div>
+      </details>
     </div>
   `;
   const integrationsSection = cardSection(foldHead("integrations", "集成", integrationsSummary), integrationsBody);
@@ -1553,6 +1645,20 @@ async function main(): Promise<void> {
     const btnCliCopyShim = $<HTMLButtonElement>("btn-cli-copy-shim");
     // 「自动接入」那两半截（开关 + 目录、垫片内容）只在 Windows 下有意义。
     const cliWindowsOnly = Array.from(root.querySelectorAll<HTMLElement>(".cli-windows-only"));
+
+    // ---- 集成卡片：npx 缓存盘面 --------------------------------------------------
+    // 占用字节、可回收字节、目录明细、每次删除的结果都在后端算好，界面只渲染。
+    const CACHE_WINDOWS_ONLY = Array.from(root.querySelectorAll<HTMLElement>(".cache-windows-only"));
+    const cacheOwn = $<HTMLElement>("cache-own");
+    const cacheReclaimable = $<HTMLElement>("cache-reclaimable");
+    const cacheRoot = $<HTMLElement>("cache-root");
+    const btnCacheClean = $<HTMLButtonElement>("btn-cache-clean");
+    const cacheMessage = $<HTMLParagraphElement>("cache-message");
+    const cacheWarning = $<HTMLParagraphElement>("cache-warning");
+    const cacheError = $<HTMLParagraphElement>("cache-error");
+    const cacheDirs = $<HTMLPreElement>("cache-dirs");
+    const cacheResults = $<HTMLDivElement>("cache-results");
+    const cacheResultsBody = $<HTMLDivElement>("cache-results-body");
 
     // 卡片折叠（所有带折叠头的分组，含「环境」「网络」「集成」）：默认展开；用户点出来的折叠状态记在 localStorage，
     // 壳重启、轻量模式重建窗口后沿用（维护者要求）。不放 config.json：那是整份回写的设置文件，
@@ -2356,9 +2462,38 @@ async function main(): Promise<void> {
     let cliBusy = false;
     /** 后端说当前宿主能不能自动接入（只有 Windows）。非 Windows 时开关整段藏起来。 */
     let cliSupported = false;
+    /** 两张半卡（命令行 + 缓存）共享同一个收起后徽章，所以各自只记录状态，徽章统一渲染。 */
+    let cliBadgeText = "命令行读取中";
+    let cliBadgeConnected = false;
+    let cliBadgeFailed = false;
+    /** 命令行那半是否已经拿到结果（两半各跑各的，先到的不应该把另一份还没读的当成「不可用」）。 */
+    let cliLoaded = false;
+    let cacheBadgeText: string | null = null;
+    let cacheBadgeFailed = false;
+
+    /** 收起后只能看到这一个徽章，所以两半的信息合在一起：`命令行已接入 · 缓存 1.8 GB`。 */
+    function renderIntegrationsSummary(): void {
+      if (cliLoaded && !cliSupported) {
+        cliSummary.className = "badge badge-stopped card-summary";
+        cliSummary.textContent = "仅 Windows 可用";
+        return;
+      }
+      if (cliLoaded && cacheBadgeFailed && cliBadgeFailed) {
+        cliSummary.className = "badge badge-failed card-summary";
+        cliSummary.textContent = "读取失败";
+        return;
+      }
+      const parts = [cliBadgeText];
+      if (cacheBadgeText !== null) {
+        parts.push(cacheBadgeText);
+      }
+      cliSummary.className = `badge ${cliBadgeConnected ? "badge-running" : "badge-stopped"} card-summary`;
+      cliSummary.textContent = parts.join(" · ");
+    }
 
     function renderCliState(state: CliIntegrationState): void {
       cliSupported = state.supported;
+      cliLoaded = true;
       // 非 Windows 宿主不改任何 shell 配置：自动接入那半截整段收起来，只留手动命令。
       for (const el of cliWindowsOnly) {
         el.classList.toggle("hidden", !state.supported);
@@ -2372,9 +2507,10 @@ async function main(): Promise<void> {
       cliShimText.textContent = state.shimError === null ? state.shimText : state.shimError;
       cliMessage.textContent = state.message;
       const connected = state.supported && state.enabled && state.onPath;
-      cliSummary.className = `badge ${connected ? "badge-running" : "badge-stopped"} card-summary`;
-      // 收起后靠这个徽章说明状态（展开时徽章隐藏，见 CSS）。
-      cliSummary.textContent = !state.supported ? "仅 Windows 可用" : connected ? "命令行已接入" : "命令行未接入";
+      cliBadgeConnected = connected;
+      cliBadgeFailed = false;
+      cliBadgeText = !state.supported ? "仅 Windows 可用" : connected ? "命令行已接入" : "命令行未接入";
+      renderIntegrationsSummary();
     }
 
     async function refreshCliState(): Promise<void> {
@@ -2383,8 +2519,10 @@ async function main(): Promise<void> {
         renderCliState(state);
       } catch (err) {
         cliMessage.textContent = `读取命令行集成状态失败：${err}`;
-        cliSummary.className = "badge badge-failed card-summary";
-        cliSummary.textContent = "读取失败";
+        cliLoaded = true;
+        cliBadgeFailed = true;
+        cliBadgeText = "命令行读取失败";
+        renderIntegrationsSummary();
       }
     }
 
@@ -2411,8 +2549,10 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 启动方式（或二进制路径、自定义命令）改了就按新配置重写垫片；开关关着时只刷新说明。 */
+    /** 启动方式（或二进制路径、自定义命令）改了就按新配置重写垫片；开关关着时只刷新说明。
+        顺便重扫缓存盘面：保留集合里的「当前配置那份」跟着启动配置走，不重扫就会停在旧值。 */
     async function syncCliShim(): Promise<void> {
+      void refreshCacheState();
       if (!prefs.cliIntegration) {
         await refreshCliState();
         return;
@@ -2444,8 +2584,126 @@ async function main(): Promise<void> {
       })();
     });
 
-    /** 「桥接插件」卡片：在资源管理器里打开备份目录（安装/卸载的备份都落在这里）。 */
-    btnBridgeBackups.addEventListener("click", () => {
+    // ---- 集成卡片：npx 缓存盘面 --------------------------------------------------
+    // 归属判定、保留集合、占用与可回收字节、每次删除成败与原因全部在后端算好，
+    // 界面只负责渲染（数字已由后端格式化成 `1.8 GB` 这种形式）。
+    let cacheBusy = false;
+    /** 最近一次拿到的盘面：清理结束后要根据新的可回收份数决定按钮能不能再点。 */
+    let cacheRemovable = 0;
+
+    /** 缓存明细：每行一份目录，写清是保留还是可回收。 */
+    function renderCacheDirs(state: CacheState): void {
+      if (state.dirs.length === 0) {
+        cacheDirs.textContent = "（本包还没有 npx 缓存目录）";
+        return;
+      }
+      cacheDirs.textContent = state.dirs
+        .map((dir) => {
+          const tag = dir.current ? "当前配置" : dir.keep ? "保留" : "可回收";
+          return `${tag}  ${dir.label}  ${dir.bytesText}`;
+        })
+        .join("\n");
+    }
+
+    /** 逐条结果：清掉了什么（带字节数）与没清掉什么（带原因），清空重画。 */
+    function renderCleanupResults(result: CleanupResult): void {
+      cacheResultsBody.textContent = "";
+      for (const dir of result.removed) {
+        const row = document.createElement("div");
+        row.className = "kv-row";
+        const key = document.createElement("span");
+        key.className = "kv-key";
+        key.textContent = "已清掉";
+        const value = document.createElement("span");
+        value.className = "kv-value";
+        value.textContent = `${dir.label}（${dir.bytesText}）`;
+        row.append(key, value);
+        cacheResultsBody.append(row);
+      }
+      for (const failure of result.failed) {
+        const row = document.createElement("div");
+        row.className = "kv-row";
+        const key = document.createElement("span");
+        key.className = "kv-key";
+        key.textContent = "没清掉";
+        const value = document.createElement("span");
+        value.className = "kv-value";
+        value.textContent = `${failure.label}：${failure.reason}`;
+        row.append(key, value);
+        cacheResultsBody.append(row);
+      }
+      cacheResults.classList.toggle("hidden", cacheResultsBody.childElementCount === 0);
+    }
+
+    function renderCacheState(state: CacheState): void {
+      for (const el of CACHE_WINDOWS_ONLY) {
+        el.classList.toggle("hidden", !state.supported);
+      }
+      cacheOwn.textContent = state.supported ? `${state.ownBytesText}（${state.ownCount} 份）` : "—";
+      cacheReclaimable.textContent = state.supported ? state.reclaimableBytesText : "—";
+      cacheRoot.textContent = state.root === null ? "—" : state.root;
+      cacheRemovable = state.removableCount;
+      btnCacheClean.disabled = cacheBusy || !state.supported || state.removableCount === 0;
+      cacheMessage.textContent = state.message;
+      // 没问出 npm 缓存位置时后端会退到平台默认位置，并在这里说清用的是哪个。
+      cacheWarning.textContent = state.warning ?? "";
+      cacheWarning.classList.toggle("hidden", state.warning === null);
+      renderCacheDirs(state);
+      if (!state.supported) {
+        cacheBadgeText = null;
+        cacheBadgeFailed = false;
+        renderIntegrationsSummary();
+        return;
+      }
+      cacheBadgeFailed = false;
+      cacheBadgeText =
+        state.ownCount === 0
+          ? "缓存为空"
+          : state.removableCount > 0
+            ? `缓存 ${state.ownBytesText} · 可回收 ${state.reclaimableBytesText}`
+            : `缓存 ${state.ownBytesText}`;
+      renderIntegrationsSummary();
+    }
+
+    async function refreshCacheState(): Promise<void> {
+      try {
+        const state = await invoke<CacheState>("cache_state", { config: collectConfig() });
+        renderCacheState(state);
+        // 重扫说明盘面变了（切了启动方式等），上一次的逐条结果已经不对应当前盘面，一并清掉。
+        cacheResultsBody.textContent = "";
+        cacheResults.classList.add("hidden");
+      } catch (err) {
+        cacheMessage.textContent = `读取缓存盘面失败：${err}`;
+        cacheBadgeFailed = true;
+        renderIntegrationsSummary();
+      }
+    }
+
+    btnCacheClean.addEventListener("click", () => {
+      void (async () => {
+        cacheBusy = true;
+        btnCacheClean.disabled = true;
+        cacheError.classList.add("hidden");
+        try {
+          const result = await invoke<CleanupResult>("cleanup_cache", { config: collectConfig() });
+          // 后端清完会顺手重扫一遍并把新盘面一起送回来，数字直接跟着刷。
+          renderCacheState(result.state);
+          renderCleanupResults(result);
+          cacheMessage.textContent = result.message;
+        } catch (err) {
+          cacheError.textContent = `清理缓存失败：${err}`;
+          cacheError.classList.remove("hidden");
+          // 失败时也重扫一次：部分目录可能已经删掉了，数字不能停在旧值。
+          await refreshCacheState();
+        } finally {
+          cacheBusy = false;
+          // 按钮能不能再点看清理后的可回收份数，不能无脑恢复成可点。
+          btnCacheClean.disabled = cacheRemovable === 0;
+        }
+      })();
+    });
+
+    /** 「桥接插件」卡片：在资源管理器里打开备份目录（安装/卸载的备份都落在这里）。 */    btnBridgeBackups.addEventListener("click", () => {
       void (async () => {
         bridgeNote.classList.add("hidden");
         try {
@@ -2597,6 +2855,8 @@ async function main(): Promise<void> {
     await refresh();
     void refreshBridgeState();
     void refreshCliState();
+    // 缓存盘面要起 npm 子进程，不阻塞首次挂载。
+    void refreshCacheState();
     void loadProfiles();
     refreshNowHook = refresh;
     // 切主题会重建整个界面：转动状态与计时在模块级，这里把类重新贴到新的那颗「重启 DSH」上。
