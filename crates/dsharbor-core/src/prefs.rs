@@ -124,6 +124,11 @@ pub struct ShellPrefs {
     /// 命令行集成开关（「集成」卡的开关）；默认关。
     pub cli_integration: bool,
     /// 缓存清理开关（「集成」卡的开关）；默认关。
+    ///
+    /// 打开后，每次**真正拉起** DSH 进程且启动成功时顺手跑一次与「立即清理」
+    /// 完全相同的修剪（判定规则见 `crate::npx_cache`，是否该跑的判断见
+    /// `crate::cache_auto::should_run`）。默认关是有意的：自动删东西的风险高于省下的
+    /// 磁盘，先让用户看到能省多少再自己决定。关着时界面照样显示可回收大小。
     pub cache_cleanup: bool,
 }
 
@@ -199,6 +204,19 @@ mod tests {
         };
         let text = serde_json::to_string(&prefs).expect("序列化");
         assert_eq!(parse(&text), prefs, "改 → 存 → 读回应完全一致");
+    }
+
+    #[test]
+    fn cache_cleanup_switch_survives_a_restart() {
+        // 自动清理开关是「打开一次就一直生效」的偏好：写盘再读回必须还是开着的，
+        // 缺键（老配置没有这个键）才是关。
+        let text = r#"{"cacheCleanup":true}"#;
+        assert!(parse(text).cache_cleanup, "存下来的开状态要读回来");
+        assert!(
+            !parse(r#"{"cacheCleanup":false}"#).cache_cleanup,
+            "关状态也要原样读回"
+        );
+        assert!(!parse("{}").cache_cleanup, "老配置没有这个键时按默认关处理");
     }
 
     #[test]
