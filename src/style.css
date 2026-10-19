@@ -1354,6 +1354,54 @@ button.danger:hover:not(:disabled) {
   background: rgba(255, 88, 88, 0.16);
 }
 
+/* 补丁层面板：备份按钮 + 备份清单（一行一份，最新的在最上面）。
+   与「启动方式」正文里那些合并框（.subcard）同一阶：面板本身在 .subcard 里，
+   这里只用一条分隔线把「环境生命周期」与「补丁层」两段分开。 */
+.patch-panel {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.patch-panel .hint {
+  margin: 0 0 10px;
+}
+
+/* 备份清单：一份备份一行。路径是等宽字（用户可能要照着去找文件），
+   长路径折行而不是把行撑出框（.patch-backup-path 用 break-all）。 */
+.patch-backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.patch-backup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid rgba(170, 197, 233, 0.16);
+  border-radius: 8px;
+  background: rgba(9, 21, 38, 0.32);
+  font-size: 13px;
+}
+
+.patch-backup-time {
+  flex: none;
+  color: #c8d6f0;
+  font-variant-numeric: tabular-nums;
+}
+
+.patch-backup-path {
+  flex: 1;
+  min-width: 0;
+  color: #9fb2d8;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
 /* 会话卡片里的「托盘单击打开」是卡片顶层字段，不跟随启动方式单选组的左缩进 */
 .tray-fields {
   padding-left: 0;

@@ -16,6 +16,7 @@ pub mod logparse;
 pub mod net;
 pub mod npx_cache;
 pub mod overlay;
+pub mod patch_layer;
 pub mod path_shim;
 pub mod paths;
 pub mod prefs;

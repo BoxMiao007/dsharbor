@@ -7,6 +7,7 @@
 mod detect;
 mod launcher;
 mod npxcache;
+mod patch;
 mod plugin;
 mod profile;
 mod profile_ops;
@@ -1069,15 +1070,23 @@ fn open_in_file_manager(dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// 安装/卸载桥接插件时要求会话已停止（pnpm 需要独占 profile 目录）。
-fn ensure_session_stopped(state: &tauri::State<'_, AppState>) -> Result<(), String> {
+/// 要求会话已停止才能做的目录操作。
+///
+/// 重装依赖要走 pnpm 写 `node_modules`，备份/还原补丁层要改 DSH 自己加载的
+/// 配置文件；运行中的 DSH 同时读写这些位置，谁后写谁赢——所以先停下来，别抢。
+/// 提示里带上具体动作与环境名：同一个判断服务四种操作，说法必须对得上刚点的按钮。
+fn ensure_session_stopped(
+    state: &tauri::State<'_, AppState>,
+    action: &str,
+    profile: &str,
+) -> Result<(), String> {
     let mut guard = state
         .session
         .lock()
         .map_err(|_| "内部状态异常".to_string())?;
     if let Some(session) = guard.as_mut() {
         if session.is_alive() {
-            return Err("请先停止 DSH 再操作桥接插件：pnpm 需要独占 profile 目录。".to_string());
+            return Err(dsharbor_core::patch_layer::session_busy(action, profile));
         }
     }
     Ok(())
@@ -1090,7 +1099,7 @@ fn bridge_install(
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state)?;
+    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
     let profile = settings::load(&app).prefs.profile;
     plugin::install(&app, &config, &profile)
 }
@@ -1102,7 +1111,7 @@ fn bridge_uninstall(
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state)?;
+    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
     let profile = settings::load(&app).prefs.profile;
     plugin::uninstall(&app, &config, &profile)
 }
@@ -1115,7 +1124,7 @@ fn bridge_restore(
     config: LaunchConfig,
     backup_dir: String,
 ) -> Result<String, String> {
-    ensure_session_stopped(&state)?;
+    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
     let profile = settings::load(&app).prefs.profile;
     plugin::restore(&app, &config, &profile, &backup_dir)
 }
@@ -1231,15 +1240,63 @@ async fn delete_profile(
 ///
 /// 异步命令且可能跑几分钟：`dsh plugin ... install` 要拉几百 MB，期间界面靠
 /// 按钮的忙碌态提示，不能阻塞主线程。
+///
+/// 先要求会话已停止：pnpm 要独占环境目录，与运行中的 DSH 抢同一份 `node_modules`
+/// 会互相覆盖，结果不可预测（票据 #20 留下的已知风险）。
 #[tauri::command]
 async fn install_profile_deps(
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     config: LaunchConfig,
     name: String,
 ) -> Result<profile_ops::ProfileOutcome, String> {
+    ensure_session_stopped(&state, "重装依赖", &name)?;
     tauri::async_runtime::spawn_blocking(move || profile_ops::install_deps(&app, &config, &name))
         .await
         .map_err(|err| format!("后台安装依赖失败：{err}"))?
+}
+
+/// 备份某个环境的补丁层（`cordis.patch.yml`），产生一份带时间戳的副本。
+///
+/// 异步命令：WSL 目标要经 `wsl.exe` 读发行版里的文件（秒级）。
+#[tauri::command]
+async fn patch_backup(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+) -> Result<patch::PatchOutcome, String> {
+    ensure_session_stopped(&state, "备份补丁层", &name)?;
+    tauri::async_runtime::spawn_blocking(move || patch::backup(&app, &config, &name))
+        .await
+        .map_err(|err| format!("后台备份补丁层失败：{err}"))?
+}
+
+/// 把补丁层还原到某一份备份（还原前自动把当前版本另存一份）。
+#[tauri::command]
+async fn patch_restore(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+    backup: String,
+) -> Result<patch::PatchOutcome, String> {
+    ensure_session_stopped(&state, "还原补丁层", &name)?;
+    tauri::async_runtime::spawn_blocking(move || patch::restore(&app, &config, &name, &backup))
+        .await
+        .map_err(|err| format!("后台还原补丁层失败：{err}"))?
+}
+
+/// 列出某个环境现有的补丁层备份（按时间从旧到新）。
+#[tauri::command]
+async fn patch_backups(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+) -> Result<Vec<dsharbor_core::patch_layer::PatchBackup>, String> {
+    tauri::async_runtime::spawn_blocking(move || patch::list(&app, &config, &name))
+        .await
+        .map_err(|err| format!("后台读取补丁层备份失败：{err}"))?
 }
 
 /// 记录界面主题（Rust 侧镜像）。
@@ -1627,6 +1684,9 @@ pub fn run() {
             rename_profile,
             delete_profile,
             install_profile_deps,
+            patch_backup,
+            patch_restore,
+            patch_backups,
             open_external,
             set_caption_color,
             save_ui_theme,

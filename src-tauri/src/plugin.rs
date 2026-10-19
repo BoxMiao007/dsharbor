@@ -206,7 +206,7 @@ fn read_listing(target: &Target) -> Result<String, String> {
     }
 }
 
-fn join_path(target: &Target, dir: &str, name: &str) -> String {
+pub(crate) fn join_path(target: &Target, dir: &str, name: &str) -> String {
     match target {
         Target::Host => PathBuf::from(dir).join(name).to_string_lossy().to_string(),
         Target::Wsl { .. } => format!("{dir}/{name}"),
