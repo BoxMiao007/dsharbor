@@ -542,6 +542,94 @@ pub fn failure_text(text: &str) -> String {
     }
 }
 
+/// 自检的结论：三态 + 结论所依据的那条路 + 失败时的说法。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfCheckOutcome {
+    pub state: SelfCheckState,
+    /// 结论所依据的那条路：通了就是通的那条路，都不通就是第一条（真实下载路径）。
+    pub via: CheckVia,
+    /// 失败说明；成功时为 `None`。
+    pub failure: Option<String>,
+}
+
+/// 把两条请求的原始输出汇成结论。
+///
+/// 参数是「按 `self_check_plan` 的顺序跑完」的原始 Captured 文本，
+/// 归类与文案都在这里做，外壳只管跑命令。
+pub fn self_check_outcome(
+    first_via: CheckVia,
+    first: Result<(), String>,
+    second: Option<Result<(), String>>,
+) -> SelfCheckOutcome {
+    let first_error = match first {
+        Ok(()) => {
+            return SelfCheckOutcome {
+                state: SelfCheckState::ProxyOk,
+                via: first_via,
+                failure: None,
+            }
+        }
+        Err(text) => text,
+    };
+
+    let state = check_state(false, second.as_ref().map(Result::is_ok));
+    let failure = match &second {
+        // 两条都失败：两边的说法都要给，否则用户不知道该调代理还是调源。
+        Some(Err(second_error)) => format!(
+            "{}；去掉代理也不行：{}",
+            failure_text(&first_error),
+            failure_text(second_error)
+        ),
+        _ => failure_text(&first_error),
+    };
+    let via = match state {
+        SelfCheckState::DirectOnly => CheckVia::Direct,
+        _ => first_via,
+    };
+    SelfCheckOutcome {
+        state,
+        via,
+        failure: Some(failure),
+    }
+}
+
+/// 自检回给界面的报表。
+///
+/// 「通了」不够，还得说清是怎么通的：用户关心的就是代理到底有没有用上。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelfCheckReport {
+    /// 三态：`proxyOk` / `directOnly` / `bothFail`。
+    pub state: &'static str,
+    /// 结论所依据的那条路：`proxy` / `direct`。
+    pub via: &'static str,
+    /// 实际请求的下载源；`None` 表示透传 npm 全局配置，界面自己换文案。
+    pub registry: Option<String>,
+    /// 实际用上的代理地址；`None` 表示这条请求没走代理。
+    pub proxy: Option<String>,
+    /// 失败说明；成功时为 `None`。
+    pub failure: Option<String>,
+}
+
+/// 把结论包成界面要的报表。
+pub fn self_check_report(
+    source: DownloadSource,
+    proxy: &ProxyResolution,
+    outcome: &SelfCheckOutcome,
+) -> SelfCheckReport {
+    SelfCheckReport {
+        state: outcome.state.as_str(),
+        via: outcome.via.as_str(),
+        registry: registry_of(source).map(str::to_string),
+        // 只有真的走代理那条，才把代理地址拿出来说；直连时报代理容易让人误会。
+        proxy: match outcome.via {
+            CheckVia::Proxy => proxy.url.clone(),
+            CheckVia::Direct => None,
+        },
+        failure: outcome.failure.clone(),
+    }
+}
+
 /// 拼 `NO_PROXY` 的值：回环地址恒在最前，再接用户自己的例外列表（去重、保序）。
 fn no_proxy_value(bypass: &[String]) -> String {
     let mut items: Vec<String> = Vec::new();
@@ -1413,6 +1501,114 @@ mod tests {
     fn failure_text_survives_empty_or_whitespace_output() {
         assert_eq!(failure_text(""), NetErrorKind::Unknown.message());
         assert_eq!(failure_text("   \n\n  "), NetErrorKind::Unknown.message());
+    }
+
+    #[test]
+    fn a_successful_first_pass_needs_no_failure_text() {
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        assert_eq!(outcome.state, SelfCheckState::ProxyOk);
+        assert_eq!(outcome.via, CheckVia::Proxy);
+        assert_eq!(outcome.failure, None);
+    }
+
+    #[test]
+    fn direct_only_reports_the_direct_route_and_the_proxy_error() {
+        let outcome = self_check_outcome(
+            CheckVia::Proxy,
+            Err("npm error connect ECONNREFUSED 127.0.0.1:7890".to_string()),
+            Some(Ok(())),
+        );
+        assert_eq!(outcome.state, SelfCheckState::DirectOnly);
+        // 通的是直连，结论就说直连。
+        assert_eq!(outcome.via, CheckVia::Direct);
+        let failure = outcome.failure.expect("代理那条失败要说清原因");
+        assert!(
+            failure.starts_with(NetErrorKind::ProxyRefused.message()),
+            "{failure}"
+        );
+    }
+
+    #[test]
+    fn both_failing_keeps_both_reasons() {
+        let outcome = self_check_outcome(
+            CheckVia::Proxy,
+            Err("npm error connect ECONNREFUSED 127.0.0.1:7890".to_string()),
+            Some(Err(
+                "npm error network getaddrinfo ENOTFOUND registry.npmmirror.com".to_string(),
+            )),
+        );
+        assert_eq!(outcome.state, SelfCheckState::BothFail);
+        let failure = outcome.failure.expect("两条都失败要都有说法");
+        assert!(failure.contains("代理拒绝连接"), "{failure}");
+        assert!(failure.contains("域名解析不到"), "{failure}");
+        // 走的是真实下载路径（先带代理），而不是第一次失败的那条。
+        assert_eq!(outcome.via, CheckVia::Proxy);
+    }
+
+    #[test]
+    fn a_single_failing_pass_is_both_fail_not_direct_only() {
+        let outcome = self_check_outcome(
+            CheckVia::Direct,
+            Err("npm error network getaddrinfo ENOTFOUND registry.npmjs.org".to_string()),
+            None,
+        );
+        assert_eq!(outcome.state, SelfCheckState::BothFail);
+        assert_eq!(outcome.via, CheckVia::Direct);
+        assert!(outcome
+            .failure
+            .expect("失败要有说法")
+            .starts_with(NetErrorKind::Dns.message()));
+    }
+
+    #[test]
+    fn the_report_names_the_route_and_the_source_it_actually_used() {
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        let report = self_check_report(DownloadSource::Mirror, &resolved, &outcome);
+        assert_eq!(report.state, "proxyOk");
+        assert_eq!(report.via, "proxy");
+        assert_eq!(report.registry.as_deref(), Some(MIRROR_REGISTRY));
+        assert_eq!(report.proxy.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(report.failure, None);
+    }
+
+    #[test]
+    fn a_direct_report_does_not_claim_a_proxy_was_used() {
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(
+            CheckVia::Proxy,
+            Err("npm error connect ECONNREFUSED 127.0.0.1:7890".to_string()),
+            Some(Ok(())),
+        );
+        let report = self_check_report(DownloadSource::Official, &resolved, &outcome);
+        assert_eq!(report.state, "directOnly");
+        assert_eq!(report.via, "direct");
+        assert_eq!(report.proxy, None);
+        assert!(report.failure.is_some());
+    }
+
+    #[test]
+    fn an_inherited_source_is_reported_as_unknown_instead_of_guessed() {
+        // 选「沿用 npm 全局配置」时壳不知道实际域名，不能编一个出来。
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        let report = self_check_report(DownloadSource::Inherit, &resolved, &outcome);
+        assert_eq!(report.registry, None);
+    }
+
+    #[test]
+    fn reports_serialise_as_camel_case_for_the_frontend() {
+        let resolved = system("127.0.0.1:7890");
+        let outcome = self_check_outcome(CheckVia::Proxy, Ok(()), None);
+        let json = serde_json::to_string(&self_check_report(
+            DownloadSource::Mirror,
+            &resolved,
+            &outcome,
+        ))
+        .expect("报表要能序列化给界面");
+        assert!(json.contains("\"state\":\"proxyOk\""), "{json}");
+        assert!(json.contains("\"via\":\"proxy\""), "{json}");
+        assert!(json.contains("\"registry\":"), "{json}");
     }
 
     #[test]
