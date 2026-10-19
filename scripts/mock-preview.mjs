@@ -82,10 +82,10 @@ const state = {
   /** 环境列表（`list_profiles`）的假数据：删掉某项可预览「配置里记的环境已不在」，
       把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。 */
   profiles: [
-    { name: "web", plugins: 17, bridgeInstalled: true, webCapable: true },
-    { name: "lab", plugins: 4, bridgeInstalled: false, webCapable: true },
-    { name: "headless", plugins: 2, bridgeInstalled: false, webCapable: false },
-    { name: "desktop", plugins: 9, bridgeInstalled: true, webCapable: true },
+    { name: "web", plugins: 17, bridgeInstalled: true, webCapable: true, depsInstalled: true },
+    { name: "lab", plugins: 4, bridgeInstalled: false, webCapable: true, depsInstalled: true },
+    { name: "headless", plugins: 2, bridgeInstalled: false, webCapable: false, depsInstalled: false },
+    { name: "desktop", plugins: 9, bridgeInstalled: true, webCapable: true, depsInstalled: true },
   ],
   calls: {},
 };
@@ -96,6 +96,19 @@ window.__mockUnimplemented = [];
 (function () {
   const S = window.__MOCK_STATE__;
   const seen = (name) => { S.calls[name] = (S.calls[name] || 0) + 1; };
+  // 环境名校验：规则照核心库 dsharbor_core::profiles::validate_name 抄一份，只为预览时
+  // 能看到「非法名字被拒绝」的样子（真正的判定在后端）。
+  const checkProfileName = (name, list) => {
+    if (!name) return "环境名不能为空";
+    if (name.length > 64) return "环境名过长（最多 64 字符）：" + name;
+    if (name === "." || name === "..") return "环境名不能是 " + name;
+    if (!/^[A-Za-z0-9]/.test(name)) return "环境名必须以字母或数字开头：" + name;
+    const bad = name.split("").find((ch) => !/[A-Za-z0-9._-]/.test(ch));
+    if (bad) return "环境名包含不允许的字符 " + JSON.stringify(bad) + "：" + name + "（仅允许字母数字与 - _ .）";
+    if (name === "desktop") return "「desktop」是官方桌面端的环境目录，不能用作名字";
+    if (list.some((item) => item.name === name)) return "已经有同名环境「" + name + "」了";
+    return null;
+  };
   const status = () => {
     const running = S.session === "running";
     const failed = S.session === "failed";
@@ -237,6 +250,57 @@ window.__mockUnimplemented = [];
     list_profiles: () => {
       seen("list_profiles");
       return S.profiles || [];
+    },
+    // ---- 环境生命周期（新建 / 复制 / 重命名 / 删除 / 安装依赖）----------------
+    // 假后端把 S.profiles 当成真清单来改，所以预览里连着点几下就能看到下拉、徽章与
+    // 管理面板一起变。名字校验也照核心库的规则在本文件里做一份，只为预览时能看到
+    // 那些拒绝原因（真判在后端）。
+    create_profile: (a) => {
+      seen("create_profile:" + (a && a.name ? a.name : "?"));
+      const name = (a && a.name ? a.name : "").trim();
+      const bad = checkProfileName(name, S.profiles);
+      if (bad) throw bad;
+      const item = { name: name, plugins: 2, bridgeInstalled: false, webCapable: true, depsInstalled: false };
+      S.profiles.push(item);
+      return { ok: true, message: "已在 Windows 上新建空白环境「" + name + "」（只写了骨架文件，还没装依赖）。", name: name, summary: item };
+    },
+    copy_profile: (a) => {
+      seen("copy_profile:" + (a && a.source ? a.source : "?") + "->" + (a && a.name ? a.name : "?"));
+      const name = (a && a.name ? a.name : "").trim();
+      const bad = checkProfileName(name, S.profiles);
+      if (bad) throw bad;
+      const source = S.profiles.find((p) => p.name === (a && a.source));
+      const item = { name: name, plugins: source ? source.plugins : 0, bridgeInstalled: false, webCapable: source ? source.webCapable : true, depsInstalled: false };
+      S.profiles.push(item);
+      return { ok: true, message: "已复制「" + (a && a.source) + "」为「" + name + "」（3 项配置与数据，依赖目录与锁文件未复制）。跳过：node_modules、pnpm-lock.yaml。新环境还没装依赖，点「安装依赖」补齐后才能启动。", name: name, summary: item };
+    },
+    rename_profile: (a) => {
+      seen("rename_profile:" + (a && a.oldName ? a.oldName : "?") + "->" + (a && a.name ? a.name : "?"));
+      const name = (a && a.name ? a.name : "").trim();
+      const bad = checkProfileName(name, S.profiles);
+      if (bad) throw bad;
+      const item = S.profiles.find((p) => p.name === (a && a.oldName));
+      if (!item) throw "找不到要重命名的环境「" + (a && a.oldName) + "」。";
+      item.name = name;
+      if (S.savedShell && S.savedShell.profile === (a && a.oldName)) S.savedShell.profile = name;
+      return { ok: true, message: "已把「" + (a && a.oldName) + "」重命名为「" + name + "」（目录与清单里的名字都改了）。", name: name, summary: item };
+    },
+    delete_profile: (a) => {
+      seen("delete_profile:" + (a && a.name ? a.name : "?"));
+      const name = a && a.name;
+      if (name === "desktop") throw "这是官方桌面端的环境目录，不允许删除：desktop";
+      if (S.savedShell && S.savedShell.profile === name) throw "「" + name + "」是当前启动用的环境，先切到别的环境再删除。";
+      const index = S.profiles.findIndex((p) => p.name === name);
+      if (index < 0) throw "找不到要删除的环境「" + name + "」。";
+      S.profiles.splice(index, 1);
+      return { ok: true, message: "已删除环境「" + name + "」。", name: name, summary: null };
+    },
+    install_profile_deps: (a) => {
+      seen("install_profile_deps:" + (a && a.name ? a.name : "?"));
+      const item = S.profiles.find((p) => p.name === (a && a.name));
+      if (!item) throw "找不到环境「" + (a && a.name) + "」。";
+      item.depsInstalled = true;
+      return { ok: true, message: "安装依赖：dsh plugin --profile " + item.name + " install（经 Windows）；退出码：0；校验：node_modules 已就位 ✓", name: item.name, summary: item };
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,
