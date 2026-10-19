@@ -184,6 +184,33 @@ interface BridgeOutcome {
   backupDir: string;
 }
 
+/** 与 Rust 侧 `shellpath::CliIntegrationState` 对应：目录、垫片预览、手动命令与状态说明
+    都在后端算好，界面只负责显示。 */
+interface CliIntegrationState {
+  /** 当前宿主能不能自动接入（只有 Windows 会改 PATH）。 */
+  supported: boolean;
+  /** 开关值（`cliIntegration`）。 */
+  enabled: boolean;
+  /** 垫片目录（配置目录下的 `bin`）。 */
+  binDir: string;
+  /** 垫片文件完整路径。 */
+  shimPath: string;
+  /** 那个目录现在是否真的在用户 PATH 里。 */
+  onPath: boolean;
+  /** 可粘进 shell 配置的手动命令。 */
+  manualCommand: string;
+  /** 垫片按当前启动配置应该有的内容。 */
+  shimText: string;
+  /** 渲染垫片失败的原因（启动方式还没填完整等）。 */
+  shimError: string | null;
+  /** 探测到的系统全局 dsh 绝对路径。 */
+  systemDsh: string | null;
+  /** PATH 里排在垫片目录之前、会让终端先命中另一份 dsh 的那个文件。 */
+  shadow: string | null;
+  /** 一行状态说明。 */
+  message: string;
+}
+
 /** 渠道候选：中文名在前、npm 标签在后；圆点靠 CSS 画（emoji 在 WebView2 里会渲染成黑白方块）。 */
 const CHANNEL_CHOICES: PickerChoice[] = [
   { value: "latest", label: "稳定版（latest）", dot: "latest" },
@@ -722,11 +749,43 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     );
   const profilesSection = placeholderCard("profiles", "环境", "当前使用哪一份 DSH 环境、装了哪些插件，将在后续版本显示在这里。");
   const networkSection = placeholderCard("network", "网络", "下载源与代理设置的选项，将在后续版本显示在这里。");
-  const integrationsSection = placeholderCard(
-    "integrations",
-    "集成",
-    "命令行集成与缓存清理的开关，将在后续版本显示在这里。",
-  );
+  // 「集成」卡：本轮先接命令行集成（PATH 与 dsh 垫片），缓存清理随后续版本补上。
+  // 卡片内容全部由后端算好（目录、垫片内容、手动命令、状态说明），界面只负责显示，
+  // 避免两边各算一套口径。非 Windows 宿主把「自动接入」那半截整段藏起来，只留手动命令。
+  const integrationsSummary = `
+    <span id="integrations-summary" class="badge badge-stopped card-summary">读取中…</span>
+  `;
+  const integrationsBody = `
+    <div class="subcard">
+      <div class="subcard-title">命令行集成</div>
+      <div class="cli-windows-only">
+        <label class="switch-line">
+          <input type="checkbox" id="cli-toggle" />
+          <span>把 <code>dsh</code> 命令接进终端：在固定目录写一份 <code>dsh.cmd</code>，再把这个目录加到当前用户的 PATH 末尾</span>
+        </label>
+        <p class="hint">只改当前用户的 PATH，不动系统 PATH，其它条目原样保留（百分号变量也不会被展开）；写入是原值回写，再长也不会截断。改完不影响已经开着的终端，<b>新开一个终端</b>才生效。</p>
+        <div class="kv">
+          <div class="kv-row"><span class="kv-key">垫片目录</span><span class="kv-value" id="cli-bin-dir">—</span></div>
+          <div class="kv-row kv-row-action"><span class="kv-key">垫片文件</span><span class="kv-value" id="cli-shim-path">—</span><button id="btn-cli-dir" class="kv-action">打开目录</button></div>
+        </div>
+      </div>
+      <div class="kv">
+        <div class="kv-row kv-row-action"><span class="kv-key">手动命令</span><span class="kv-value cli-command" id="cli-manual">—</span><button id="btn-cli-copy" class="kv-action">复制</button></div>
+      </div>
+      <p id="cli-message" class="hint">读取中…</p>
+      <p id="cli-error" class="error hidden"></p>
+      <div class="cli-windows-only">
+        <details class="log-box">
+          <summary><span class="chev">▸</span>垫片内容（跟随当前启动方式）</summary>
+          <div class="log-area">
+            <pre id="cli-shim-text">（读取中）</pre>
+            <button type="button" class="log-copy" id="btn-cli-copy-shim">复制</button>
+          </div>
+        </details>
+      </div>
+    </div>
+  `;
+  const integrationsSection = cardSection(foldHead("integrations", "集成", integrationsSummary), integrationsBody);
   const modesBody = `
     <label class="mode">
       <input type="radio" name="mode" value="npx" checked />
@@ -1230,11 +1289,14 @@ async function main(): Promise<void> {
       }
       renderChannelUI();
       void persistConfigQuiet();
+      // 渠道（稳定版 / next / 具体版本）直接写在垫片里，换完就重写。
+      void syncCliShim();
     });
     npxChannelPicker.setChoices(CHANNEL_CHOICES);
     const npxVersionPicker = new Picker("npx-version-picker", () => {
       renderChannelUI();
       void persistConfigQuiet();
+      void syncCliShim();
     });
     npxVersionPicker.setChoices([]);
     npxVersionsHint.addEventListener("click", (event) => {
@@ -1283,6 +1345,23 @@ async function main(): Promise<void> {
     const btnAboutSite = $<HTMLButtonElement>("btn-about-site");
     const btnAboutConfig = $<HTMLButtonElement>("btn-about-config");
     const btnAboutLogs = $<HTMLButtonElement>("btn-about-logs");
+
+    // ---- 集成卡片：命令行集成（PATH 与 dsh 垫片） ------------------------------
+    // 展示内容全部由后端算好（目录、垫片内容、手动命令、状态说明），界面只负责渲染，
+    // 免得两边各算一套口径对不上。
+    const cliSummary = $<HTMLSpanElement>("integrations-summary");
+    const cliToggle = $<HTMLInputElement>("cli-toggle");
+    const cliBinDir = $<HTMLElement>("cli-bin-dir");
+    const cliShimPath = $<HTMLElement>("cli-shim-path");
+    const cliManual = $<HTMLElement>("cli-manual");
+    const cliShimText = $<HTMLPreElement>("cli-shim-text");
+    const cliMessage = $<HTMLParagraphElement>("cli-message");
+    const cliError = $<HTMLParagraphElement>("cli-error");
+    const btnCliDir = $<HTMLButtonElement>("btn-cli-dir");
+    const btnCliCopy = $<HTMLButtonElement>("btn-cli-copy");
+    const btnCliCopyShim = $<HTMLButtonElement>("btn-cli-copy-shim");
+    // 「自动接入」那两半截（开关 + 目录、垫片内容）只在 Windows 下有意义。
+    const cliWindowsOnly = Array.from(root.querySelectorAll<HTMLElement>(".cli-windows-only"));
 
     // 卡片折叠（所有带折叠头的分组，含「环境」「网络」「集成」）：默认展开；用户点出来的折叠状态记在 localStorage，
     // 壳重启、轻量模式重建窗口后沿用（维护者要求）。不放 config.json：那是整份回写的设置文件，
@@ -1351,10 +1430,11 @@ async function main(): Promise<void> {
       }
     };
 
-    /** 日志块右侧的「复制」：先走剪贴板 API，不可用时退回「选中 + execCommand」。 */
-    function copyLog(pre: HTMLPreElement, button: HTMLButtonElement): void {
+    /** 日志块右侧的「复制」：先走剪贴板 API，不可用时退回「选中 + execCommand」。
+        命令行集成的「手动命令」「垫片内容」共用这一套。 */
+    function copyLog(source: HTMLElement, button: HTMLButtonElement): void {
       void (async () => {
-        const text = pre.textContent ?? "";
+        const text = source.textContent ?? "";
         const flash = (label: string): void => {
           button.textContent = label;
           window.setTimeout(() => {
@@ -1372,7 +1452,7 @@ async function main(): Promise<void> {
           // 兜底：临时选中文本交给浏览器复制（WebView2 支持 execCommand）。
           const selection = window.getSelection();
           const range = document.createRange();
-          range.selectNodeContents(pre);
+          range.selectNodeContents(source);
           selection?.removeAllRanges();
           selection?.addRange(range);
           const ok = document.execCommand("copy");
@@ -1383,14 +1463,16 @@ async function main(): Promise<void> {
     }
 
     // 复制按钮悬浮在日志区右上角（不在 <summary> 里），点它不会折叠日志块。
-    for (const [button, pre] of [
+    for (const [button, source] of [
       [btnCopyLog, logEl],
       [btnCopyBridgeOutput, bridgeOutput],
+      [btnCliCopy, cliManual],
+      [btnCliCopyShim, cliShimText],
     ] as const) {
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        copyLog(pre, button);
+        copyLog(source, button);
       });
     }
 
@@ -1526,6 +1608,8 @@ async function main(): Promise<void> {
       radio.addEventListener("change", () => {
         syncModeFields();
         void persistConfigQuiet();
+        // 转换启动方式后垫片要跟着重写，否则终端里的 dsh 还是旧的那份（票据验收标准）。
+        void syncCliShim();
       });
     }
     syncModeFields();
@@ -1559,6 +1643,10 @@ async function main(): Promise<void> {
     // 自绘下拉框（托盘单击打开 / 运行环境 / 渠道 / 版本）的回调在构造时已接进 persistConfigQuiet。
     for (const input of [extraInput, binaryPath, customCommand, portInput]) {
       input.addEventListener("change", () => void persistConfigQuiet());
+    }
+    // 二进制路径与自定义命令直接决定垫片内容：改完（失焦/回车）就按新值重写。
+    for (const input of [binaryPath, customCommand]) {
+      input.addEventListener("change", () => void syncCliShim());
     }
     // 附加参数里可能写了 --port / --host，改完立刻刷新端口气泡里的「以它为准」提示。
     extraInput.addEventListener("input", () => renderPortHint());
@@ -1943,6 +2031,100 @@ async function main(): Promise<void> {
       })();
     });
 
+    // ---- 集成卡片：命令行集成（用户级 PATH + dsh 垫片） ------------------------
+    // 目录、垫片内容、手动命令与状态说明都由后端算好，界面只负责渲染，
+    // 免得两边各算一套口径对不上。
+    let cliBusy = false;
+    /** 后端说当前宿主能不能自动接入（只有 Windows）。非 Windows 时开关整段藏起来。 */
+    let cliSupported = false;
+
+    function renderCliState(state: CliIntegrationState): void {
+      cliSupported = state.supported;
+      // 非 Windows 宿主不改任何 shell 配置：自动接入那半截整段收起来，只留手动命令。
+      for (const el of cliWindowsOnly) {
+        el.classList.toggle("hidden", !state.supported);
+      }
+      cliToggle.checked = state.enabled;
+      cliToggle.disabled = cliBusy || !state.supported;
+      cliBinDir.textContent = state.binDir;
+      cliShimPath.textContent = state.shimPath;
+      cliManual.textContent = state.manualCommand;
+      // 垫片渲染不出来（启动方式还没填完整等）时把原因显示在代码块里，便于手改。
+      cliShimText.textContent = state.shimError === null ? state.shimText : state.shimError;
+      cliMessage.textContent = state.message;
+      const connected = state.supported && state.enabled && state.onPath;
+      cliSummary.className = `badge ${connected ? "badge-running" : "badge-stopped"} card-summary`;
+      // 收起后靠这个徽章说明状态（展开时徽章隐藏，见 CSS）。
+      cliSummary.textContent = !state.supported ? "仅 Windows 可用" : connected ? "命令行已接入" : "命令行未接入";
+    }
+
+    async function refreshCliState(): Promise<void> {
+      try {
+        const state = await invoke<CliIntegrationState>("cli_integration_state", { config: collectConfig() });
+        renderCliState(state);
+      } catch (err) {
+        cliMessage.textContent = `读取命令行集成状态失败：${err}`;
+        cliSummary.className = "badge badge-failed card-summary";
+        cliSummary.textContent = "读取失败";
+      }
+    }
+
+    /** 开关与「启动方式变了之后重写垫片」共用：enabled 就是希望变成的状态。 */
+    async function applyCliIntegration(enabled: boolean): Promise<void> {
+      cliBusy = true;
+      cliToggle.disabled = true;
+      cliError.classList.add("hidden");
+      try {
+        const state = await invoke<CliIntegrationState>("set_cli_integration", {
+          config: collectConfig(),
+          enabled,
+        });
+        prefs.cliIntegration = state.enabled;
+        renderCliState(state);
+      } catch (err) {
+        // 写 PATH 失败时后端不会留下半成品，这里把界面也拨回去，避免看着「已接入」其实没接。
+        cliError.textContent = String(err);
+        cliError.classList.remove("hidden");
+        cliToggle.checked = prefs.cliIntegration;
+      } finally {
+        cliBusy = false;
+        cliToggle.disabled = !cliSupported;
+      }
+    }
+
+    /** 启动方式（或二进制路径、自定义命令）改了就按新配置重写垫片；开关关着时只刷新说明。 */
+    async function syncCliShim(): Promise<void> {
+      if (!prefs.cliIntegration) {
+        await refreshCliState();
+        return;
+      }
+      try {
+        const state = await invoke<CliIntegrationState>("set_cli_integration", {
+          config: collectConfig(),
+          enabled: true,
+        });
+        renderCliState(state);
+      } catch (err) {
+        cliMessage.textContent = `垫片没能跟着重写：${err}`;
+      }
+    }
+
+    cliToggle.addEventListener("change", () => {
+      void applyCliIntegration(cliToggle.checked);
+    });
+
+    btnCliDir.addEventListener("click", () => {
+      void (async () => {
+        cliError.classList.add("hidden");
+        try {
+          await invoke<string>("open_shell_dir", { kind: "bin" });
+        } catch (err) {
+          cliError.textContent = `打开垫片目录失败：${err}`;
+          cliError.classList.remove("hidden");
+        }
+      })();
+    });
+
     /** 「桥接插件」卡片：在资源管理器里打开备份目录（安装/卸载的备份都落在这里）。 */
     btnBridgeBackups.addEventListener("click", () => {
       void (async () => {
@@ -2089,6 +2271,7 @@ async function main(): Promise<void> {
     await refreshPortHint();
     await refresh();
     void refreshBridgeState();
+    void refreshCliState();
     refreshNowHook = refresh;
     // 切主题会重建整个界面：转动状态与计时在模块级，这里把类重新贴到新的那颗「重启 DSH」上。
     applyRestartSpin();

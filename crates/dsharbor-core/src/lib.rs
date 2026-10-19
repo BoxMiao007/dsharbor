@@ -13,6 +13,7 @@ pub mod lifecycle;
 pub mod links;
 pub mod logparse;
 pub mod overlay;
+pub mod path_shim;
 pub mod paths;
 pub mod prefs;
 pub mod registry;
