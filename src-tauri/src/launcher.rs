@@ -24,8 +24,7 @@ use dsharbor_core::bridge::{
 use dsharbor_core::console::ConsoleDecoder;
 use dsharbor_core::endpoint::Endpoint;
 use dsharbor_core::launch::{
-    build_launch_plan, extract_configured_port, extract_port, LaunchConfig, LaunchPlan, ShellWrap,
-    SpawnPlan,
+    build_launch_plan, extract_port, LaunchConfig, LaunchPlan, ShellWrap, SpawnPlan,
 };
 use dsharbor_core::logparse::{parse_announcement, Announcement};
 use serde::Serialize;
@@ -366,14 +365,12 @@ pub fn spawn(
     if let Some(stderr) = child.stderr.take() {
         pump(stderr, shared.clone(), false);
     }
-    let configured_port = extract_configured_port(&config.extra_args);
     let shared_for_login = shared.clone();
-    // 桥接探测地址跟随 profile 的 host（LAN 绑定时回环连不进去）。
-    let endpoint = Endpoint::new(
-        bridge_endpoint.host,
-        configured_port.unwrap_or(bridge_endpoint.port),
-    );
-    std::thread::spawn(move || acquire_login(shared_for_login, nonce, endpoint));
+    // 桥接探测地址直接用 detect::effective_endpoint 算好的端点：host 跟随 profile
+    // （LAN 绑定时回环连不进去），端口沿用 detect::resolved_port 的优先级链
+    // （界面自定义端口 > profile 写死的端口 > 附加参数 --port > 3080），
+    // 与后续探测保持一致；只认附加参数里的 --port 会压过更高优先级的来源。
+    std::thread::spawn(move || acquire_login(shared_for_login, nonce, bridge_endpoint));
     Ok(SessionHandle {
         child,
         pid,
