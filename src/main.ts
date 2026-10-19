@@ -212,6 +212,29 @@ function downloadSourceLabel(source: DownloadSource): string {
   return DOWNLOAD_SOURCE_CHOICES.find((choice) => choice.value === source)?.label ?? "沿用 npm 全局配置";
 }
 
+/** 代理模式候选：标签用界面上的原文，value 与 Rust 侧 `ProxyMode::as_str()` 一致。 */
+const PROXY_MODE_CHOICES: PickerChoice[] = [
+  { value: "system", label: "跟随系统" },
+  { value: "manual", label: "手动填写" },
+  { value: "off", label: "不走代理" },
+];
+
+/** 收起卡片时显示的代理摘要：与下拉选项同一个名字。 */
+function proxyModeLabel(mode: ProxyMode): string {
+  return PROXY_MODE_CHOICES.find((choice) => choice.value === mode)?.label ?? "跟随系统";
+}
+
+/** 与 Rust 侧 `proxy::ProxyState` 对应：生效地址、例外列表与那一行说明都由后端算好，
+    界面只负责显示（地址归一化与提示文案只在核心库有一份，界面不另写一套）。 */
+interface ProxyState {
+  /** 真正下发的代理地址；null 表示这次不注入任何代理变量。 */
+  url: string | null;
+  /** 例外列表（回环地址由后端兜底加在最前面，不在这里重复）。 */
+  bypass: string[];
+  /** 一行说明：生效了报走哪儿，没生效说原因。 */
+  hint: string;
+}
+
 /** 与 Rust 侧 `plugin::BridgeOutcome` 对应。 */
 interface BridgeOutcome {
   ok: boolean;
@@ -793,15 +816,23 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <p id="profile-error" class="error hidden"></p>
   `;
   const profilesSection = cardSection(foldHead("profiles", "环境", profilesSummary), profilesBody);
-  // 「网络」卡：本版接管下载源；代理设置的控件由后续版本接进来。
+  // 「网络」卡：下载源与代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
   const networkSummary = `
-    <span id="network-summary" class="badge badge-stopped card-summary">沿用 npm 全局配置</span>
+    <span id="network-summary" class="badge badge-stopped card-summary">沿用 npm 全局配置 · 跟随系统</span>
   `;
   const networkBody = `
     <div class="fields network-fields">
       <span class="field-label">下载源</span>
       <div class="picker" id="download-source-picker"></div>
       <p class="hint" id="download-source-hint"></p>
+    </div>
+    <div class="fields network-fields">
+      <span class="field-label">代理</span>
+      <div class="picker" id="proxy-mode-picker"></div>
+      <div id="proxy-manual" class="proxy-manual hidden">
+        <input id="proxy-address" type="text" placeholder="例如 http://127.0.0.1:7890" spellcheck="false" autocomplete="off" />
+      </div>
+      <p class="hint" id="proxy-hint"></p>
     </div>
   `;
   const networkSection = cardSection(foldHead("network", "网络", networkSummary), networkBody);
@@ -1371,11 +1402,37 @@ async function main(): Promise<void> {
     // 就真的去官方地址拉），不必重启壳。
     const networkSummary = $<HTMLSpanElement>("network-summary");
     const downloadSourceHintEl = $<HTMLParagraphElement>("download-source-hint");
+    const proxyHintEl = $<HTMLParagraphElement>("proxy-hint");
+    const proxyManualRow = $<HTMLElement>("proxy-manual");
+    const proxyAddressInput = $<HTMLInputElement>("proxy-address");
+    /** 后端算好的代理状态（地址、例外列表与那一行说明）；还没读到时为 null。 */
+    let proxyState: ProxyState | null = null;
+
     function renderNetworkUI(): void {
-      const label = downloadSourceLabel(prefs.downloadSource);
-      networkSummary.textContent = label;
+      // 收起时摘要把两个选择拼在一行：「镜像源 · 跟随系统」。
+      networkSummary.textContent = `${downloadSourceLabel(prefs.downloadSource)} · ${proxyModeLabel(prefs.proxyMode)}`;
       downloadSourceHintEl.textContent = downloadSourceHint(prefs.downloadSource);
+      // 地址输入框只在手动模式才露出来；另外两种模式那个值不参与计算，露出来只会让人以为要填。
+      proxyManualRow.classList.toggle("hidden", prefs.proxyMode !== "manual");
+      renderProxyHint();
     }
+
+    /** 提示行：手动模式填错了就把那句校验文案当错误显示，其它情形都是普通说明。 */
+    function renderProxyHint(): void {
+      const state = proxyState;
+      if (state === null) {
+        proxyHintEl.textContent = "正在读取系统代理设置…";
+        proxyHintEl.classList.remove("error", "field-error");
+        return;
+      }
+      // 手动模式里填了地址却没生效（socks、格式错、缺主机）：那行说明就是错在哪里。
+      const isError =
+        prefs.proxyMode === "manual" && state.url === null && prefs.proxyAddress.trim() !== "";
+      proxyHintEl.textContent = state.hint;
+      proxyHintEl.classList.toggle("error", isError);
+      proxyHintEl.classList.toggle("field-error", isError);
+    }
+
     const downloadSourcePicker = new Picker("download-source-picker", (value) => {
       const next = normalizePrefs({ downloadSource: value as DownloadSource }).downloadSource;
       if (next === prefs.downloadSource) {
@@ -1394,6 +1451,54 @@ async function main(): Promise<void> {
     });
     downloadSourcePicker.setChoices(DOWNLOAD_SOURCE_CHOICES);
     downloadSourcePicker.setValue(prefs.downloadSource);
+
+    /** 代理状态由后端算（核心库负责地址归一化与文案）；读不到就退成一句说明。 */
+    async function refreshProxyState(): Promise<void> {
+      try {
+        proxyState = await invoke<ProxyState>("proxy_state");
+      } catch (err) {
+        proxyState = { url: null, bypass: [], hint: `读取代理设置失败：${err}` };
+      }
+      renderProxyHint();
+    }
+
+    const proxyModePicker = new Picker("proxy-mode-picker", (value) => {
+      const next = normalizePrefs({ proxyMode: value as ProxyMode }).proxyMode;
+      if (next === prefs.proxyMode) {
+        return;
+      }
+      prefs = { ...prefs, proxyMode: next };
+      renderNetworkUI();
+      // 切模式不必重查版本：地址变了要等下一次启动才生效，这里只把存盘与提示跟上。
+      void (async () => {
+        await persistConfigQuiet();
+        await refreshProxyState();
+      })();
+    });
+    proxyModePicker.setChoices(PROXY_MODE_CHOICES);
+    proxyModePicker.setValue(prefs.proxyMode);
+
+    /** 提交地址：只在失焦与回车时调，不跟着每次敲键存盘。 */
+    function commitProxyAddress(): void {
+      const next = proxyAddressInput.value.trim();
+      if (next === prefs.proxyAddress) {
+        return;
+      }
+      prefs = { ...prefs, proxyAddress: next };
+      void (async () => {
+        await persistConfigQuiet();
+        await refreshProxyState();
+      })();
+    }
+
+    proxyAddressInput.addEventListener("blur", commitProxyAddress);
+    proxyAddressInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitProxyAddress();
+        proxyAddressInput.blur();
+      }
+    });
     renderNetworkUI();
     // 重建界面时旧实例要 dispose（它们各自挂着 document 监听）。
     livePickers = [
@@ -1405,6 +1510,7 @@ async function main(): Promise<void> {
       npxVersionPicker,
       themePicker,
       downloadSourcePicker,
+      proxyModePicker,
     ];
     const modesSummary = $<HTMLSpanElement>("modes-summary");
     const bridgeSummary = $<HTMLSpanElement>("bridge-summary");
@@ -2475,9 +2581,12 @@ async function main(): Promise<void> {
       syncModeFields();
       renderPortHint();
       renderChannelUI();
-      // 下载源：读回来的值可能不是界面上的默认项，回填下拉与摘要。
+      // 下载源与代理：读回来的值可能不是界面上的默认项，回填下拉、地址框与摘要。
       downloadSourcePicker.setValue(prefs.downloadSource);
+      proxyModePicker.setValue(prefs.proxyMode);
+      proxyAddressInput.value = prefs.proxyAddress;
       renderNetworkUI();
+      void refreshProxyState();
     }
 
     await loadSavedConfig();

@@ -829,6 +829,15 @@ button.primary:hover:not(:disabled) {
   font-size: 12px;
 }
 
+/* 「网络」卡代理提示行：出错时只要红字，不要红底卡片（那一行很窄，红底反而压住输入框）。 */
+p.hint.error {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  color: #fca5a5;
+}
+
 .mode {
   display: flex;
   gap: 12px;
@@ -1278,6 +1287,17 @@ html::-webkit-scrollbar {
 /* 「网络」卡的下载源也是卡片顶层字段，同样不需要单选组的左缩进 */
 .network-fields {
   padding-left: 0;
+}
+
+/* 代理地址框只在手动模式露出来；它包一层 div 是为了跟下载源一样能整行隐藏
+   （input 自己 hidden 也行，但 .hidden 与 input[type="text"] 选择器特指度打平后
+   要靠声明顺序取胜，包一层更稳）。 */
+.proxy-manual {
+  display: flex;
+}
+
+.proxy-manual.hidden {
+  display: none;
 }
 
 .grid-2 {

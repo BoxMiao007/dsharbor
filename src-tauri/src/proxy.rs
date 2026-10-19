@@ -144,9 +144,39 @@ fn parse_registry_output(output: &str) -> Option<SystemProxyProbe> {
     })
 }
 
+/// 界面「网络」卡代理段要显示的东西：生效的地址、例外列表与那一行说明。
+///
+/// 界面不自己判对错、也不自己拼文案：地址归一化与提示集中在核心库，
+/// 这里只把探测结果与偏好合起来交给它算。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyState {
+    /// 真正下发的代理地址；`None` 表示这次不注入任何代理变量。
+    pub url: Option<String>,
+    /// 例外列表（系统里那份；回环地址由核心库兜底加在最前面）。
+    pub bypass: Vec<String>,
+    /// 一行说明：生效了就报走哪儿，没生效就说原因。
+    pub hint: String,
+}
+
 /// 按当前设置算出的代理方案（探测结果带缓存）。
 pub fn resolution(prefs: &ShellPrefs) -> ProxyResolution {
     net::resolve_proxy(prefs.proxy_mode, &prefs.proxy_address, &system_probe())
+}
+
+/// 界面展示用的代理状态（探测结果带缓存）。
+pub fn state(prefs: &ShellPrefs) -> ProxyState {
+    state_with(prefs, &system_probe())
+}
+
+/// 同 [`state`]，但探测结果由调用方给——便于不依赖开发机环境做单测。
+fn state_with(prefs: &ShellPrefs, probe: &SystemProxyProbe) -> ProxyState {
+    let resolution = net::resolve_proxy(prefs.proxy_mode, &prefs.proxy_address, probe);
+    ProxyState {
+        hint: net::status_hint(prefs.proxy_mode, &resolution),
+        url: resolution.url,
+        bypass: resolution.bypass,
+    }
 }
 
 /// 这次要注入子进程的全部环境变量：下载源 + 代理，一次算完。
@@ -196,6 +226,39 @@ mod tests {
             probe_from_env(lookup_from(vec![("ALL_PROXY", "socks5://127.0.0.1:1080")])).unwrap();
         assert_eq!(probe.url.as_deref(), Some("socks5://127.0.0.1:1080"));
         assert!(probe.bypass.is_empty());
+    }
+
+    #[test]
+    fn state_reports_the_effective_url_and_explains_the_other_modes() {
+        let probe = SystemProxyProbe {
+            url: Some("127.0.0.1:7890".to_string()),
+            bypass: vec!["*.corp.example".to_string()],
+            source: ProxySource::Env,
+        };
+        let system = ShellPrefs::default();
+        let state = state_with(&system, &probe);
+        assert_eq!(state.url.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(state.bypass, vec!["*.corp.example"]);
+        assert!(state.hint.contains("跟随系统"), "{}", state.hint);
+
+        // 手动模式填坏了：不下发地址，说明里就是那句校验文案。
+        let manual = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+            proxy_address: "socks5://127.0.0.1:1080".to_string(),
+            ..ShellPrefs::default()
+        };
+        let state = state_with(&manual, &probe);
+        assert_eq!(state.url, None);
+        assert!(state.hint.contains("混合端口"), "{}", state.hint);
+
+        // 不走代理：地址为空，说明说清「不注入」。
+        let off = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Off,
+            ..ShellPrefs::default()
+        };
+        let state = state_with(&off, &probe);
+        assert_eq!(state.url, None);
+        assert!(state.hint.contains("不走代理"), "{}", state.hint);
     }
 
     #[cfg(windows)]

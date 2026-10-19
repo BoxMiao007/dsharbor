@@ -294,6 +294,44 @@ pub fn plan_env(registry: Option<&str>, proxy: &ProxyResolution) -> Vec<(String,
     env
 }
 
+/// 把提示翻译成界面那一行中文；正常情况（[`ProxyNote::None`]）返回 `None`，不占地方。
+///
+/// 文案集中在核心库：地址校验的即时提示（[`ProxyUrlError::message`]）与保存后的状态说明
+/// 因此必然是同一句话，不会出现「输入框说 socks 不行、下面那行说别的」的错位。
+pub fn note_text(note: &ProxyNote) -> Option<String> {
+    match note {
+        ProxyNote::None => None,
+        ProxyNote::SystemNotDetected => {
+            Some("跟随系统：系统里没检测到代理设置，请求直连。".to_string())
+        }
+        ProxyNote::ManualInvalid(message) => Some(message.clone()),
+        ProxyNote::ManualSocks => Some(ProxyUrlError::Socks.message()),
+        ProxyNote::Off => Some("不走代理：不向 DSH 下发任何代理环境变量。".to_string()),
+    }
+}
+
+/// 界面「网络」卡代理段那一行说明：说清现在到底走没走代理、走的是哪个。
+///
+/// 与 [`note_text`] 的分工：`note_text` 只说「为什么没生效」，这里是**已生效**也要有一句
+/// 确认（跟随系统时用户看不到系统里配了什么，不告诉他就会以为没起作用）。
+pub fn status_hint(mode: ProxyMode, resolution: &ProxyResolution) -> String {
+    let Some(url) = resolution.url.as_deref() else {
+        // 没生效的三种理由都由 note 解释；Off 与 System 不可能同时为 None 且无提示。
+        return note_text(&resolution.note)
+            .unwrap_or_else(|| "当前没有启用代理，连接直连。".to_string());
+    };
+    let head = match mode {
+        ProxyMode::Manual => format!("手动填写：DSH 与下载都走 {url}"),
+        _ => format!("跟随系统：使用系统里配的代理 {url}"),
+    };
+    let tail = if resolution.bypass.is_empty() {
+        String::new()
+    } else {
+        format!("，系统例外 {} 项一并直连", resolution.bypass.len())
+    };
+    format!("{head}；回环地址始终直连{tail}。")
+}
+
 /// 拼 `NO_PROXY` 的值：回环地址恒在最前，再接用户自己的例外列表（去重、保序）。
 fn no_proxy_value(bypass: &[String]) -> String {
     let mut items: Vec<String> = Vec::new();
@@ -882,6 +920,79 @@ mod tests {
                 .find(|(key, _)| key == "npm_config_noproxy")
                 .map(|(_, value)| value.as_str()),
             Some(value.as_str())
+        );
+    }
+
+    // ---- 提示文案 ----
+
+    #[test]
+    fn note_text_explains_each_state_in_chinese() {
+        // 一切正常时界面不需要额外解释。
+        assert_eq!(note_text(&ProxyNote::None), None);
+        assert!(note_text(&ProxyNote::SystemNotDetected)
+            .unwrap()
+            .contains("没检测到代理"));
+        assert_eq!(
+            note_text(&ProxyNote::ManualSocks).unwrap(),
+            ProxyUrlError::Socks.message()
+        );
+        let invalid = note_text(&ProxyNote::ManualInvalid(ProxyUrlError::Host.message())).unwrap();
+        assert!(invalid.contains("形如 http://127.0.0.1:7890"), "{invalid}");
+        assert!(note_text(&ProxyNote::Off).unwrap().contains("不走代理"));
+        // 界面显示的必须就是 resolve_proxy 产出的这一句，不另拼一套说法。
+        let resolved = resolve_proxy(ProxyMode::Manual, "随便写的", &SystemProxyProbe::none());
+        assert_eq!(
+            note_text(&resolved.note),
+            Some(ProxyUrlError::Encoding.message())
+        );
+        // 地址校验的即时提示与保存后的提示同源：都是 ProxyUrlError 的文案。
+        assert_eq!(
+            normalize_proxy_url("随便写的")
+                .err()
+                .map(|err| err.message()),
+            note_text(&resolved.note)
+        );
+    }
+
+    #[test]
+    fn status_hint_confirms_what_actually_happens() {
+        let working = probe("127.0.0.1:7890", &["*.corp.example"], ProxySource::Env);
+        let system = resolve_proxy(ProxyMode::System, "", &working);
+        let line = status_hint(ProxyMode::System, &system);
+        assert!(
+            line.starts_with("跟随系统：使用系统里配的代理 http://127.0.0.1:7890"),
+            "{line}"
+        );
+        assert!(line.contains("回环地址始终直连"), "{line}");
+        assert!(line.contains("系统例外 1 项"), "{line}");
+
+        let manual = resolve_proxy(
+            ProxyMode::Manual,
+            "192.168.1.9:3128",
+            &SystemProxyProbe::none(),
+        );
+        let line = status_hint(ProxyMode::Manual, &manual);
+        assert!(
+            line.starts_with("手动填写：DSH 与下载都走 http://192.168.1.9:3128"),
+            "{line}"
+        );
+        assert!(!line.contains("系统例外"), "{line}");
+
+        // 没生效时这一行就是 note_text 的那句原因，不再另拼。
+        let none = resolve_proxy(ProxyMode::System, "", &SystemProxyProbe::none());
+        assert_eq!(
+            status_hint(ProxyMode::System, &none),
+            note_text(&ProxyNote::SystemNotDetected).unwrap()
+        );
+        let off = resolve_proxy(ProxyMode::Off, "", &working);
+        assert_eq!(
+            status_hint(ProxyMode::Off, &off),
+            note_text(&ProxyNote::Off).unwrap()
+        );
+        let bad = resolve_proxy(ProxyMode::Manual, "socks5://127.0.0.1:1080", &working);
+        assert_eq!(
+            status_hint(ProxyMode::Manual, &bad),
+            ProxyUrlError::Socks.message()
         );
     }
 

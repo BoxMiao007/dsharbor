@@ -324,6 +324,20 @@ fn save_shell_config(app: tauri::AppHandle, config: settings::ShellConfig) -> Re
     Ok(())
 }
 
+/// 「网络」卡代理段的状态：现在到底走不走代理、走的是哪个地址、例外列表有多大。
+///
+/// async + spawn_blocking：跟随系统时要读环境变量并在 Windows 上跑 `reg.exe`，
+/// 同步命令会把这段算在主线程上（有 30 秒缓存，但仍不动主线程）。
+#[tauri::command]
+async fn proxy_state(app: tauri::AppHandle) -> Result<proxy::ProxyState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let prefs = settings::load(&app).prefs;
+        proxy::state(&prefs)
+    })
+    .await
+    .map_err(|err| format!("读取代理状态失败：{err}"))
+}
+
 /// 「集成」卡命令行集成段的当前状态：开关值、真实 PATH 情况、垫片预览与状态说明。
 ///
 /// async + spawn_blocking：读 PATH 要起 `reg.exe`、探测 dsh 要看磁盘，同步命令会堵主线程。
@@ -1372,6 +1386,7 @@ pub fn run() {
             lifecycle_action,
             load_shell_config,
             save_shell_config,
+            proxy_state,
             profile_port_hint,
             list_profiles,
             open_external,
