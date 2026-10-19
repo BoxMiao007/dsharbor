@@ -124,6 +124,27 @@ const state = {
   },
   /** 重装依赖失败的假开关：设成 true 可预览「命令报错原文带回界面」那条分支。 */
   depsInstallFails: false,
+  /** 插件清单（`plugin_list`）的假数据：按环境名分组。
+      web 是真实环境的缩本（含读写两个内置骨架包、一个手写禁用、桥接）；headless 给
+      一个空数组预览「零插件 + 去安装依赖」；lab 删掉就能预览「读到了但一项也没有」。 */
+  plugins: {
+    web: [
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
+      { name: "@deepseek-ai/dsh-web-app", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
+      { name: "billion-context", entries: ["bili-native"], enabled: true, bridge: false, manual: false, switchable: true },
+      { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true },
+      { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true },
+      { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true },
+      { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true },
+    ],
+    lab: [
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true },
+    ],
+    headless: [],
+    desktop: [],
+  },
   calls: {},
 };
 
@@ -598,6 +619,44 @@ window.__mockUnimplemented = [];
           "已把环境「" + name + "」的补丁层还原成：\\n" + source.path + "\\n（已写回 Windows 上的 cordis.patch.yml）\\n还原前的版本已另存一份，想反悔就再还原它：\\n" + saved + "\\n补丁层要重启 DSH 后才生效。",
         path: saved,
         backups: list,
+      };
+    },
+    // ---- 插件开关 ------------------------------------------------------------
+    plugin_list: (a) => {
+      seen("plugin_list:" + (a && a.name ? a.name : "?"));
+      return (S.plugins && S.plugins[a && a.name]) || [];
+    },
+    plugin_toggle: (a) => {
+      const name = a && a.name;
+      const plugin = a && a.plugin;
+      const enabled = !!(a && a.enabled);
+      seen("plugin_toggle:" + name + "/" + plugin + "/" + (enabled ? "on" : "off"));
+      if (S.session === "running") {
+        throw busyText(enabled ? "打开插件开关" : "关闭插件开关", name);
+      }
+      const list = S.plugins[name] || (S.plugins[name] = []);
+      const item = list.find((it) => it.name === plugin);
+      if (!item) throw "环境「" + name + "」里没有登记插件「" + plugin + "」，可能是清单刚变过，刷新后再试。";
+      if (!item.switchable) throw "读不到「" + plugin + "」在补丁层里的挂载点，壳没法安全地开关它。";
+      item.enabled = enabled;
+      // 开关前自动备份：与后端一样，先备份再写文件，所以列表会跟着长一条。
+      const backups = (S.patchBackups[name] = S.patchBackups[name] || []);
+      const stamp = Math.max(Math.floor(Date.now() / 1000), (backups.length ? backups[backups.length - 1].stamp : 0) + 1);
+      const file = "patch-" + stamp + ".yml";
+      const path = "C:\\\\Users\\\\mock\\\\AppData\\\\Roaming\\\\DSHarbor\\\\backups\\\\patch\\\\host\\\\" + name + "\\\\" + file;
+      backups.push({ name: file, path: path, stamp: stamp });
+      return {
+        message:
+          (enabled
+            ? "已打开「" + plugin + "」的插件开关，重启 DSH 后生效。"
+            : "已关闭「" + plugin + "」的插件开关，重启 DSH 后生效；插件包还在磁盘上，重新打开不需要重新下载。") +
+          "已自动备份补丁层：" + path,
+        backup: path,
+        warning:
+          plugin === "dsharbor-bridge" && !enabled
+            ? "桥接插件已关闭：DSH 每次启动会动态生成登录链接，关掉桥接后壳取不到它，只能从日志里翻。"
+            : null,
+        items: list,
       };
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
