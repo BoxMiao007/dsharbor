@@ -1279,6 +1279,81 @@ html::-webkit-scrollbar {
   padding: 0;
 }
 
+/* 「管理环境」面板：一行一个环境，点一行把它选为后续动作的对象。
+   自绘成按钮而不是原生 radio：这里不是「启动用环境」的单选，而是「要对谁操作」的
+   临时选择，视觉上也该弱于上面那个下拉。 */
+.profile-manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+/* 全局 button 的 8px 22px 内边距在这里太胖（一行只有名字与几个标记），单独收窄。 */
+.profile-manage-list .profile-manage-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(170, 197, 233, 0.16);
+  background: rgba(9, 21, 38, 0.32);
+  font-size: 13px;
+  text-align: left;
+}
+
+.profile-manage-list .profile-manage-item:hover:not(:disabled) {
+  background: rgba(95, 143, 216, 0.16);
+}
+
+/* 选中的那一行用主色描边而不是填色：填色会和「运行中」徽章的语义撞车。 */
+.profile-manage-list .profile-manage-item.is-selected {
+  border-color: #5f8fd8;
+  background: rgba(95, 143, 216, 0.14);
+}
+
+.profile-manage-name-text {
+  color: #eef2fa;
+}
+
+.profile-manage-meta {
+  font-size: 12px;
+  color: #9fb2d8;
+}
+
+.profile-manage-tag {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #ffd47a;
+  background: rgba(255, 201, 92, 0.14);
+}
+
+/* 删除的二次确认行：与动作按钮同宽的一段，视觉上从面板里「浮」出来提醒这是危险动作。 */
+.profile-confirm {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 88, 88, 0.4);
+  background: rgba(255, 88, 88, 0.08);
+}
+
+.profile-confirm .hint {
+  margin: 0 0 8px;
+}
+
+/* 危险动作按钮（删除环境）：常态用语言提示而不是红色禁用色，悬停才亮红。 */
+button.danger {
+  border-color: rgba(255, 88, 88, 0.45);
+  color: #ff9b9b;
+}
+
+button.danger:hover:not(:disabled) {
+  background: rgba(255, 88, 88, 0.16);
+}
+
 /* 会话卡片里的「托盘单击打开」是卡片顶层字段，不跟随启动方式单选组的左缩进 */
 .tray-fields {
   padding-left: 0;

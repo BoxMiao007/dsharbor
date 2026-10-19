@@ -186,6 +186,8 @@ interface ProfileSummary {
   bridgeInstalled: boolean;
   /** 是否登记了网页应用 bundle（决定它能不能起网页界面）。 */
   webCapable: boolean;
+  /** 依赖是否装过（新建/复制出来的环境没有 node_modules）。 */
+  depsInstalled: boolean;
 }
 
 /** 下载源候选：标签用界面上的原文，value 与 Rust 侧 `DownloadSource::as_str()` 一致。 */
@@ -885,6 +887,34 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     </div>
     <p id="profile-note" class="hint hidden"></p>
     <p id="profile-error" class="error hidden"></p>
+    <div class="actions">
+      <button id="btn-profile-manage" class="ghost">管理环境</button>
+    </div>
+    <div id="profile-manage" class="subcard hidden">
+      <span class="subcard-title">管理环境</span>
+      <div id="profile-manage-list" class="profile-manage-list"></div>
+      <div class="fields">
+        <span class="field-label" id="profile-manage-name-label">环境名</span>
+        <input id="profile-manage-name" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lab">
+      </div>
+      <p class="hint">环境名只能用字母、数字和 - _ .，且以字母或数字开头。</p>
+      <div class="actions">
+        <button id="btn-profile-create" class="ghost">新建空白环境</button>
+        <button id="btn-profile-copy" class="ghost">复制所选环境</button>
+        <button id="btn-profile-rename" class="ghost">重命名所选环境</button>
+        <button id="btn-profile-delete" class="ghost danger">删除所选环境</button>
+        <button id="btn-profile-deps" class="ghost hidden">安装依赖</button>
+      </div>
+      <div id="profile-manage-confirm" class="profile-confirm hidden">
+        <p id="profile-manage-confirm-text" class="hint"></p>
+        <div class="actions">
+          <button id="btn-profile-confirm-yes" class="danger">确定删除</button>
+          <button id="btn-profile-confirm-no" class="ghost">取消</button>
+        </div>
+      </div>
+      <p id="profile-manage-note" class="hint hidden"></p>
+      <p id="profile-manage-error" class="error hidden"></p>
+    </div>
   `;
   const profilesSection = cardSection(foldHead("profiles", "环境", profilesSummary), profilesBody);
   // 「网络」卡：下载源与代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
@@ -2394,6 +2424,8 @@ async function main(): Promise<void> {
       }
       fillProfilePicker();
       renderProfilesUI();
+      // 管理面板与下拉看的是同一份环境清单，重读后一起刷新。
+      renderManageUI();
     }
 
     /** 切环境：写配置 → 需要时补装桥接 → 提示重启。不自动重启，免得断掉正在跑的会话。 */
@@ -2454,6 +2486,266 @@ async function main(): Promise<void> {
       renderProfilesUI();
       beginRestartSpin();
       void startOrRestart("restart_dsh");
+    });
+
+    // ---- 管理环境：新建 / 复制 / 重命名 / 删除 ---------------------------------
+    // 四个动作的规则（名字合法性、哪些不能删、依赖目录与锁文件不跟着复制）全在后端，
+    // 界面只负责收集名字、转述后端那句中文说明、刷新列表。
+    const profileManagePanel = $<HTMLElement>("profile-manage");
+    const profileManageList = $<HTMLElement>("profile-manage-list");
+    const profileManageName = $<HTMLInputElement>("profile-manage-name");
+    const profileManageNameLabel = $<HTMLElement>("profile-manage-name-label");
+    const profileManageNote = $<HTMLParagraphElement>("profile-manage-note");
+    const profileManageError = $<HTMLParagraphElement>("profile-manage-error");
+    const profileManageConfirm = $<HTMLElement>("profile-manage-confirm");
+    const profileManageConfirmText = $<HTMLParagraphElement>("profile-manage-confirm-text");
+    const btnProfileManage = $<HTMLButtonElement>("btn-profile-manage");
+    const btnProfileCreate = $<HTMLButtonElement>("btn-profile-create");
+    const btnProfileCopy = $<HTMLButtonElement>("btn-profile-copy");
+    const btnProfileRename = $<HTMLButtonElement>("btn-profile-rename");
+    const btnProfileDelete = $<HTMLButtonElement>("btn-profile-delete");
+    const btnProfileDeps = $<HTMLButtonElement>("btn-profile-deps");
+    const btnProfileConfirmYes = $<HTMLButtonElement>("btn-profile-confirm-yes");
+    const btnProfileConfirmNo = $<HTMLButtonElement>("btn-profile-confirm-no");
+    /** 面板里选中的「操作对象」环境；与「启动用环境」是两件事，互不影响。 */
+    let manageTarget: string | null = null;
+    /** 正在跑的动作（忙时所有按钮置灰，防重复提交）。 */
+    let manageBusy = false;
+    /** 删除的二次确认阶段：非空时确认行显示。 */
+    let managePendingDelete: string | null = null;
+
+    /** 后端返回值：与 Rust 侧 `profile_ops::ProfileOutcome` 对应。 */
+    interface ProfileOutcome {
+      ok: boolean;
+      message: string;
+      name: string;
+      summary: ProfileSummary | null;
+    }
+
+    function setManageNote(text: string | null): void {
+      if (!text) {
+        profileManageNote.textContent = "";
+        profileManageNote.classList.add("hidden");
+        return;
+      }
+      profileManageNote.textContent = text;
+      profileManageNote.classList.remove("hidden");
+    }
+
+    function setManageError(text: string | null): void {
+      if (!text) {
+        profileManageError.textContent = "";
+        profileManageError.classList.add("hidden");
+        return;
+      }
+      profileManageError.textContent = text;
+      profileManageError.classList.remove("hidden");
+    }
+
+    /** 面板里那一行行环境：点一下就把名字填进输入框，后续按钮对它操作。 */
+    function renderManageList(): void {
+      if (profileList.length === 0) {
+        manageTarget = null;
+        profileManageList.innerHTML = `<p class="hint">没有可管理的环境。</p>`;
+        return;
+      }
+      if (!manageTarget || !profileOf(manageTarget)) {
+        manageTarget = profileList[0].name;
+      }
+      profileManageList.innerHTML = profileList
+        .map((item) => {
+          const marks: string[] = [];
+          if (item.name === prefs.profile) {
+            marks.push("当前启动用");
+          }
+          if (!item.depsInstalled) {
+            marks.push("依赖未安装");
+          }
+          if (!item.webCapable) {
+            marks.push("不能起网页");
+          }
+          const selected = item.name === manageTarget ? " is-selected" : "";
+          const tail = marks.length > 0 ? `<span class="profile-manage-tag">${marks.join(" · ")}</span>` : "";
+          return `<button class="profile-manage-item${selected}" data-profile="${item.name}"><span class="profile-manage-name-text">${item.name}</span><span class="profile-manage-meta">${item.plugins} 个插件</span>${tail}</button>`;
+        })
+        .join("");
+      for (const item of profileManageList.querySelectorAll<HTMLButtonElement>(".profile-manage-item")) {
+        item.addEventListener("click", () => {
+          manageTarget = item.dataset.profile ?? null;
+          managePendingDelete = null;
+          renderManageUI();
+        });
+      }
+    }
+
+    function renderManageUI(): void {
+      renderManageList();
+      const target = manageTarget ? profileOf(manageTarget) : null;
+      const hasTarget = target !== null;
+      profileManageNameLabel.textContent = hasTarget ? `新名字（当前「${target.name}」）` : "环境名";
+      profileManageName.placeholder = hasTarget ? `把「${target.name}」改成…` : "例如 lab";
+      for (const btn of [btnProfileCopy, btnProfileRename, btnProfileDelete]) {
+        btn.disabled = manageBusy || !hasTarget;
+      }
+      for (const btn of [btnProfileCreate]) {
+        btn.disabled = manageBusy;
+      }
+      // 「安装依赖」只在选中的环境确实缺依赖时露出来：按钮多摆一颗就多一个疑问。
+      btnProfileDeps.classList.toggle("hidden", !hasTarget || target.depsInstalled);
+      btnProfileDeps.disabled = manageBusy;
+      btnProfileDeps.textContent = manageBusy ? "安装中…" : "安装依赖";
+      // 删除要一次确认：第一次点「删除」只展开确认行，再点一次才真的删。
+      const confirming = managePendingDelete !== null;
+      profileManageConfirm.classList.toggle("hidden", !confirming);
+      if (confirming) {
+        profileManageConfirmText.textContent = `确定删除环境「${managePendingDelete}」？目录与里面的插件配置会被一起删掉，这个操作没法撤销。`;
+      }
+      btnProfileConfirmYes.disabled = manageBusy;
+      btnProfileConfirmNo.disabled = manageBusy;
+    }
+
+    /**
+     * 跑一个生命周期动作：清提示 → 置忙 → 调后端 → 转述结果 → 重读列表。
+     *
+     * `reloadPrefs` 用于重命名：后端可能已经把配置里的环境名改掉了，界面必须重读，
+     * 否则下一次保存配置会把旧名字写回去。
+     */
+    async function runManage(
+      action: () => Promise<ProfileOutcome>,
+      options: { reloadPrefs?: boolean } = {},
+    ): Promise<void> {
+      if (manageBusy) {
+        return;
+      }
+      manageBusy = true;
+      setManageError(null);
+      setManageNote(null);
+      managePendingDelete = null;
+      renderManageUI();
+      try {
+        const outcome = await action();
+        manageTarget = outcome.summary ? outcome.name : null;
+        setManageNote(outcome.message);
+        // 新建/复制/重命名都会改变清单，删掉的更得重读：一律重读一次。
+        await loadProfiles();
+        if (options.reloadPrefs) {
+          await reloadPrefsFromDisk();
+        }
+      } catch (err) {
+        setManageError(String(err));
+      } finally {
+        manageBusy = false;
+        renderManageUI();
+      }
+    }
+
+    /** 配置里的环境名可能被后端改过（重命名/删除当前环境），重读一遍再回写界面。 */
+    async function reloadPrefsFromDisk(): Promise<void> {
+      try {
+        const saved = await invoke<ShellConfig>("load_shell_config");
+        prefs = normalizePrefs(saved);
+        fillProfilePicker();
+        renderProfilesUI();
+      } catch (err) {
+        setManageError(`重读配置失败：${err}`);
+      }
+    }
+
+    async function createSelected(): Promise<ProfileOutcome> {
+      const name = profileManageName.value.trim();
+      const outcome = await invoke<ProfileOutcome>("create_profile", { config: collectConfig(), name });
+      profileManageName.value = "";
+      return outcome;
+    }
+
+    async function copySelected(): Promise<ProfileOutcome> {
+      const source = manageTarget ?? "";
+      const name = profileManageName.value.trim();
+      const outcome = await invoke<ProfileOutcome>("copy_profile", { config: collectConfig(), source, name });
+      profileManageName.value = "";
+      return outcome;
+    }
+
+    async function renameSelected(): Promise<ProfileOutcome> {
+      const oldName = manageTarget ?? "";
+      const name = profileManageName.value.trim();
+      const outcome = await invoke<ProfileOutcome>("rename_profile", {
+        config: collectConfig(),
+        oldName,
+        name,
+      });
+      profileManageName.value = "";
+      return outcome;
+    }
+
+    // 名字要由调用方传进来：runManage 一开始就把确认行清掉，读 managePendingDelete 会拿到空串。
+    async function deleteSelected(name: string): Promise<ProfileOutcome> {
+      return invoke<ProfileOutcome>("delete_profile", { config: collectConfig(), name });
+    }
+
+    async function installDepsSelected(): Promise<ProfileOutcome> {
+      const name = manageTarget ?? "";
+      setManageNote(`正在给「${name}」安装依赖，可能要几分钟…（期间请不要关窗口）`);
+      return invoke<ProfileOutcome>("install_profile_deps", { config: collectConfig(), name });
+    }
+
+    btnProfileManage.addEventListener("click", () => {
+      const open = profileManagePanel.classList.toggle("hidden");
+      btnProfileManage.textContent = open ? "管理环境" : "收起管理";
+      if (!open) {
+        managePendingDelete = null;
+        renderManageUI();
+      }
+    });
+
+    btnProfileCreate.addEventListener("click", () => {
+      void runManage(createSelected);
+    });
+
+    btnProfileCopy.addEventListener("click", () => {
+      void runManage(copySelected);
+    });
+
+    btnProfileRename.addEventListener("click", () => {
+      void runManage(renameSelected, { reloadPrefs: true });
+    });
+
+    // 删除分两拍：第一次只展开确认行，第二次才真删（票要求「一次确认」）。
+    btnProfileDelete.addEventListener("click", () => {
+      if (manageBusy || !manageTarget) {
+        return;
+      }
+      managePendingDelete = manageTarget;
+      setManageError(null);
+      setManageNote(null);
+      renderManageUI();
+    });
+
+    btnProfileConfirmYes.addEventListener("click", () => {
+      const name = managePendingDelete;
+      if (!name) {
+        return;
+      }
+      void runManage(() => deleteSelected(name));
+    });
+
+    btnProfileConfirmNo.addEventListener("click", () => {
+      managePendingDelete = null;
+      renderManageUI();
+    });
+
+    btnProfileDeps.addEventListener("click", () => {
+      void runManage(installDepsSelected);
+    });
+
+    // 环境名输入框回车 = 按当前选中的动作提交不了，只做一件事：
+    // 把默认动作告诉用户（新建），避免回车没反应看起来像坏了。
+    profileManageName.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      btnProfileCreate.click();
     });
 
     // ---- 集成卡片：命令行集成（用户级 PATH + dsh 垫片） ------------------------
