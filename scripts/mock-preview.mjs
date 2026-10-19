@@ -109,6 +109,11 @@ const state = {
       把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。
       把 profilesUnsupported 改成 true 可预览非 Windows 宿主下的「仅在 Windows 宿主可用」。 */
   profilesUnsupported: false,
+  /** 网络卡（`proxy_state`）的假平台标记：改成 true 可预览非 Windows 宿主下
+      整卡换成「仅在 Windows 宿主可用」的样子。 */
+  networkUnsupported: false,
+  /** 非空时 `save_shell_config` 按原文报错：预览「代理地址填错被后端拒收」那条路径。 */
+  rejectShellSave: null,
   profiles: [
     { name: "web", plugins: 17, bridgeInstalled: true, webCapable: true, depsInstalled: true },
     { name: "lab", plugins: 4, bridgeInstalled: false, webCapable: true, depsInstalled: true },
@@ -389,7 +394,11 @@ window.__mockUnimplemented = [];
       ...JSON.parse(JSON.stringify(S.savedShell)),
     }),
     // 保存链路上看得到什么：存进 S.lastSavedShell，预览页控制台可查六个新字段有没有被带上。
+    // S.rejectShellSave 有值（一段中文）时假装后端拒收这份配置——预览「代理地址填错、
+    // 提示行显示拒绝理由」那条路径用。
     save_shell_config: (a) => {
+      // 真后端的 Err(String) 到了界面就是一段字符串（没有 Error 前缀），这里也照原样拒。
+      if (S.rejectShellSave) return Promise.reject(S.rejectShellSave);
       S.lastSavedShell = a && a.config;
       return null;
     },
@@ -484,7 +493,23 @@ window.__mockUnimplemented = [];
       } else {
         hint = "跟随系统：系统里没检测到代理设置，请求直连。";
       }
-      return { url: url, bypass: url === null ? [] : bypass, hint: hint };
+      // 与真后端同一个口径：平台标记由后端给，自检失败时界面拼在结论后面的那句
+      // 「当前代理：…」也在这里算（核心库 net::proxy_state_text 的镜像）。
+      const stateText =
+        url !== null
+          ? "当前代理：" + url + (mode === "manual" ? "（手动填写）" : "（跟随系统）")
+          : mode === "off"
+            ? "当前代理：不走代理"
+            : mode === "manual"
+              ? "当前代理：还没填地址"
+              : "当前代理：跟随系统（系统里没检测到代理）";
+      return {
+        supported: !S.networkUnsupported,
+        url: url,
+        bypass: url === null ? [] : bypass,
+        hint: hint,
+        stateText: stateText,
+      };
     },
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),

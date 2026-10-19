@@ -34,16 +34,23 @@ pub struct ProfileOutcome {
     pub summary: Option<ProfileSummary>,
 }
 
+/// WSL 里目录存不存在。
+///
+/// Host 侧的 `Path::is_dir` 在 WSL 上不成立，只能进发行版里问一句；
+/// `profile_exists` 与 `deps_installed` 都要问同一件事，写法抽在这里一处。
+/// 注意壳只能看 `stdout` 的 `yes`：`wsl.exe` 自身的退出码在这里不代表结果。
+fn wsl_dir_exists(distro: &str, dir: &str) -> Result<bool, String> {
+    let script = format!("[ -d '{dir}' ] && echo yes || echo no");
+    let out = plugin::wsl_script(distro, &script, PROFILE_FS_TIMEOUT)?;
+    Ok(out.trim() == "yes")
+}
+
 /// 某个环境目录是否存在。
 pub fn profile_exists(target: &Target, name: &str) -> Result<bool, String> {
     let dir = plugin::profile_dir(target, name)?;
     match target {
         Target::Host => Ok(Path::new(&dir).is_dir()),
-        Target::Wsl { distro } => {
-            let script = format!("[ -d '{dir}' ] && echo yes || echo no");
-            let out = plugin::wsl_script(distro, &script, PROFILE_FS_TIMEOUT)?;
-            Ok(out.trim() == "yes")
-        }
+        Target::Wsl { distro } => wsl_dir_exists(distro, &dir),
     }
 }
 
@@ -52,10 +59,7 @@ fn deps_installed(target: &Target, dir: &str) -> bool {
     match target {
         Target::Host => Path::new(dir).join("node_modules").is_dir(),
         Target::Wsl { distro } => {
-            let script = format!("[ -d '{dir}/node_modules' ] && echo yes || echo no");
-            plugin::wsl_script(distro, &script, PROFILE_FS_TIMEOUT)
-                .map(|out| out.trim() == "yes")
-                .unwrap_or(false)
+            wsl_dir_exists(distro, &join(target, dir, "node_modules")).unwrap_or(false)
         }
     }
 }

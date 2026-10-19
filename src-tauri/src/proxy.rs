@@ -9,14 +9,14 @@
 //!
 //! 为什么走 `reg query` 而不是引第三方 crate：只为读三个值，多一个依赖不划算；
 //! 输出解析（`ProxyEnable` / `ProxyServer` / `ProxyOverride`）已经有现成的
-//! `path_shim::parse_reg_query_value` 与核心库里的 `parse_reg_dword` 等纯函数。
+//! `registry_query::parse_reg_query_value` 与核心库里的 `parse_reg_dword` 等纯函数。
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use dsharbor_core::net::{self, ProxyResolution, ProxySource, SystemProxyProbe};
-use dsharbor_core::path_shim::parse_reg_query_value;
 use dsharbor_core::prefs::{DownloadSource, ShellPrefs};
+use dsharbor_core::registry_query::parse_reg_query_value;
 
 /// 系统代理探测结果的缓存有效期。
 const PROBE_TTL: Duration = Duration::from_secs(30);
@@ -151,12 +151,18 @@ fn parse_registry_output(output: &str) -> Option<SystemProxyProbe> {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyState {
+    /// 这台宿主能不能真正生效（v1 只做 Windows）：false 时界面上整卡只留一句说明。
+    /// 与环境卡的 `ProfileListing.supported` 同一个思路：平台判断在后端做，界面只读标记。
+    pub supported: bool,
     /// 真正下发的代理地址；`None` 表示这次不注入任何代理变量。
     pub url: Option<String>,
     /// 例外列表（系统里那份；回环地址由核心库兜底加在最前面）。
     pub bypass: Vec<String>,
     /// 一行说明：生效了就报走哪儿，没生效就说原因。
     pub hint: String,
+    /// 当前代理状态的一句话（「当前代理：…」）。
+    /// 自检失败时要把它拼在后面：光说「不通」而不说「当时走的是哪条路」，用户改完也不知道对不对。
+    pub state_text: String,
 }
 
 /// 按当前设置算出的代理方案（探测结果带缓存）。
@@ -166,14 +172,16 @@ pub fn resolution(prefs: &ShellPrefs) -> ProxyResolution {
 
 /// 界面展示用的代理状态（探测结果带缓存）。
 pub fn state(prefs: &ShellPrefs) -> ProxyState {
-    state_with(prefs, &system_probe())
+    state_with(prefs, &system_probe(), cfg!(windows))
 }
 
-/// 同 [`state`]，但探测结果由调用方给——便于不依赖开发机环境做单测。
-fn state_with(prefs: &ShellPrefs, probe: &SystemProxyProbe) -> ProxyState {
+/// 同 [`state`]，但探测结果与平台标记由调用方给——便于不依赖开发机环境做单测。
+fn state_with(prefs: &ShellPrefs, probe: &SystemProxyProbe, supported: bool) -> ProxyState {
     let resolution = net::resolve_proxy(prefs.proxy_mode, &prefs.proxy_address, probe);
     ProxyState {
+        supported,
         hint: net::status_hint(prefs.proxy_mode, &resolution),
+        state_text: net::proxy_state_text(prefs.proxy_mode, &resolution),
         url: resolution.url,
         bypass: resolution.bypass,
     }
@@ -236,7 +244,7 @@ mod tests {
             source: ProxySource::Env,
         };
         let system = ShellPrefs::default();
-        let state = state_with(&system, &probe);
+        let state = state_with(&system, &probe, true);
         assert_eq!(state.url.as_deref(), Some("http://127.0.0.1:7890"));
         assert_eq!(state.bypass, vec!["*.corp.example"]);
         assert!(state.hint.contains("跟随系统"), "{}", state.hint);
@@ -247,7 +255,7 @@ mod tests {
             proxy_address: "socks5://127.0.0.1:1080".to_string(),
             ..ShellPrefs::default()
         };
-        let state = state_with(&manual, &probe);
+        let state = state_with(&manual, &probe, true);
         assert_eq!(state.url, None);
         assert!(state.hint.contains("混合端口"), "{}", state.hint);
 
@@ -256,9 +264,45 @@ mod tests {
             proxy_mode: dsharbor_core::prefs::ProxyMode::Off,
             ..ShellPrefs::default()
         };
-        let state = state_with(&off, &probe);
+        let state = state_with(&off, &probe, true);
         assert_eq!(state.url, None);
         assert!(state.hint.contains("不走代理"), "{}", state.hint);
+    }
+
+    #[test]
+    fn the_host_platform_flag_rides_along_with_the_state() {
+        // 非 Windows 宿主上网络图标不能装「生效了」：界面把整卡换成一句说明，
+        // 标记由后端给（跟环境卡的 ProfileListing.supported 同一个思路）。
+        let probe = SystemProxyProbe {
+            url: Some("127.0.0.1:7890".to_string()),
+            bypass: Vec::new(),
+            source: ProxySource::Env,
+        };
+        let prefs = ShellPrefs::default();
+        assert!(state_with(&prefs, &probe, true).supported);
+        assert!(!state_with(&prefs, &probe, false).supported);
+    }
+
+    #[test]
+    fn state_carries_the_one_line_proxy_summary_for_failure_texts() {
+        // 自检失败时界面要把这句拼在后面，而文案只在核心库一处定。
+        let probe = SystemProxyProbe {
+            url: Some("127.0.0.1:7890".to_string()),
+            bypass: Vec::new(),
+            source: ProxySource::Env,
+        };
+        assert_eq!(
+            state_with(&ShellPrefs::default(), &probe, true).state_text,
+            "当前代理：http://127.0.0.1:7890（跟随系统）"
+        );
+        let off = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Off,
+            ..ShellPrefs::default()
+        };
+        assert_eq!(
+            state_with(&off, &probe, true).state_text,
+            "当前代理：不走代理"
+        );
     }
 
     #[cfg(windows)]

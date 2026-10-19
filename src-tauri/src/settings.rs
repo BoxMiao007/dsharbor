@@ -133,6 +133,7 @@ pub fn load(app: &tauri::AppHandle) -> ShellConfig {
 /// 写盘（先过核心库校验：非法输入不会落盘）。
 fn store(app: &tauri::AppHandle, config: &ShellConfig) -> Result<(), String> {
     dsharbor_core::launch::validate(&config.launch)?;
+    validate_proxy(&config.prefs)?;
     let path = path(app)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|err| format!("创建配置目录失败：{err}"))?;
@@ -140,6 +141,27 @@ fn store(app: &tauri::AppHandle, config: &ShellConfig) -> Result<(), String> {
     let text =
         serde_json::to_string_pretty(config).map_err(|err| format!("序列化配置失败：{err}"))?;
     std::fs::write(&path, text).map_err(|err| format!("写入配置失败：{err}"))
+}
+
+/// 代理地址的落盘前校验。
+///
+/// 只校验「手动模式且真的填了东西」这一种：
+/// - 其它模式下留着的地址只是没被清理的残留，拦住它会让「切回系统代理后啥也没改却存不了盘」；
+/// - 手动模式下空地址是刚切过来的中间状态，界面已经用提示行说了「还没填」，
+///   不需要用「整份配置存不下去」再拦一次。
+///
+/// 真正要拦的是「填了一个用不出去的地址」：这种值一经落盘就会静默带到代理变量、
+/// 下载源自检与命令行接入上，事后很难看出是哪一步坏的。
+fn validate_proxy(prefs: &ShellPrefs) -> Result<(), String> {
+    if prefs.proxy_mode != dsharbor_core::prefs::ProxyMode::Manual {
+        return Ok(());
+    }
+    if prefs.proxy_address.trim().is_empty() {
+        return Ok(());
+    }
+    dsharbor_core::net::normalize_proxy_url(&prefs.proxy_address)
+        .map(|_| ())
+        .map_err(|err| format!("代理地址填错了：{}", err.message()))
 }
 
 /// 保存整份设置（界面自动保存用）。
@@ -269,5 +291,64 @@ mod tests {
             "字符串照读"
         );
         assert!(config.prefs.cli_integration, "布尔照读");
+    }
+
+    /// 手动模式填了个写不出来的地址：存盘前就要被拦住，不能落盘。
+    ///
+    /// 不拦的话坏地址会静默写进 config.json，下次启动依次污染代理变量、
+    /// 下载源自检与「命令行接入」，排查时看不出是哪一步坏的。
+    #[test]
+    fn a_broken_manual_proxy_address_is_refused_before_it_is_written() {
+        let prefs = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+            proxy_address: "socks5://127.0.0.1:7890".into(),
+            ..ShellPrefs::default()
+        };
+
+        let err = validate_proxy(&prefs).expect_err("socks 地址在手动模式下应被拒");
+        assert!(err.contains("http"), "拒绝理由要直接说人话，实际是：{err}");
+    }
+
+    /// 手动模式但还没填地址：这是界面上的中间状态（刚切到手动），不能拦住整份配置。
+    #[test]
+    fn an_empty_manual_proxy_address_is_not_a_save_blocker() {
+        let prefs = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+            proxy_address: "  ".into(),
+            ..ShellPrefs::default()
+        };
+
+        assert!(validate_proxy(&prefs).is_ok());
+    }
+
+    /// 别的模式下留着的地址只是残留（切回系统代理后再也没碰过它），不该挡整份配置保存。
+    #[test]
+    fn a_leftover_address_in_other_modes_does_not_block_saving() {
+        for mode in [
+            dsharbor_core::prefs::ProxyMode::System,
+            dsharbor_core::prefs::ProxyMode::Off,
+        ] {
+            let prefs = ShellPrefs {
+                proxy_mode: mode,
+                proxy_address: "socks5://127.0.0.1:7890".into(),
+                ..ShellPrefs::default()
+            };
+            assert!(
+                validate_proxy(&prefs).is_ok(),
+                "{mode:?} 模式下的残留地址不该挡住保存"
+            );
+        }
+    }
+
+    /// 手动模式下能归一化的地址（不写协议、纯主机名）也算合格：归一化规则跟下发同一套。
+    #[test]
+    fn a_manual_address_that_normalizes_is_accepted() {
+        let prefs = ShellPrefs {
+            proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
+            proxy_address: "127.0.0.1:7890".into(),
+            ..ShellPrefs::default()
+        };
+
+        assert!(validate_proxy(&prefs).is_ok());
     }
 }

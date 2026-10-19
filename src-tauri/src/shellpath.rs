@@ -120,7 +120,7 @@ fn read_user_path() -> Result<String, String> {
     command.args(["query", r"HKCU\Environment", "/v", "Path"]);
     let (code, output) = crate::plugin::run_capture(command, REG_TIMEOUT)?;
     if code == 0 {
-        return path_shim::parse_reg_query_value(&output, "Path")
+        return dsharbor_core::registry_query::parse_reg_query_value(&output, "Path")
             .ok_or_else(|| format!("读不懂注册表输出：{}", output.trim()));
     }
     // 键/值不存在（全新用户、PATH 被清空过）当作空 PATH；其它失败要如实报错，
@@ -186,10 +186,15 @@ pub fn state(app: &tauri::AppHandle, config: &LaunchConfig, enabled: bool) -> Cl
     let shim_path_text = shim_path.display().to_string();
     let manual_command = path_shim::manual_command(&bin_dir);
 
-    let raw_path = if supported {
-        read_user_path().unwrap_or_default()
+    let (raw_path, path_error) = if supported {
+        // 读不到 PATH（注册表被策略锁住、reg.exe 不在、输出读不懂）不能静静当成空 PATH：
+        // 「空 PATH」会让下面每条判断都得出「没接入」，而用户看到的正是「重新开关一次」。
+        match read_user_path() {
+            Ok(value) => (value, None),
+            Err(err) => (String::new(), Some(err)),
+        }
     } else {
-        String::new()
+        (String::new(), None)
     };
     let path_for_scan = expanded_path(&raw_path);
     let on_path = path_shim::path_has_entry(&raw_path, &bin_dir);
@@ -228,6 +233,7 @@ pub fn state(app: &tauri::AppHandle, config: &LaunchConfig, enabled: bool) -> Cl
         message: String::new(),
     };
     state.message = state_message(&state);
+    apply_path_error(&mut state, path_error.as_deref());
     state
 }
 
@@ -263,6 +269,21 @@ fn state_message(state: &CliIntegrationState) -> String {
         return "开关已关闭，垫片目录也不在用户 PATH 里。".to_string();
     }
     "开关关闭：终端里的 dsh 与壳无关。".to_string()
+}
+
+/// 把「读不到用户 PATH」换成整句状态说明。
+///
+/// 读失败时 `on_path` 恒为 false，`state_message` 会跟着落在那句「重新开关一次即可补回」上；
+/// 但真正的原因在注册表，重开多少次都一样，那句建议还会把人带偏。所以这里不用
+/// 「加一句」而是「换掉整句」：陈述已知的那条事实，再指向一定能用的手动命令。
+fn apply_path_error(state: &mut CliIntegrationState, err: Option<&str>) {
+    let Some(err) = err else {
+        return;
+    };
+    state.on_path = false;
+    state.message = format!(
+        "读不到用户 PATH：{err}。这一栏的 PATH 状态和开关都不作数，下面那句手动命令仍然可用。"
+    );
 }
 
 /// 打开 / 关闭命令行接入：同时处理垫片文件与用户 PATH 的那一条。
@@ -398,5 +419,27 @@ mod tests {
         assert!(state_message(&fixture(true, true, true, None, None)).contains("新开一个终端"));
         assert!(state_message(&fixture(true, false, false, None, None)).contains("开关关闭"));
         assert!(state_message(&fixture(true, true, false, None, None)).contains("没有垫片目录"));
+    }
+
+    #[test]
+    fn a_path_read_error_is_named_instead_of_looking_like_an_empty_path() {
+        // 读不到 PATH 时不能默默当成「空 PATH」：那会让界面说「重新开关一次」，
+        // 而真正的原因（注册表读不了）在重开多少次都一样存在。
+        let mut state = fixture(true, true, false, None, None);
+        state.message = state_message(&state);
+        apply_path_error(&mut state, Some("读取用户 PATH 失败：拒绝访问"));
+        assert!(state.message.starts_with("读不到用户 PATH："));
+        assert!(state.message.contains("拒绝访问"));
+        assert!(!state.message.contains("重新开关一次"));
+        assert!(!state.on_path);
+    }
+
+    #[test]
+    fn no_path_error_leaves_the_message_alone() {
+        let mut state = fixture(true, false, false, None, None);
+        state.message = state_message(&state);
+        let before = state.message.clone();
+        apply_path_error(&mut state, None);
+        assert_eq!(state.message, before);
     }
 }
