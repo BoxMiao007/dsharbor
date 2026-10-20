@@ -3,10 +3,26 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import logoUrl from "./assets/logo.png";
 import "./style.css";
-// 主题样式放在独立文件里，用 ?inline 读成字符串：切换主题只是改 <style> 的内容，
-// 不重载页面；样式文件本身保持独立成篇，与 design/ui-candidates/ 下的候选稿对得上。
-import nativeDarkCss from "./themes/native-dark.css?inline";
-import nativeLayoutCss from "./themes/native-layout.css?inline";
+
+/** 左侧导航的五个分区图标：统一 24 单位视框、描边 1.55，与标题栏的浅/深图标同源。 */
+const ICON_LAUNCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5 3 21l4.5-1.5" /><path d="M14 4c3.5-1 6 1.5 5 5-1.2 4.2-5.6 7.6-8.4 9.1L8 15.4C9.5 12.6 11.3 5.2 14 4Z" /><circle cx="14.6" cy="9.4" r="1.6" /></svg>`;
+const ICON_ENV = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5" /><path d="M12 12v9" /></svg>`;
+const ICON_INTEG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2.5" /><path d="m6.5 10 2.5 2.5L6.5 15" /><path d="M12 15.5h5" /></svg>`;
+const ICON_TRAYNET = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="10" r="6.5" /><path d="M5.5 10h13" /><path d="M12 3.5a10.5 10.5 0 0 1 2.6 6.5 10.5 10.5 0 0 1-2.6 6.5 10.5 10.5 0 0 1-2.6-6.5A10.5 10.5 0 0 1 12 3.5z" /><path d="M4 19.5h4l1.2 2h5.6l1.2-2h4" /></svg>`;
+const ICON_ABOUT = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" /></svg>`;
+
+/** 标题栏那颗浅/深切换图标：显示的是「点下去会变成什么」，不是当前状态。 */
+const ICON_SUN = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" /></svg>`;
+const ICON_MOON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>`;
+
+/** 左侧导航的五个分区：导航按钮与面板标题都按这份表生成，顺序即显示顺序。 */
+const PANELS: ReadonlyArray<{ key: PanelKey; label: string; icon: string }> = [
+  { key: "launch", label: "启动方式", icon: ICON_LAUNCH },
+  { key: "env", label: "环境", icon: ICON_ENV },
+  { key: "integ", label: "集成", icon: ICON_INTEG },
+  { key: "traynet", label: "托盘与网络", icon: ICON_TRAYNET },
+  { key: "about", label: "关于", icon: ICON_ABOUT },
+];
 
 /** 标题栏三个窗口图标：10px 见方的细线 SVG，形状统一收在 9px 见方内、
     描边 1.2px（见 .win-btn svg），描边色跟 currentColor——改用矢量后
@@ -80,8 +96,8 @@ interface DistroInfo {
 /** 与 Rust 侧 `settings::TrayClick` 对应：托盘单击打开哪个窗口。 */
 type TrayClick = "launcher" | "dsh";
 
-/** 可折叠的卡片：会话、启动方式、通用设置、桥接插件、环境、网络、集成、关于。 */
-type CardKey = "session" | "modes" | "common" | "bridge" | "profiles" | "network" | "integrations" | "about";
+/** 左侧导航的五个分区：点哪个，右侧面板就显哪一块（选择记在 localStorage）。 */
+type PanelKey = "launch" | "env" | "integ" | "traynet" | "about";
 
 /** 与 Rust 侧 `dsharbor_core::prefs::DownloadSource` 对应：从哪儿取 DSH 包。 */
 type DownloadSource = "inherit" | "mirror" | "official";
@@ -491,7 +507,10 @@ class Picker {
     document.addEventListener("pointerdown", this.onDocumentPointerDown);
   }
 
-  /** 摘掉挂在 document 上的监听：换主题重建界面时旧实例要清掉，否则越积越多。 */
+  /**
+   * 摘掉挂在 document 上的监听。界面只在启动时生成一次，正常路径用不到；
+   * 留着是给「同一页里重建 DOM」的场景兜底（否则旧实例的监听会越积越多、一起关弹层）。
+   */
   dispose(): void {
     document.removeEventListener("pointerdown", this.onDocumentPointerDown);
     this.close();
@@ -568,15 +587,34 @@ class Picker {
     this.button.setAttribute("aria-expanded", "true");
     // 绝对定位的弹层会把文档净高撑大，页面跟着上下跳（维护者要求下拉框展开不得撑大界面）：
     // 下方空间不够就向上翻转，并把高度压到翻转方向能放下的范围里，保证弹层始终在视口内。
+    // 界面改版后面板本身是滚动容器（.panel { overflow-y: auto }），会比视口先剪掉弹层，
+    // 所以可用空间要跟裁剪祖先取交集，不能只看窗口高度。
     const rect = this.button.getBoundingClientRect();
+    const bounds = this.clipBounds();
     const gap = 6;
-    const below = window.innerHeight - rect.bottom - gap - 8;
-    const above = rect.top - gap - 8;
+    const below = bounds.bottom - rect.bottom - gap - 8;
+    const above = rect.top - bounds.top - gap - 8;
     const wanted = Math.min(this.list.scrollHeight, 260);
     const flipUp = below < wanted && above > below;
     this.list.classList.toggle("up", flipUp);
     this.list.style.maxHeight = `${Math.max(120, Math.round(Math.min(wanted, flipUp ? above : below)))}px`;
     this.list.querySelector<HTMLElement>('.picker-option[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** 弹层能占的上下边界：视口，再与最近的滚动/隐藏祖先求交。 */
+  private clipBounds(): { top: number; bottom: number } {
+    let top = 0;
+    let bottom = window.innerHeight;
+    for (let node = this.root.parentElement; node; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (style.overflowY === "visible") {
+        continue;
+      }
+      const box = node.getBoundingClientRect();
+      top = Math.max(top, box.top);
+      bottom = Math.min(bottom, box.bottom);
+    }
+    return { top, bottom };
   }
 
   private close(): void {
@@ -632,43 +670,34 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 }
 
-/* ==================== 界面主题 ====================
-   三个主题只差外观与排版，内容（字段、文案、id）完全一致：
-     classic    原版雾光蓝（src/style.css，也就是原来的界面）
-     nativeDark 原版排版 ＋ themes/native-dark.css（候选 I 的外观）
-     native     上一套外观 ＋ themes/native-layout.css（候选 I 的排版，含系统标题栏）
+/* ==================== 浅色 / 深色 ====================
+   只有两种外观，差别全在 src/style.css 里的 CSS 变量上：切换时只改
+   <html data-mode>，不重建界面、不重载页面。 */
 
-   样式由 ?inline 读成字符串塞进 <style id="theme-style">，而不是静态 import：
-   只有当前主题的规则在页面里，且切换主题不重载页面。 */
+/** 外观模式。 */
+type ThemeId = "dark" | "light";
 
-/** 界面主题。 */
-type ThemeId = "classic" | "nativeDark" | "native";
-
-/** 主题记在 localStorage（折叠状态 dsharbor.ui.cardCollapsed 也是这么存的）。
- *  index.html 的内联脚本复写了这个键名（静态脚本没法 import），改键名/主题名两处同步。 */
+/** 外观记在 localStorage。index.html 的内联脚本复写了这个键名（静态脚本没法 import），
+    改键名或模式名时两处同步。 */
 const THEME_KEY = "dsharbor.ui.theme";
 
-const THEME_CHOICES: ReadonlyArray<{ value: ThemeId; label: string }> = [
-  { value: "classic", label: "原版（雾光蓝）" },
-  { value: "nativeDark", label: "原生暗色（保持原版排版）" },
-  { value: "native", label: "系统原生（含排版与标题栏）" },
-];
+/** 旧版本存的是经典主题名：换版本后沿用用户的明暗偏好，而不是回落到默认。 */
+const LEGACY_DARK_THEMES = new Set(["nativeDark", "native"]);
 
-function isThemeId(value: unknown): value is ThemeId {
-  return typeof value === "string" && THEME_CHOICES.some((choice) => choice.value === value);
-}
-
-/** 已保存的主题；没存过、被改坏或存储被禁用时回落原版。 */
+/** 已保存的外观；没存过、被改坏或存储被禁用时回落到深色。 */
 function readStoredTheme(): ThemeId {
   try {
     const saved = window.localStorage.getItem(THEME_KEY);
-    if (isThemeId(saved)) {
+    if (saved === "dark" || saved === "light") {
       return saved;
     }
+    if (saved !== null && LEGACY_DARK_THEMES.has(saved)) {
+      return "dark";
+    }
   } catch {
-    // 隐私模式等场景下读不到，按原版走。
+    // 隐私模式等场景下读不到，按默认走。
   }
-  return "classic";
+  return "dark";
 }
 
 /** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
@@ -711,7 +740,7 @@ function isStarting(status: SessionStatus): boolean {
  * 收场信号：徽章离开「启动中」（运行中就绪 / 启动失败）→ 正常收工；点「停止」主动打断 → 立即停；
  * 30 秒上限 → 兜底停（登录链接一直不就绪时别转下去）。
  * 最短转满 700ms：重启快到轮询都没看见「启动中」时也至少给出一圈反馈。
- * 状态放模块级：切主题会把整个界面重建一次，转动要跨重建继续，计时不重来。
+ * 状态放模块级：界面元素可能被重建，转动要跨重建继续，计时不重来。
  */
 // 与 src/style.css 的 --spin-ms（700ms）同值不同责：那边是一圈转动的时长，这里是收场前给足的最短反馈；
 // 改转速时两处一起检查。
@@ -785,49 +814,29 @@ function updateRestartSpin(status: SessionStatus, starting: boolean): void {
   }, remaining);
 }
 
-/** 「原生」类的主题：外观照搬候选 I（它俩还共用一处差别：端口带上下箭头）。 */
-function isNativeLook(theme: ThemeId): boolean {
-  return theme !== "classic";
+/** 把外观贴到 <html>：src/style.css 里 html[data-mode="dark"|"light"] 两套变量据此生效。 */
+function applyMode(mode: ThemeId): void {
+  document.documentElement.dataset.mode = mode;
 }
 
-/** 「系统原生」主题：连排版一起换（hero 页头、折叠分组、系统标题栏）。 */
-function isNativeLayout(theme: ThemeId): boolean {
-  return theme === "native";
+/** 面板头：左侧导航切到哪个分区，右侧面板就显示哪一块。 */
+function panelHead(title: string, summary = ""): string {
+  return `<div class="panel-head">
+    <h2>${title}</h2>${summary}
+  </div>`;
 }
 
-/** 当前主题要注入的样式：原版全在 src/style.css 里，这里一条都不要；
-    另外两套在原版之上叠主题样式（「系统原生」多一层排版）。 */
-function themeCss(theme: ThemeId): string {
-  if (!isNativeLook(theme)) {
-    return "";
-  }
-  return isNativeLayout(theme) ? `${nativeDarkCss}\n${nativeLayoutCss}` : nativeDarkCss;
-}
-
-/** 折叠分组头：原生排版里每个分组都用它，原版只有「启动方式」「桥接插件」「环境」「网络」「集成」用。 */
-function foldHead(key: string, title: string, summary = ""): string {
-  return `<h2 class="card-head">
-    <button id="card-toggle-${key}" class="card-toggle" aria-expanded="true"><span class="chev">▸</span>${title}${summary}</button>
-  </h2>`;
-}
-
-function plainHead(title: string): string {
-  return `<h2>${title}</h2>`;
-}
-
-function cardSection(head: string, body: string): string {
-  return `<section class="card">
+/** 面板外壳：`<section class="panel" data-panel="…">`，未选中时由 CSS 隐藏。 */
+function panelSection(key: PanelKey, head: string, body: string): string {
+  return `<section class="panel" data-panel="${key}">
   ${head}
-  <div class="card-body">${body}</div>
+  <div class="panel-body">${body}</div>
 </section>`;
 }
 
-/** 界面骨架。内容在三个主题里一字不差，只有容器不同：原生排版把卡片拆成更细的
-    折叠分组、页头换成 hero（候选 I 把「停止 / 重启」摆在 hero 右侧）。 */
-function buildHtml(info: AppInfo, theme: ThemeId): string {
-  const nativeLook = isNativeLook(theme);
-  const nativeLayout = isNativeLayout(theme);
-
+/** 界面骨架：标题栏 + 上方一张窄卡片（品牌与状态、四个主操作）+ 下方一张主卡片
+    （左侧分区导航 + 右侧面板）。所有可交互元素的 id 不变，绑定代码共用。 */
+function buildHtml(info: AppInfo): string {
   const titlebar = `
     <!-- 自绘标题栏（tauri.conf.json 里 decorations: false）：整条可拖动，
          按钮只发窗口命令，关闭走的还是原生关闭那条路（Rust 侧转轻量模式）。 -->
@@ -836,28 +845,28 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
         <img class="titlebar-logo" src="${logoUrl}" alt="" draggable="false" />DSHarbor
       </span>
       <div class="titlebar-buttons">
+        <button id="mode-btn" class="mode-btn" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}</button>
         <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">${ICON_MINIMIZE}</button>
         <button id="win-max" class="win-btn" type="button" title="最大化" aria-label="最大化">${ICON_MAXIMIZE}</button>
         <button id="win-close" class="win-btn win-close" type="button" title="关闭窗口（DSH 继续运行）" aria-label="关闭">${ICON_CLOSE}</button>
       </div>
     </div>
   `;
-  const h1Line = `
-    <h1>${info.name}</h1>
-  `;
-  const tagline = `
-    <p class="tagline">DSH Web 的桌面壳</p>
-  `;
-  const lightHint = `
-    <p class="light-hint">关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻；单击托盘图标随时回来（关闭后多久进入、打开哪个窗口均可在下面设置）。</p>
-  `;
-  const badges = `
-    <div class="status-row">
-      <span id="login-badge" class="badge badge-stopped"><span id="login-text">登录等待中</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="登录链接说明" data-tip="登录链接就绪后即可打开 DSH 界面">!</span></span>
-      <span id="status-badge" class="badge badge-stopped"><span id="status-spinner" class="spinner hidden"></span><span id="status-text">已停止</span></span>
-      <span id="version-badge" class="badge badge-version" title="每次成功启动 DSH 后自动读取">${SPARKLE_SVG}<span id="version-text">DSH 版本未知</span></span>
-      <span class="status-meta">PID：<b id="status-pid">—</b></span>
-      <span class="status-meta">端口：<b id="status-port">—</b></span>
+  const tagline = `<p class="tagline">DSH Web 的桌面壳</p>`;
+  const headLine = `
+    <div class="head-line">
+      <img class="head-logo" src="${logoUrl}" alt="" draggable="false" />
+      <div class="head-text">
+        <h1>${info.name}</h1>
+        ${tagline}
+      </div>
+      <div class="status-row">
+        <span id="login-badge" class="badge badge-stopped"><span id="login-text">登录等待中</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="登录链接说明" data-tip="登录链接就绪后即可打开 DSH 界面">!</span></span>
+        <span id="status-badge" class="badge badge-stopped"><span id="status-spinner" class="spinner hidden"></span><span id="status-text">已停止</span></span>
+        <span id="version-badge" class="badge badge-version" title="每次成功启动 DSH 后自动读取">${SPARKLE_SVG}<span id="version-text">DSH 版本未知</span></span>
+        <span class="status-meta">PID <b id="status-pid">—</b></span>
+        <span class="status-meta">监听 <b id="status-port">—</b></span>
+      </div>
     </div>
   `;
   // 会话区共用件：三个主题同一份标记，id 不变，绑定代码共用。
@@ -902,18 +911,9 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <p class="hint">关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。</p>
     </div>
   `;
-  const modesSummary = `
-    <span id="modes-summary" class="badge badge-stopped card-summary">官方 npx 命令</span>
-  `;
-  const bridgeSummary = `
-    <span id="bridge-summary" class="badge badge-stopped card-summary">读取中…</span>
-  `;
   // 「环境」卡：选当前启动用哪一份 DSH 环境（profile）。
   // 下拉只列能起网页界面的环境（官方桌面端专用目录整份隐藏，见核心库 profiles.rs）。
   // 切换只写配置、不自动重启：正在跑的会话不能因为点一下下拉就断。
-  const profilesSummary = `
-    <span id="profiles-summary" class="badge badge-stopped card-summary">读取中…</span>
-  `;
   const profilesBody = `
     <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
     <div id="profiles-content" class="profiles-content">
@@ -992,11 +992,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     </div>
     </div>
   `;
-  const profilesSection = cardSection(foldHead("profiles", "环境", profilesSummary), profilesBody);
   // 「网络」卡：下载源与代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
-  const networkSummary = `
-    <span id="network-summary" class="badge badge-stopped card-summary">沿用 npm 全局配置 · 跟随系统</span>
-  `;
   const networkBody = `
     <p id="network-windows-only" class="hint network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
     <div id="network-content" class="network-content">
@@ -1023,13 +1019,9 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     </div>
     </div>
   `;
-  const networkSection = cardSection(foldHead("network", "网络", networkSummary), networkBody);
   // 「集成」卡：命令行集成（PATH 与 dsh 垫片）+ npx 缓存盘面。卡片内容全部由后端算好
   // （目录、垫片内容、手动命令、占用字节与状态说明），界面只负责显示，避免两边各算一套口径。
   // 非 Windows 宿主把「自动接入」与缓存那两段整段藏起来，只留手动命令。
-  const integrationsSummary = `
-    <span id="integrations-summary" class="badge badge-stopped card-summary">读取中…</span>
-  `;
   const integrationsBody = `
     <div class="subcard">
       <div class="subcard-title">命令行集成</div>
@@ -1087,7 +1079,6 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       </details>
     </div>
   `;
-  const integrationsSection = cardSection(foldHead("integrations", "集成", integrationsSummary), integrationsBody);
   const modesBody = `
     <label class="mode">
       <input type="radio" name="mode" value="npx" checked />
@@ -1142,10 +1133,7 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
       <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」卡里的其它环境时不会改写这条命令——自己写进去才算数。</p>
     </div>
   `;
-  // 端口控件：原生两主题用候选 I 的 NumberBox（带上下箭头），原版是纯文本框（id 一样，绑定代码共用）。
-  const portControl = nativeLook
-    ? `<div class="step num"><input id="port" type="text" inputmode="numeric" placeholder="例如 3099" /><span class="spins"><button type="button" class="spin" data-step="1" tabindex="-1" aria-label="端口加一">▲</button><button type="button" class="spin" data-step="-1" tabindex="-1" aria-label="端口减一">▼</button></span></div>`
-    : `<input id="port" type="text" inputmode="numeric" placeholder="例如 3099" />`;
+  const portControl = `<input id="port" type="text" inputmode="numeric" placeholder="例如 3099" />`;
   // 通用设置：原版是「启动方式」卡片里的子面板，主题三由 native-layout.css 覆盖成两列并排的底色框。
   // 两处说明都进 ⓘ 气泡（维护者要求），端口那条由 renderPortHint() 动态改写 data-tip。
   const commonBody = `
@@ -1200,84 +1188,53 @@ function buildHtml(info: AppInfo, theme: ThemeId): string {
     <p id="about-note" class="hint hidden"></p>
     <p class="hint">DSH 版本在每次成功启动后自动读取；配置目录放壳设置与桥接备份，日志目录放 DSH 的启动日志（运行环境选 WSL 时日志在发行版内的 <code>~/.dsh/logs</code>）。</p>
   `;
-  // 主题三把两条托盘设置搬到「关于」里并排（维护者要求），说明改到 ⓘ 气泡里。
-  const aboutSettingsRow = `
-    <div class="settings-row">
-      <div class="setting-col">
-        <span class="setting-label">托盘单击打开 <span class="info-dot" role="img" tabindex="0" aria-label="托盘单击说明" data-tip="单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 应用内打开 / 打开启动界面」随时可用。">!</span></span>
-        <div class="picker" id="tray-picker"></div>
-      </div>
-      <div class="setting-col">
-        <span class="setting-label">关闭窗口后释放界面内存 <span class="info-dot" role="img" tabindex="0" aria-label="关闭窗口说明" data-tip="关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。">!</span></span>
-        <div class="picker" id="light-delay-picker"></div>
-      </div>
-    </div>
+  const badgeLine = (key: string, text: string) =>
+    `<span id="${key}" class="badge badge-stopped panel-badge">${text}</span>`;
+
+  // 桥接插件不再是独立分区：挂在「环境」面板末尾，与它所属的环境挨着。
+  const bridgeBlock = `
+    <div class="sec"><span>桥接插件</span>${badgeLine("bridge-summary", "读取中…")}</div>
+    <div class="sub-block">${bridgeBody}</div>
   `;
 
-  // 主题入口放在「关于」里：主题 3 用系统标题栏，放标题栏会多出一套入口，
-  // 而「关于」在三个主题里都在。
-  const themeFields = `
-    <div class="theme-fields">
-      <div class="theme-field">
-        <span class="theme-field-label">界面主题 <span class="info-dot" role="img" tabindex="0" aria-label="界面主题说明" data-tip="换主题按新排版重建界面，字段内容不变；选择记在本机，下次启动沿用。">!</span></span>
-        <div class="picker" id="theme-picker"></div>
-      </div>
-    </div>`;
+  // 五个面板的标题与内容一一对应左侧导航；未选中的由 CSS 隐藏。
+  const panels = [
+    panelSection(
+      "launch",
+      panelHead("启动方式", badgeLine("modes-summary", "官方 npx 命令")),
+      `${modesBody}${commonBody}<div class="sec"><span>最近输出</span></div>${logBlock}`,
+    ),
+    panelSection("env", panelHead("环境", badgeLine("profiles-summary", "读取中…")), `${profilesBody}${bridgeBlock}`),
+    panelSection("integ", panelHead("集成", badgeLine("integrations-summary", "读取中…")), integrationsBody),
+    panelSection("traynet", panelHead("托盘与网络", badgeLine("network-summary", "沿用 npm 全局配置 · 跟随系统")), `${networkBody}${trayFields}`),
+    panelSection("about", panelHead("关于"), `${aboutKv}<div class="about-tail">${aboutTail}</div>`),
+  ].join("\n");
 
-  const titleAndTagline = `${h1Line}
-  ${tagline}
-  ${lightHint}`;
-  // 页头：原生排版换成候选 I 的 hero（logo 在左）；状态徽章与四颗按钮在卡片里的同一行。
-  const header = nativeLayout
-    ? `<header class="head hero">
-  <img class="hero-logo" src="${logoUrl}" alt="" draggable="false" />
-  <div class="hero-text">${titleAndTagline}
-  </div>
-</header>`
-    : `<header class="head">${titleAndTagline}</header>`;
-
-  // 主题三：状态、提示、动作按钮、最近输出都收进第一张 hero 卡片，「DSH 会话」分组取消（内容已全部移出）；
-  // 「通用设置」不再单独成组，合并进「启动方式」卡片底部。原版/原生暗色里会话、启动方式、桥接插件三张卡片照旧。
-  // hero 卡片：标题区 + 提示 + 状态徽章行 + 按钮行（三个主题同一套排版）+ 最近输出。
-  const heroSection = nativeLayout
-    ? `<section class="card hero-card">
-  ${header}
-  ${statusErrorBlock}
-  ${loginNoteBlock}
-  ${badges}
-  ${sessionActionsRow}
-  <div class="hero-log">${logBlock}</div>
-</section>`
-    : "";
-  const sessionSection = nativeLayout
-    ? ""
-    : cardSection(
-        plainHead("DSH 会话"),
-        `${badges}
-  ${statusErrorBlock}
-  ${sessionActionsRow}
-  ${loginNoteBlock}
-  ${trayFields}
-  ${logBlock}`,
-      );
-  const modesSection = cardSection(foldHead("modes", "启动方式", modesSummary), `${modesBody}
-  ${commonBody}`);
-  const bridgeSection = cardSection(foldHead("bridge", "桥接插件（登录链接的可靠通道）", bridgeSummary), bridgeBody);
-  const aboutSection = cardSection(
-    nativeLayout ? foldHead("about", "关于") : plainHead("关于"),
-    `${aboutKv}${nativeLayout ? aboutSettingsRow : ""}${themeFields}<div class="about-tail">${aboutTail}</div>`,
-  );
+  const nav = `
+    <nav class="rail" id="nav" aria-label="设置分区">
+      ${PANELS.map(
+        (item) =>
+          `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span></button>`,
+      ).join("\n      ")}
+    </nav>
+  `;
 
   return `${titlebar}
-  ${nativeLayout ? "" : header}
-  ${heroSection}
-  ${sessionSection}
-  ${modesSection}
-  ${bridgeSection}
-  ${profilesSection}
-  ${networkSection}
-  ${integrationsSection}
-  ${aboutSection}`;
+  <section class="card top-card">
+    ${headLine}
+    ${statusErrorBlock}
+    <div class="tool-row">
+      ${loginNoteBlock}
+      ${sessionActionsRow}
+    </div>
+  </section>
+  <section class="card main-card">
+    <div class="card-body">
+      ${nav}
+      <div class="panels">${panels}</div>
+    </div>
+    <p class="foot">关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻。</p>
+  </section>`;
 }
 
 async function main(): Promise<void> {
@@ -1309,39 +1266,17 @@ async function main(): Promise<void> {
   // 六个新字段的当前值：后端读回来之后换成它。本版只做承载，没有界面控件改它，
   // 但保存链路上必须原样带上，否则界面上任何一次保存都会把用户已改的值抹回默认。
   let prefs: ShellPrefs = { ...DEFAULT_PREFS };
-  let livePickers: Picker[] = [];
-  // 界面重建时 DOM 与绑定全部重来，挂在 window 上的监听不能跟着重来：
-  // 这三处跨重建的东西只注册一次，通过钩子指向当前这套界面。
+  // DOM 只在启动时生成一次：切浅色/深色只改 <html data-mode>，不重建界面。
+  // 挂在 window / document 上的监听（窗口缩放、托盘轮询、自绘滚动条）也只注册一次，
+  // 通过下面三个钩子指到当前这套界面。
   let updateScrollThumbHook: () => void = () => {};
   let syncMaximizeIconHook: () => void = () => {};
   let refreshNowHook: () => Promise<void> = async () => {};
 
-  /** 按主题重建界面：先摘掉上一套界面的 Picker，再照新主题生成 DOM 与绑定。 */
-  async function mount(next: ThemeId): Promise<void> {
-    for (const picker of livePickers) {
-      picker.dispose();
-    }
-    livePickers = [];
-    // 上一套界面的按钮已经不在文档里了，先清空同步钩子，等新按钮挂上再设。
-    syncMaximizeIconHook = () => {};
-
-    // 只有当前主题的规则进页面：原版靠 src/style.css，另外两套再叠主题样式。
-    const themeStyle = document.querySelector<HTMLStyleElement>("#theme-style");
-    const style = themeStyle ?? document.createElement("style");
-    style.id = "theme-style";
-    style.textContent = themeCss(next);
-    if (!themeStyle) {
-      document.head.appendChild(style);
-    }
-    // 同步 <html data-theme>：index.html 首屏内联样式按它预着色，避免深色主题
-    // 开窗先闪一帧亮底；主题切换时刷新，回到原版则摘掉（恢复浅底）。
-    if (isNativeLook(next)) {
-      document.documentElement.dataset.theme = next;
-    } else {
-      delete document.documentElement.dataset.theme;
-    }
-
-    root.innerHTML = buildHtml(info, next);
+  /** 生成界面与全部绑定。只在启动时跑一次：切浅色/深色只改 <html data-mode>，不重建 DOM。 */
+  async function mount(): Promise<void> {
+    applyMode(theme);
+    root.innerHTML = buildHtml(info);
 
     const $ = <T extends HTMLElement>(id: string): T => {
       const el = root.querySelector<T>(`#${id}`);
@@ -1606,13 +1541,28 @@ async function main(): Promise<void> {
         void loadRegistry();
       }
     });
-    const themePicker = new Picker("theme-picker", (value) => {
-      if (isThemeId(value)) {
-        void switchTheme(value);
+    // 标题栏那颗浅/深切换：图标画的是「点下去会变成什么」，切换只改 <html data-mode>，
+    // 界面不重建，正在填的字段与滚动位置都保住。
+    const modeBtn = $<HTMLButtonElement>("mode-btn");
+    const renderModeButton = (): void => {
+      const dark = theme === "dark";
+      modeBtn.innerHTML = dark ? ICON_SUN : ICON_MOON;
+      const label = dark ? "切换到浅色模式" : "切换到深色模式";
+      modeBtn.title = label;
+      modeBtn.setAttribute("aria-label", label);
+    };
+    modeBtn.addEventListener("click", () => {
+      theme = theme === "dark" ? "light" : "dark";
+      applyMode(theme);
+      renderModeButton();
+      try {
+        window.localStorage.setItem(THEME_KEY, theme);
+      } catch {
+        // 隐私模式等场景下存不下：本次切换仍生效，只是下次启动回到默认。
       }
+      syncThemeToShell(theme);
     });
-    themePicker.setChoices(THEME_CHOICES.map((choice) => ({ value: choice.value, label: choice.label })));
-    themePicker.setValue(theme);
+    renderModeButton();
     // 下载源：「网络」卡的第一个控件。改完立刻生效于版本清单查询（选「官方源」
     // 就真的去官方地址拉），不必重启壳。
     const networkSummary = $<HTMLSpanElement>("network-summary");
@@ -1838,18 +1788,6 @@ async function main(): Promise<void> {
     btnSelfCheck.addEventListener("click", () => void runSelfCheck());
 
     renderNetworkUI();
-    // 重建界面时旧实例要 dispose（它们各自挂着 document 监听）。
-    livePickers = [
-      trayPicker,
-      lightDelayPicker,
-      npxRuntimePicker,
-      customRuntimePicker,
-      npxChannelPicker,
-      npxVersionPicker,
-      themePicker,
-      downloadSourcePicker,
-      proxyModePicker,
-    ];
     const modesSummary = $<HTMLSpanElement>("modes-summary");
     const bridgeSummary = $<HTMLSpanElement>("bridge-summary");
     const btnCopyLog = $<HTMLButtonElement>("btn-copy-log");
@@ -1866,7 +1804,8 @@ async function main(): Promise<void> {
     const btnBridgeBackups = $<HTMLButtonElement>("btn-bridge-backups");
     const aboutDsh = $<HTMLElement>("about-dsh");
     const aboutNote = $<HTMLParagraphElement>("about-note");
-    // 「系统原生」主题用系统标题栏，这三个按钮不存在。
+    // 自绘标题栏的三颗窗口按钮。窗口一律无边框，这里理论上必然存在；
+    // 仍用可空取法，是因为这段代码在普通浏览器预览里也要能跑通。
     const btnWinMin = root.querySelector<HTMLButtonElement>("#win-min");
     const btnWinMax = root.querySelector<HTMLButtonElement>("#win-max");
     const btnWinClose = root.querySelector<HTMLButtonElement>("#win-close");
@@ -1907,58 +1846,54 @@ async function main(): Promise<void> {
     const cacheResultsBody = $<HTMLDivElement>("cache-results-body");
     const cacheAutoToggle = $<HTMLInputElement>("cache-auto-toggle");
 
-    // 卡片折叠（所有带折叠头的分组，含「环境」「网络」「集成」）：默认展开；用户点出来的折叠状态记在 localStorage，
-    // 壳重启、轻量模式重建窗口后沿用（维护者要求）。不放 config.json：那是整份回写的设置文件，
-    // 折叠只是界面偏好，丢了不影响功能。
-    const CARD_COLLAPSE_KEY = "dsharbor.ui.cardCollapsed";
-    const cardToggle = (key: CardKey): HTMLButtonElement | null => root.querySelector<HTMLButtonElement>(`#card-toggle-${key}`);
+    // 分区导航：点左侧图标切右侧面板。选择记在 localStorage，壳重启、轻量模式重建窗口后沿用。
+    // 不放 config.json：那是整份回写的设置文件，界面偏好丢了不影响功能。
+    const PANEL_KEY = "dsharbor.ui.panel";
+    const navButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-panel-btn]"));
+    const panelSections = Array.from(root.querySelectorAll<HTMLElement>("[data-panel]"));
 
-    function readCardCollapsed(): Partial<Record<CardKey, boolean>> {
+    function readStoredPanel(): PanelKey {
       try {
-        const raw = window.localStorage.getItem(CARD_COLLAPSE_KEY);
-        const parsed: unknown = raw === null ? null : JSON.parse(raw);
-        return typeof parsed === "object" && parsed !== null
-          ? (parsed as Partial<Record<CardKey, boolean>>)
-          : {};
+        const saved = window.localStorage.getItem(PANEL_KEY);
+        if (PANELS.some((item) => item.key === saved)) {
+          return saved as PanelKey;
+        }
       } catch {
-        // 存储被禁用，或内容被改坏：当成「都没折叠」，不影响使用
-        return {};
+        // 存储被禁用：用默认分区。
       }
+      return "launch";
     }
 
-    const cardCollapsed = readCardCollapsed();
+    let currentPanel: PanelKey = readStoredPanel();
 
-    /** 单一入口：改 DOM + 记状态。persist 只在用户点击时为真——桥接操作触发的临时展开不落盘。 */
-    const setCardCollapsed = (key: CardKey, collapsed: boolean, persist: boolean): void => {
-      cardCollapsed[key] = collapsed;
-      const toggle = cardToggle(key);
-      if (!toggle) {
-        return; // 当前主题里没有这个分组（原版只有「启动方式」「桥接插件」能折）
+    /** 切换右侧面板：同步 aria-current 与可见性，并把面板滚回顶部（换内容时留着旧滚动位置很莫名）。 */
+    const selectPanel = (key: PanelKey, persist: boolean): void => {
+      currentPanel = key;
+      for (const button of navButtons) {
+        button.setAttribute("aria-current", button.dataset.panelBtn === key ? "true" : "false");
       }
-      toggle.closest(".card")?.classList.toggle("collapsed", collapsed);
-      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      for (const panel of panelSections) {
+        const hidden = panel.dataset.panel !== key;
+        panel.classList.toggle("hidden", hidden);
+        // 切回来的面板从头看起，别停在上一轮的位置（指示条也随之重算）。
+        if (!hidden) panel.scrollTop = 0;
+      }
+      updateScrollThumbHook();
       if (persist) {
         try {
-          window.localStorage.setItem(CARD_COLLAPSE_KEY, JSON.stringify(cardCollapsed));
+          window.localStorage.setItem(PANEL_KEY, key);
         } catch {
           // 存储被禁用时忽略：本次会话仍按内存里的状态走
         }
       }
     };
 
-    const expandCard = (key: CardKey): void => setCardCollapsed(key, false, false);
-
-    const CARD_KEYS = ["session", "modes", "common", "bridge", "profiles", "network", "integrations", "about"] as const;
-    for (const key of CARD_KEYS) {
-      const toggle = cardToggle(key);
-      if (!toggle) {
-        continue; // 「会话」与「关于」没有折叠头（原生排版里「关于」有，会话永远没有）
-      }
-      toggle.addEventListener("click", () => {
-        setCardCollapsed(key, cardCollapsed[key] !== true, true);
+    for (const button of navButtons) {
+      button.addEventListener("click", () => {
+        selectPanel(button.dataset.panelBtn as PanelKey, true);
       });
-      setCardCollapsed(key, cardCollapsed[key] === true, false);
     }
+    selectPanel(currentPanel, false);
 
     // 「最近输出」「操作输出」折叠块：对应操作产生终端输出时自动展开（维护者要求）。
     const logDetails = $<HTMLElement>("log").closest("details");
@@ -2122,7 +2057,7 @@ async function main(): Promise<void> {
           trayClick: trayPicker.value as TrayClick,
           lightDelaySecs: Number(lightDelayPicker.value),
           // 主题镜像一致即可；写进 save_shell_config 会被整份串行化，若不一致也顺手对齐
-          // （正常路径由 switchTheme 单独走 save_ui_theme）。
+          // （正常路径由标题栏的浅/深切换单独走 save_ui_theme）。
           uiTheme: theme,
           // 三张新卡的六个字段本版没有界面控件，但必须原样带上：整份回写会把漏掉的键
           // 抹回默认值。值来自后端读回（缺字段时为 normalizePrefs 补的默认）。
@@ -2262,19 +2197,6 @@ async function main(): Promise<void> {
       portInput.dispatchEvent(new Event("change", { bubbles: true }));
       portInput.focus();
     });
-    // 「原生」主题的端口是 I 的 NumberBox，带上下箭头；原版那个文本框里没有按钮，
-    // 这段就取不到元素、自然不生效。基准值取「当前输入 > 已读到的生效端口 > 3080」。
-    for (const spin of Array.from(root.querySelectorAll<HTMLButtonElement>("#port ~ .spins .spin, .port-row .step.num .spin"))) {
-      spin.addEventListener("click", () => {
-        const step = Number.parseInt(spin.dataset.step ?? "1", 10);
-        const typed = Number.parseInt(portInput.value.trim(), 10);
-        const base = Number.isFinite(typed) ? typed : portHint?.port ?? 3080;
-        portInput.value = String(Math.min(65535, Math.max(1, base + step)));
-        portInput.dispatchEvent(new Event("input", { bubbles: true }));
-        portInput.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-    }
-
     // 启动/停止失败时后端返回的错误（与轮询到的会话错误分开保存，
     // 否则下一次轮询（每秒一次）会把刚显示的错误清掉）。
     let localError: string | null = null;
@@ -2516,14 +2438,14 @@ async function main(): Promise<void> {
         bridgeTarget.textContent = state.target;
         bridgeStatus.textContent = state.installed ? "已安装（优先走桥接通道）" : "未安装（走日志兜底）";
         // 卡片收起后靠这个徽章显示安装状态（展开时徽章隐藏，见 CSS）。
-        bridgeSummary.className = `badge ${state.installed ? "badge-running" : "badge-stopped"} card-summary`;
+        bridgeSummary.className = `badge ${state.installed ? "badge-running" : "badge-stopped"} panel-badge`;
         bridgeSummary.textContent = state.installed ? "已安装" : "未安装";
         bridgeBackup.textContent = state.latestBackup
           ? `最近备份：${state.latestBackup}`
           : "还没有备份：安装或卸载时会自动创建，可用「恢复最近备份」回滚。";
       } catch (err) {
         bridgeStatus.textContent = `读取失败：${err}`;
-        bridgeSummary.className = "badge badge-failed card-summary";
+        bridgeSummary.className = "badge badge-failed panel-badge";
         bridgeSummary.textContent = "读取失败";
       }
     }
@@ -2534,7 +2456,7 @@ async function main(): Promise<void> {
         updateBridgeButtons();
         bridgeError.classList.add("hidden");
         // 桥接操作会产生 pnpm/命令的终端输出：自动展开卡片与「操作输出」（维护者要求）。
-        expandCard("bridge");
+        selectPanel("env", true);
         expandBridgeOutput();
         setBridgeOutput("执行中…（首次可能较慢，pnpm 需要解析依赖）");
         try {
@@ -2569,7 +2491,7 @@ async function main(): Promise<void> {
         updateBridgeButtons();
         try {
           // 恢复同样产生终端输出：自动展开卡片与「操作输出」。
-          expandCard("bridge");
+          selectPanel("env", true);
           expandBridgeOutput();
           const message = await invoke<string>("bridge_restore", {
             config: collectConfig(),
@@ -2629,7 +2551,7 @@ async function main(): Promise<void> {
       profilesContent.classList.toggle("hidden", !profilesSupported);
       const current = profileOf(prefs.profile);
       profilesSummary.textContent = profileBadgeText();
-      profilesSummary.className = `badge ${profilesSupported && current ? "badge-running" : "badge-stopped"} card-summary`;
+      profilesSummary.className = `badge ${profilesSupported && current ? "badge-running" : "badge-stopped"} panel-badge`;
       profileHintEl.textContent = current
         ? `已登记 ${current.plugins} 个插件，${current.bridgeInstalled ? "桥接插件已装（能直接取带 token 的登录链接）" : "桥接插件未装（登录链接走日志兜底）"}。`
         : profileList.length === 0
@@ -2720,10 +2642,6 @@ async function main(): Promise<void> {
     const profilePicker = new Picker("profile-picker", (value) => {
       void selectProfile(value);
     });
-    // 这个 Picker 建得比上面那批晚（卡片内容在同一段代码里自成一个区块），
-    // 单独追加进 livePickers，切主题时同样要 dispose。
-    livePickers.push(profilePicker);
-
     btnProfileRestart.addEventListener("click", () => {
       pendingProfile = null;
       renderProfilesUI();
@@ -3429,12 +3347,12 @@ async function main(): Promise<void> {
     /** 收起后只能看到这一个徽章，所以两半的信息合在一起：`命令行已接入 · 缓存 1.8 GB`。 */
     function renderIntegrationsSummary(): void {
       if (cliLoaded && !cliSupported) {
-        cliSummary.className = "badge badge-stopped card-summary";
+        cliSummary.className = "badge badge-stopped panel-badge";
         cliSummary.textContent = "仅 Windows 可用";
         return;
       }
       if (cliLoaded && cacheBadgeFailed && cliBadgeFailed) {
-        cliSummary.className = "badge badge-failed card-summary";
+        cliSummary.className = "badge badge-failed panel-badge";
         cliSummary.textContent = "读取失败";
         return;
       }
@@ -3442,7 +3360,7 @@ async function main(): Promise<void> {
       if (cacheBadgeText !== null) {
         parts.push(cacheBadgeText);
       }
-      cliSummary.className = `badge ${cliBadgeConnected ? "badge-running" : "badge-stopped"} card-summary`;
+      cliSummary.className = `badge ${cliBadgeConnected ? "badge-running" : "badge-stopped"} panel-badge`;
       cliSummary.textContent = parts.join(" · ");
     }
 
@@ -3744,8 +3662,7 @@ async function main(): Promise<void> {
     btnAboutLogs.addEventListener("click", () => openShellDir("logs"));
 
 
-    // 自绘标题栏的窗口按钮（「系统原生」主题用系统标题栏，没有这三个按钮）。
-    // 拖拽与双击最大化由 data-tauri-drag-region 交给系统处理，这里只发最小化 /
+    // 自绘标题栏的窗口按钮。拖拽与双击最大化由 data-tauri-drag-region 交给系统处理，这里只发最小化 /
     // 最大化切换 / 关闭；关窗命令和原生关闭按钮走同一条路径，最终由 Rust 侧的
     // CloseRequested 拦下来转成轻量模式。
     if (btnWinMin && btnWinMax && btnWinClose) {
@@ -3771,7 +3688,7 @@ async function main(): Promise<void> {
 
       // 最大化后按钮应该显示「还原」（两个叠放的方框）。窗口尺寸一变就同步一次：
       // 最大化 / 还原 / 贴靠 / 拖边缩放都会改视图尺寸，所以监 window.resize 就够，
-      // 不必再走 Tauri 的窗口事件通道。监听跨主题重建只注册一次（见 main 尾部），
+      // 不必再走 Tauri 的窗口事件通道。监听只注册一次（见 main 尾部），
       // 这里只把钩子换成新界面上的按钮。
       syncMaximizeIconHook = (): void => {
         try {
@@ -3854,88 +3771,71 @@ async function main(): Promise<void> {
     void refreshCacheState();
     void loadProfiles();
     refreshNowHook = refresh;
-    // 切主题会重建整个界面：转动状态与计时在模块级，这里把类重新贴到新的那颗「重启 DSH」上。
+    // 转动状态与计时在模块级（界面元素可能被重建），这里把类贴到当前这颗「重启 DSH」上。
     applyRestartSpin();
   }
 
-  /** 把主题镜像给 Rust（ui_theme）：开窗处要在页面加载前决定窗口装饰（见 save_ui_theme）。 */
+  /** 把浅色/深色镜像给 Rust（ui_theme）：开窗前要按它定 WebView 底色，避免首帧闪白。 */
   function syncThemeToShell(next: ThemeId): void {
     invoke("save_ui_theme", { theme: next }).catch((err) => {
-      // 失败只影响下次开窗的头一帧（可能闪一次自绘标题栏），本次界面不受影响。
+      // 失败只影响下次开窗的头一帧底色，本次界面不受影响。
       console.debug("镜像主题到外壳失败:", err);
     });
   }
 
-  /** 换主题：记下来（下次启动沿用）→ 按主题重建界面 → 调整窗口边框与标题栏。 */
-  async function switchTheme(next: ThemeId): Promise<void> {
-    theme = next;
-    try {
-      window.localStorage.setItem(THEME_KEY, next);
-    } catch {
-      // 存不下（隐私模式）也不影响这次切换，只是下次启动回到默认。
-    }
-    // Rust 侧镜像同步要先行：万一用户在界面重建/窗口调整完成前关掉壳，
-    // 下次开窗也能按新主题出装饰。
-    syncThemeToShell(next);
-    // 先挂界面再调窗口：标题栏颜色要取新主题的界面底色。
-    await mount(next);
-    await applyWindowChrome(next);
-  }
-
-  /** 当前界面底色，换算成 Windows 的 COLORREF（0x00BBGGRR）；解析不出来就返回 null。 */
-  function bodyColorRef(): number | null {
-    const match = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(
-      window.getComputedStyle(document.body).backgroundColor,
-    );
-    if (!match) {
-      return null;
-    }
-    const [red, green, blue] = match.slice(1).map(Number);
-    return ((red & 0xff) << 0) | ((green & 0xff) << 8) | ((blue & 0xff) << 16);
-  }
-
-  /** 「系统原生」主题用系统标题栏，另外两套用自绘的（见 buildHtml 里的标题栏）。 */
-  async function applyWindowChrome(target: ThemeId): Promise<void> {
-    try {
-      const appWindow = getCurrentWindow();
-      const wanted = isNativeLayout(target);
-      if ((await appWindow.isDecorated()) !== wanted) {
-        await appWindow.setDecorations(wanted);
-      }
-      // 系统标题栏的颜色跟窗口的浅色/深色走：界面本身是深色（#202020，Win11 深色
-      // 标题栏正好也是这个色），所以有系统标题栏时把窗口钉成深色，免得 Windows 用
-      // 浅色模式时顶上多一条亮带。另外两套是自绘标题栏，交回系统即可（null）。
-      await appWindow.setTheme(wanted ? "dark" : null);
-      // 光钉深色还不够：Windows 的标题栏带透明度（受壁纸色调影响），实测会偏蓝，
-      // 跟界面底色对不齐，所以直接把这一条染成界面底色；另外两套交回系统。
-      await invoke("set_caption_color", { color: wanted ? bodyColorRef() : null });
-    } catch (err) {
-      // 普通浏览器里没有窗口对象（预览用）。
-      console.error("调整窗口外观失败:", err);
-    }
-  }
-
-  // 自绘滚动指示条：视口的原生滚动条已在 style.css 里藏起来，滚动时右边缘浮出
-  // 一条细胶囊，停手约 1 秒后淡出。只做视觉，不拦事件（pointer-events: none），
-  // 滚轮 / 键盘 / 触控板照旧；轨道从标题栏下面开始，不会压在窗口按钮上。
+  // 自绘滚动指示条：内容区（.panel）的原生滚动条已在 style.css 里藏起来，滚动时它右边缘
+  // 浮出一条细胶囊，停手约 1 秒后淡出。只做视觉，不拦内容事件（轨道 5px 窄、只在身上收指针），
+  // 滚轮 / 键盘 / 触控板照旧。
+  //
+  // 挂的是「当前可见的那个 .panel」而不是视口：界面改版后整页定高、只有面板内部滚
+  // （见 style.css 的 body / #app / .main-card 注释），视口永远不可滚，绑在视口上就等于没有。
   const scrollTrack = document.createElement("div");
   scrollTrack.className = "scroll-track";
   const scrollThumb = document.createElement("div");
   scrollThumb.className = "scroll-thumb";
   scrollTrack.appendChild(scrollThumb);
-  document.body.appendChild(scrollTrack);
+
+  /** 当前可见的面板：五个面板里只有一个不带 .hidden。 */
+  function activePanel(): HTMLElement | null {
+    return root.querySelector<HTMLElement>(".panel:not(.hidden)");
+  }
+
+  let scrollHost: HTMLElement | null = null;
+  /**
+   * 把指示条挂到面板外层（`.panels`）而不是面板本身：面板是滚动容器，
+   * 绝对定位的子元素会跟着内容一起滚走，挂在外层才定得住。
+   */
+  function mountScrollTrack(): void {
+    const holder = root.querySelector<HTMLElement>(".panels");
+    if (holder && scrollTrack.parentElement !== holder) holder.appendChild(scrollTrack);
+  }
+
+  function syncScrollHost(): void {
+    mountScrollTrack();
+    const panel = activePanel();
+    if (!panel || panel === scrollHost) return;
+    scrollHost = panel;
+    updateScrollThumb();
+  }
 
   const updateScrollThumb = (): void => {
-    const doc = document.documentElement;
-    const viewport = doc.clientHeight;
-    const total = doc.scrollHeight;
+    mountScrollTrack();
+    // 记着的面板可能刚被切走（已加 .hidden）：这时改跟当前可见的那个。
+    const host = scrollHost && !scrollHost.classList.contains("hidden") ? scrollHost : activePanel();
+    if (!host) {
+      scrollThumb.style.height = "0px";
+      return;
+    }
+    scrollHost = host;
+    const viewport = host.clientHeight;
+    const total = host.scrollHeight;
     const trackHeight = scrollTrack.clientHeight;
     if (total <= viewport + 1 || trackHeight <= 0) {
       scrollThumb.style.height = "0px";
       return;
     }
     const height = Math.max(28, (viewport / total) * trackHeight);
-    const top = (doc.scrollTop / (total - viewport)) * (trackHeight - height);
+    const top = (host.scrollTop / (total - viewport)) * (trackHeight - height);
     scrollThumb.style.height = `${height}px`;
     scrollThumb.style.transform = `translateY(${top}px)`;
   };
@@ -3947,37 +3847,46 @@ async function main(): Promise<void> {
     window.clearTimeout(scrollIdleTimer);
     scrollIdleTimer = window.setTimeout(() => scrollThumb.classList.remove("visible"), 900);
   };
-  window.addEventListener(
+  // 面板是滚动容器本身：滚动事件不从 window 冒泡上去，只能挂在面板上，
+  // 所以在最外层（只注册一次）用捕获阶段接住任意面板的滚动。
+  document.addEventListener(
     "scroll",
-    () => {
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.classList.contains("panel")) return;
+      if (target !== scrollHost) syncScrollHost();
       updateScrollThumb();
       // 拖动期间不跑这个计时器，否则按住不动 0.9 秒胶囊会在手里淡掉
       if (!dragState) showScrollThumb();
     },
-    { passive: true },
+    { capture: true, passive: true },
   );
-  window.addEventListener("resize", updateScrollThumb);
+  window.addEventListener("resize", () => {
+    syncScrollHost();
+    updateScrollThumb();
+  });
 
-  // 按住胶囊上下拖 = 直接改滚动位置。轨道在右侧那条细带上收指针事件（悬停显示），
-  // 指针一旦离开就松手；位移按「胶囊能走的距离 ↔ 内容还能滚的距离」等比换算。
+  // 按住胶囊上下拖 = 直接改面板的滚动位置。位移按「胶囊能走的距离 ↔ 内容还能滚的距离」等比换算。
   scrollThumb.addEventListener("pointerdown", (event) => {
-    const doc = document.documentElement;
+    const host = scrollHost ?? activePanel();
+    if (!host) return;
     const travel = scrollTrack.clientHeight - scrollThumb.offsetHeight;
-    const scrollable = doc.scrollHeight - doc.clientHeight;
+    const scrollable = host.scrollHeight - host.clientHeight;
     if (travel <= 0 || scrollable <= 1) return;
     event.preventDefault();
     dragState = {
       pointerId: event.pointerId,
       startY: event.clientY,
-      startScrollTop: doc.scrollTop,
+      startScrollTop: host.scrollTop,
       scale: scrollable / travel,
     };
     scrollThumb.setPointerCapture(event.pointerId);
     scrollThumb.classList.add("dragging");
   });
   scrollThumb.addEventListener("pointermove", (event) => {
-    if (!dragState || event.pointerId !== dragState.pointerId) return;
-    document.documentElement.scrollTop = dragState.startScrollTop + (event.clientY - dragState.startY) * dragState.scale;
+    const host = scrollHost;
+    if (!dragState || !host || event.pointerId !== dragState.pointerId) return;
+    host.scrollTop = dragState.startScrollTop + (event.clientY - dragState.startY) * dragState.scale;
   });
   const endScrollDrag = (event: PointerEvent): void => {
     if (!dragState || event.pointerId !== dragState.pointerId) return;
@@ -3989,19 +3898,20 @@ async function main(): Promise<void> {
   scrollThumb.addEventListener("pointerup", endScrollDrag);
   scrollThumb.addEventListener("pointercancel", endScrollDrag);
 
-  updateScrollThumb();
+  syncScrollHost();
 
-  // 「最大化」图标同步与 1 秒状态轮询都跨主题重建，只注册一次。
-  window.addEventListener("resize", () => syncMaximizeIconHook());
+  // 窗口尺寸变化与 1 秒状态轮询只注册一次，通过钩子指向当前这套界面。
+  window.addEventListener("resize", () => {
+    syncMaximizeIconHook();
+    syncScrollHost();
+  });
   window.setInterval(() => void refreshNowHook(), 1000);
   updateScrollThumbHook = updateScrollThumb;
 
-  // 先挂界面再调窗口：标题栏颜色要取新主题的界面底色。
-  // 主题镜像给 Rust：老配置里没有这份镜像（主题本来只存 localStorage），启动时补齐，
-  // 下次开窗（含托盘重开）就能第一时间按主题出系统标题栏/自绘标题栏。
+  // 浅色/深色镜像给 Rust：老配置里没有这份镜像（主题本来只存 localStorage），启动时补齐，
+  // 下次开窗（含托盘重开）就能第一时间按主题铺底色，避免首帧闪一下另一种色。
   syncThemeToShell(theme);
-  await mount(theme);
-  await applyWindowChrome(theme);
+  await mount();
 }
 
 void main();

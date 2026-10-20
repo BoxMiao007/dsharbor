@@ -5,28 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DSHarbor</title>
     <style>
-      /* 深色两套主题的首屏预着色：页面加载到 main.ts 挂载界面还有一段空窗，
-         那段时间按 <html data-theme> 先把底色铺成 #202020，否则每次开窗 /
-         切主题都会先闪一帧亮底（原版浅色）再变深。原版没有 data-theme，不命中。
-         #202020 是三处「暗色首帧底」之一（另两处：src/themes/native-dark.css 的
-         body、src-tauri/src/lib.rs 的 webview_base_color），改色三处同步。 */
-      html[data-theme="nativeDark"],
-      html[data-theme="native"] {
-        background: #202020;
+      /* 首帧预着色：页面加载到 main.ts 挂上界面还有一段空窗，那段时间先按
+         <html data-mode> 把底色铺好，否则深色下会先闪一帧亮底。
+         底色是两处「首帧底」之一（另一处：src-tauri/src/lib.rs 的 webview_base_color），
+         与 src/style.css 里 --bg 的取值一致，改色三处同步。 */
+      html[data-mode="dark"] {
+        background: #0b0f14;
+      }
+
+      html[data-mode="light"] {
+        background: #eef2f7;
       }
     </style>
     <script>
-      // 主题存在 WebView 的 localStorage，页面一进来就同步挂上 data-theme（深色两套），
-      // 让上面的预着色规则即刻生效；原版不挂，保持浅底。失败（隐私模式）按原版走。
-      // 存储键与主题名是 src/main.ts 里 THEME_KEY / ThemeId 的复写（这里是纯静态
-      // 内联脚本，没法 import），改键名或主题名必须两处同步。
+      // 外观存在 WebView 的 localStorage，页面一进来就同步挂上 data-mode，
+      // 让上面的预着色规则即刻生效。存储键与取值是 src/main.ts 里
+      // THEME_KEY / ThemeId 的复写（这里是纯静态内联脚本，没法 import），
+      // 改键名或取值必须两处同步。读不到（隐私模式 / 首次启动）按深色走，
+      // 与 main.ts 的默认值一致。
       try {
-        var storedTheme = localStorage.getItem("dsharbor.ui.theme");
-        if (storedTheme === "nativeDark" || storedTheme === "native") {
-          document.documentElement.setAttribute("data-theme", storedTheme);
-        }
+        var storedMode = localStorage.getItem("dsharbor.ui.theme");
+        // 旧版的 nativeDark / native 都是深色，迁移时按深色处理。
+        var dark = storedMode !== "light";
+        document.documentElement.dataset.mode = dark ? "dark" : "light";
       } catch (err) {
-        /* 读不到就按原版浅底走 */
+        /* 读不到就按深色走 */
       }
     </script>
   </head>

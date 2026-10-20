@@ -14,6 +14,9 @@ desktop.ini
 node_modules/
 /dist/
 
+# 本地临时产物（puppeteer 截图脚本与图片）
+/.tmp-shots/
+
 # Rust / Tauri
 /target/
 /src-tauri/gen/schemas/

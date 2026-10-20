@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN" data-mode="dark">
+  <head>
+    <meta charset="utf-8" />
+    <title>v2 单卡片界面 · 方案</title>
+    <link rel="stylesheet" href="./common.css" />
+    <style>
+      body {
+        display: block;
+        padding: 28px 20px 70px;
+      }
+      .wrap {
+        width: min(1000px, 94vw);
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .lead {
+        margin: 8px 0 22px;
+        font-size: 13.5px;
+        line-height: 1.7;
+        color: var(--fg-dim);
+        max-width: 78ch;
+      }
+      .fixed {
+        margin: 14px 0 26px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: color-mix(in srgb, var(--elev) 45%, transparent);
+        font-size: 13px;
+        line-height: 1.85;
+        color: var(--fg-dim);
+      }
+      .fixed b {
+        color: var(--fg);
+      }
+      .picks {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+      }
+      .picks.solo {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .pick {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 16px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--card);
+        text-decoration: none;
+        color: inherit;
+        transition: border-color 140ms, transform 140ms;
+      }
+      .pick.main {
+        border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+        background: color-mix(in srgb, var(--accent-soft) 40%, var(--card));
+      }
+      .pick:hover {
+        border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+        transform: translateY(-2px);
+      }
+      .pick h2 {
+        font-size: 15px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .tag {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      .sub {
+        margin: 26px 0 12px;
+        font-size: 13px;
+        color: var(--fg-mute);
+      }
+      .pick p {
+        font-size: 12.5px;
+        line-height: 1.7;
+        color: var(--fg-dim);
+      }
+      .pick .thumb {
+        height: 76px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: color-mix(in srgb, var(--elev) 55%, transparent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--fg-mute);
+        overflow: hidden;
+      }
+      .dot {
+        width: 18px;
+        height: 18px;
+        border-radius: 6px;
+        border: 1px solid var(--line-strong);
+      }
+      .dot.wide {
+        width: 62px;
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .mode-btn-inline {
+        display: inline-flex;
+        vertical-align: -3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>界面改造 · 方案</h1>
+      <p class="lead">
+        按你的选择做了「乙改」：顶部状态与操作、下方导航与内容拆成两张卡片；下卡左侧是固定「图标＋文字」的导航，
+        点一项就把内容换到右边（不弹窗）；标题栏只剩一颗浅色/深色切换。
+      </p>
+
+      <div class="fixed">
+        <b>这一版的结构</b><br />
+        · 窗口加宽：760×700 → <b>980×720</b>（最小 820×560）<br />
+        · <b>上下两张卡片</b>：上卡放品牌、状态、登录链接与四个主操作；下卡放导航与设置内容<br />
+        · 下卡左侧是固定「图标＋文字」的导航，没有「仅图标」态，鼠标放上去文字不跳动<br />
+        · 五个入口：「桥接插件」已归入「环境」，「网络」已归入「托盘与网络」<br />
+        · 标题栏右侧那颗圆角按钮就是新的<b>浅色/深色切换</b>，只有它一颗（试试点它）
+      </div>
+
+      <div class="picks solo">
+        <a class="pick main" href="./d-rail-panel.html">
+          <h2>乙改 · 左栏图标 + 右侧内容 <span class="tag">选定方向</span></h2>
+          <p>
+            上卡是状态与主操作，下卡是「左侧导航 + 右侧内容」，没有二级弹窗。
+            导航固定显示「图标＋文字」，悬停只换底色，文字不位移。
+            标题栏不画分割线，卡片不画横分割线；只有左栏与内容区之间的竖线。
+          </p>
+        </a>
+      </div>
+
+      <p class="sub">下面是之前的三版草稿（图标条 + 二级弹窗），只作对比留档</p>
+
+      <div class="picks">
+        <a class="pick" href="./a-centered.html">
+          <span class="thumb"><span class="dot"></span><span class="dot"></span><span class="dot wide"></span><span class="dot"></span><span class="dot"></span></span>
+          <h2>甲 · 图标居中一行</h2>
+          <p>七颗图标横排在卡片底部中间，悬停时胶囊由图标中心向左右长出。最简洁，一眼看全七个入口。</p>
+        </a>
+        <a class="pick" href="./b-rail.html">
+          <span class="thumb" style="flex-direction: column; gap: 4px">
+            <span class="dot wide"></span><span class="dot" style="margin-left: -40px"></span><span class="dot" style="margin-left: -40px"></span>
+          </span>
+          <h2>乙 · 左侧竖排图标栏</h2>
+          <p>图标竖排在卡片左侧，悬停向右长出文字，右侧留给状态与主操作。纵向排布更省宽度，像设置中心。</p>
+        </a>
+        <a class="pick" href="./c-grid.html">
+          <span class="thumb" style="flex-wrap: wrap; max-width: 130px; row-gap: 4px">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          </span>
+          <h2>丙 · 图标成块居中</h2>
+          <p>图标分两行排成一个方块（上面四个、下面三个），每颗悬停时底色先弹开再长出文字。图标更大更好点，占的空间也最多。</p>
+        </a>
+      </div>
+    </div>
+
+    <script src="./common.js"></script>
+    <script>
+      // 挑选页也带一个深浅切换按钮，用同一条存储键
+      initMode();
+    </script>
+  </body>
+</html>

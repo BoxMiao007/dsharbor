@@ -24,24 +24,29 @@ pub enum TrayClick {
 /// 0 = 立即销毁（现有行为）；其余为「先隐藏、到点再销毁」的秒数。
 pub const LIGHT_DELAY_CHOICES: [u64; 6] = [0, 5, 15, 30, 60, 300];
 
-/// 界面主题（Rust 侧的镜像，主题本体在 WebView 的 localStorage）。
-/// 序列化成 classic|nativeDark|native，与前端 main.ts 的 ThemeId 字面量一一对应；
-/// 改名会让两侧对不上（开窗装饰按 classic 兜底再闪一帧），必须同步。
+/// 界面外观（Rust 侧的镜像，本体在 WebView 的 localStorage）。
+/// 序列化成 light|dark，与前端 main.ts 的 ThemeId 字面量一一对应；
+/// 改名会让两侧对不上（开窗底色按错的一侧给），必须同步。
+/// 旧版的三套主题（classic / nativeDark / native）通过 alias 继续可读：
+/// classic 是浅色，nativeDark 与 native 都是深色。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum UiTheme {
+    #[serde(alias = "classic")]
+    Light,
     #[default]
-    Classic,
-    NativeDark,
-    Native,
+    #[serde(alias = "nativeDark", alias = "native")]
+    Dark,
 }
 
 /// IPC 传入的主题名转枚举（save_ui_theme 的校验入口）；不认识的返回 None。
 pub fn parse_ui_theme(raw: &str) -> Option<UiTheme> {
     match raw {
-        "classic" => Some(UiTheme::Classic),
-        "nativeDark" => Some(UiTheme::NativeDark),
-        "native" => Some(UiTheme::Native),
+        "light" => Some(UiTheme::Light),
+        "dark" => Some(UiTheme::Dark),
+        // 旧版的三个名字：迁移后仍能被接受，免得存量配置文件写回时报错。
+        "classic" => Some(UiTheme::Light),
+        "nativeDark" | "native" => Some(UiTheme::Dark),
         _ => None,
     }
 }
@@ -252,7 +257,11 @@ mod tests {
 
         assert_eq!(config.tray_click, TrayClick::Dsh, "其余设置不能丢");
         assert_eq!(config.light_delay_secs, 15, "其余设置不能丢");
-        assert_eq!(config.ui_theme, Some(UiTheme::NativeDark), "其余设置不能丢");
+        assert_eq!(
+            config.ui_theme,
+            Some(UiTheme::Dark),
+            "旧值 nativeDark 按深色读；其余设置不能丢"
+        );
         assert_eq!(
             config.prefs,
             ShellPrefs::default(),

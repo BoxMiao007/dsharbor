@@ -1,0 +1,18 @@
+/* 候选甲：图标一排居中，悬停由图标中心向左右长出胶囊与文字。 */
+
+.card .nav {
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.ico-item {
+  /* 居中布局下相邻项各自膨胀，用负值抵消一部分，避免整排左右跳动 */
+  margin: 0 -2px;
+}
+
+@media (max-width: 820px) {
+  .ico-item:hover,
+  .ico-item:focus-visible {
+    max-width: 150px;
+  }
+}

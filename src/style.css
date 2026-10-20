@@ -1,20 +1,16 @@
+/* 尺寸与动效节奏的统一出口：全站徽章、按钮、转圈共用这几个值。 */
 :root {
-  color-scheme: dark;
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-  /* 徽章尺寸统一（维护者要求）：全站徽章与「复制」胶囊按钮共用这三个值，
-     改一处即整体变化，不会再出现某一个徽章或胶囊偏大偏小。
-     高度 2026-10-17 维护者两轮反馈「过高」从 28px 收到 24px（原生暗色侧同收，见 --j-badge-h）。 */
+  /* 徽章尺寸统一：全站徽章与「复制」胶囊按钮共用这三个值，改一处即整体变化。 */
   --badge-height: 24px;
   --badge-padding-x: 10px;
   --badge-font-size: 13px;
-  /* 会话按钮动效节奏统一收口（2026-10-17 review 建议采纳）：维护者频繁调节奏，
-     原来散在 style.css 六处的 500ms/300ms/200ms 改成三个变量，改这里全站生效。
-     主题叠加 CSS（native-dark / native-layout）想用自己的节奏时覆盖变量即可。 */
+  /* 会话按钮动效节奏统一收口：维护者频繁调节奏，原来散在多处的 500ms/300ms/200ms
+     改成三个变量，改这里全站生效。 */
   --btn-sweep-ms: 500ms; /* 悬停漫过：图标板展开 + 文字推出的时长，也是闪动/旋转一轮的时长 */
   --btn-lead-ms: 200ms; /* 图标到中心前的提前起势量（延迟 = 漫过时长 − 提前量 = 300ms） */
-  --btn-hl-ms: 200ms; /* 悬停提亮（红→#ff3636 / 重启 brightness）与按下图标缩放的过渡 */
-  /* 转圈节拍：「启动中」徽章的加载圈与「重启 DSH」点击后的持续转动共用，
-     维护者要求两者转速一致（改这一处两边同步）。
+  --btn-hl-ms: 200ms; /* 悬停提亮与按下图标缩放的过渡 */
+  /* 转圈节拍：「启动中」徽章的加载圈与「重启 DSH」点击后的持续转动共用，要求两者转速一致。
      src/main.ts 的 RESTART_SPIN_MIN_MS 用同一个 700 数值但职责不同（那边=收场前
      最短反馈时长，这里=一圈时长），改转速时两处一起检查。 */
   --spin-ms: 700ms;
@@ -26,138 +22,151 @@
   box-sizing: border-box;
 }
 
-body {
-  min-height: 100vh;
-  display: flex;
-  justify-content: center;
-  /* 顶部 34px 是给固定定位的自绘标题栏让出的位置（见 .titlebar） */
-  padding: 60px 16px 34px;
-  /* 兜底：任何悬浮元素都不允许把页面顶出横向滚动条（维护者要求主题 3 禁止横向滚动）。
-     用 clip 而不是 hidden：clip 不会把 body 变成滚动容器，视口滚动与自绘滚动条的计量
-     都不受影响。 */
-  overflow-x: clip;
-  /* 兜底色：等于雾光渐变的末端色，渐变未覆盖处也保持深蓝。 */
-  background-color: #0a1c38;
-  color: #eef2fa;
+/* ==================== 浅色 / 深色两套外观 ====================
+   两套色板都写成 CSS 变量，切换只改 <html data-mode>（见 main.ts 的 applyMode），
+   不重建界面。深色是冷灰，浅色是同一套层级反相：卡片比页面亮，控件比卡片再亮一档。 */
+html[data-mode="dark"] {
+  color-scheme: dark;
+  --bg: #0b0f14;
+  --bg-2: #131a22;
+  --card: #171d25;
+  --card-2: #1d242d;
+  --elev: #212933;
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg: #e8eef7;
+  --fg-dim: #9aa7b8;
+  --fg-mute: #6d7a8a;
+  --accent: #4ea1ff;
+  --accent-soft: rgba(78, 161, 255, 0.16);
+  --ok: #57c98b;
+  --warn: #e8c85c;
+  --danger: #ef5f6b;
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --tip-bg: #0b1219;
 }
 
-/* 背景：复刻官网 hero 的深蓝雾光。
-   官网那层是 canvas 画的模糊光斑（blur 20px）再叠 radial-gradient，这里用多层
-   radial-gradient + 底色渐变逼近，零额外资源、任意窗口尺寸与 DPI 都不失真。
-   配色不是照着官网截图目测的，是从官网 hero 在 1000×700 视口下的实拍像素逐格取样
-   拟合的（8×6 网格干净区域平均色差 ≈7/255）：中部一块钢蓝雾光
-   （峰值 #4E6682 一带）落在页面中上方，左上与左下、底部压暗（#0A1727、#101C29），
-   右侧留一段中蓝（#24456F ~ #3C597C）。硬编码在 CSS 里，官网改版后需要重新取样。
-   2026-10-15：维护者反馈最亮那块偏亮，看过三档对比图后把第一层峰值定在 0.30
-   （过渡停靠点 0.13 → 0.09，其余五层未动）。峰值不再严格等于官网实拍。
-   2026-10-16：挂在 body 上时百分比径向尺寸随 body 盒高缩放，折叠内容后整页渐变重排、
-   屏上同一位置会整片变色；改挂到固定铺满视口的 ::before 上，渐变锁定视口。 */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(68% 84% at 46% 38%, rgba(118, 152, 196, 0.3) 0%, rgba(118, 152, 196, 0.09) 48%, rgba(118, 152, 196, 0) 78%),
-    radial-gradient(72% 62% at 88% 42%, rgba(54, 92, 144, 0.3) 0%, rgba(54, 92, 144, 0) 70%),
-    radial-gradient(64% 44% at 26% 2%, rgba(92, 128, 172, 0.3) 0%, rgba(92, 128, 172, 0) 64%),
-    radial-gradient(75% 65% at 0% 62%, rgba(3, 10, 20, 0.92) 0%, rgba(3, 10, 20, 0) 72%),
-    radial-gradient(120% 50% at 40% 108%, rgba(3, 11, 21, 0.88) 0%, rgba(3, 11, 21, 0) 70%),
-    linear-gradient(150deg, #102b4e 0%, #214569 38%, #112a4c 68%, #0a1c38 100%);
+html[data-mode="light"] {
+  color-scheme: light;
+  --bg: #eef2f7;
+  --bg-2: #dde5ef;
+  --card: #ffffff;
+  --card-2: #f4f7fb;
+  --elev: #ffffff;
+  --line: rgba(15, 26, 40, 0.09);
+  --line-strong: rgba(15, 26, 40, 0.16);
+  --fg: #16202c;
+  --fg-dim: #5a6878;
+  --fg-mute: #8494a5;
+  --accent: #1f6feb;
+  --accent-soft: rgba(31, 111, 235, 0.12);
+  --ok: #1e9e5f;
+  --warn: #b8860b;
+  --danger: #d33a4a;
+  --shadow: 0 18px 48px rgba(21, 38, 60, 0.16);
+  --tip-bg: #ffffff;
+}
+
+body {
+  /* 定高而不是最小高：让 #app 占满窗口，主卡才好用 flex:1 吃掉剩余高度，
+     面板内部自己滚，整个页面不会因为内容多而出现外层滚动条。 */
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  /* 标题栏是窗口内容的一部分（不再固定压在内容上），这里只留窗口四周的呼吸位。 */
+  padding: 0 16px 16px;
+  /* 兜底：任何悬浮元素都不允许把页面顶出横向滚动条。用 clip 而不是 hidden：
+     clip 不会把 body 变成滚动容器，视口滚动与自绘滚动条的计量都不受影响。 */
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 50% -10%, var(--bg-2) 0%, var(--bg) 62%);
+  color: var(--fg);
 }
 
 #app {
-  width: min(680px, 96vw);
+  width: min(1080px, 100%);
+  /* 撑满 body 的高度：主卡靠这条拿到「窗口 − 标题栏 − 上行窄卡」的剩余高度。 */
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 /* ---- 自绘标题栏（tauri.conf.json: decorations: false） ----
-   固定在最顶端、脱离文档流，整条可拖拽（data-tauri-drag-region）。
-   完全透明：不留底色也不留分隔线，直接坐在页面背景上，与雾光无缝相接。 */
+   跟着页面一起排、不固定，整条可拖拽（data-tauri-drag-region）。 */
 .titlebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
-  height: 34px;
+  height: 40px;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-left: 14px;
-  background: transparent;
+  padding-left: 2px;
   user-select: none;
-}
-
-/* 内容滚到标题栏底下时把它糊掉：::before 只负责模糊，叠一层遮罩把模糊从条顶到条底
-   渐隐到 0，所以不会在 34px 处留一条硬边。不加底色（压暗会让顶部的雾光变脏）。
-   z-index: -1 让它待在品牌区/按钮之下；标题栏自身是 z-index 50 的堆叠上下文，
-   所以这层模糊仍然盖在页面内容之上。 */
-.titlebar::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  -webkit-backdrop-filter: blur(12px) saturate(1.1);
-  backdrop-filter: blur(12px) saturate(1.1);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.62) 58%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.62) 58%, transparent 100%);
 }
 
 .titlebar-brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
-  letter-spacing: 0.06em;
-  color: #cfe0f5;
+  font-size: 13px;
+  color: var(--fg-dim);
 }
 
-/* 图标源与托盘/安装包同一个（assets/logo.png，即 SDK 图标源导出的 128px 图）：
-   小尺寸下让指针穿透，否则点在图上不会触发标题栏拖拽，还可能拖出一个图片残影。 */
+/* 图标源与托盘/安装包同一个（assets/logo.png）：小尺寸下让指针穿透，
+   否则点在图上不会触发标题栏拖拽，还可能拖出一个图片残影。 */
 .titlebar-logo {
   display: block;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
   pointer-events: none;
   -webkit-user-drag: none;
 }
 
 .titlebar-buttons {
   display: flex;
-  align-self: stretch;
+  align-items: center;
+  gap: 2px;
 }
 
-/* 三个窗口按钮：与 Windows 一致地铺满整条高度、无圆角，悬停给浅底，
-   关闭按钮悬停变红（系统那两个按钮的惯例）。 */
+/* 浅/深切换与三个窗口按钮同一组：圆角方格，悬停给一层强调底色。 */
+.mode-btn,
 .win-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 6px;
   background: transparent;
-  color: #cfe0f5;
+  color: var(--fg-dim);
+  transition:
+    background 140ms,
+    color 140ms;
 }
 
-/* 图标是内联 SVG（10px 见方、1.2px 描边）：描边色跟着按钮的 color 走，
-   悬停换底色时不用再动图标。路径坐标落在半像素上，线条才不糊。 */
+/* 图标是内联 SVG：描边跟着按钮的 color 走，悬停换底色时不用再动图标。 */
+.mode-btn svg,
 .win-btn svg {
-  width: 10px;
-  height: 10px;
+  width: 15px;
+  height: 15px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.2;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
+.mode-btn {
+  width: 34px;
+  margin-right: 4px;
+  border-radius: 999px;
+}
+
+.mode-btn:hover,
 .win-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--accent-soft);
+  color: var(--fg);
 }
 
 .win-btn.win-close:hover {
@@ -165,48 +174,83 @@ body::before {
   color: #ffffff;
 }
 
-.head {
-  text-align: center;
-  margin-bottom: 4px;
+/* ---- 两张卡片：上行窄卡（品牌、状态、登录提示、四个主操作），
+       下行主卡（左侧分区导航 + 右侧面板 + 底部一句说明）。 ---- */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 20px 22px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--card) 0%, var(--card-2) 100%);
 }
 
-.head h1 {
-  font-size: 30px;
-  letter-spacing: 4px;
-  margin-bottom: 6px;
+.top-card {
+  flex: none;
+  padding: 14px 18px;
+  gap: 10px;
+}
+
+.main-card {
+  flex: 1;
+  /* min-height: 0 是关键：不加的话 flex 项的最小高度是内容高度，主卡会被面板内容顶高，
+     剩下的高度交给 .panel 自己滚（窗口很小时也只滚面板，不滚整个页面）。 */
+  min-height: 0;
+  padding: 12px 18px 10px;
+}
+
+/* 品牌 + 状态徽章一行。窄窗时徽章行整体折到下一行（flex-wrap），不挤压品牌。 */
+.head-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  min-width: 0;
+}
+
+.head-logo {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+}
+
+.head-text {
+  flex: none;
+  min-width: 0;
+}
+
+.head-text h1 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
 }
 
 .tagline {
-  color: #9fb2d8;
-  font-size: 14px;
-}
-
-.light-hint {
-  margin-top: 8px;
-  color: #7f93bb;
-  font-size: 12.5px;
-}
-
-.card {
-  padding: 22px 24px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-}
-
-.card h2 {
-  font-size: 16px;
-  color: #cdd9f2;
-  margin-bottom: 14px;
-  letter-spacing: 1px;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
 }
 
 .status-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 14px;
-  margin-bottom: 12px;
+  gap: 8px 12px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* 主操作行：左侧一句登录提示，右侧四颗按钮。 */
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 .badge {
@@ -219,22 +263,32 @@ body::before {
   height: var(--badge-height);
   padding: 0 var(--badge-padding-x);
   border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--elev);
+  color: var(--fg-dim);
   font-size: var(--badge-font-size);
   line-height: 1;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .badge-running {
-  background: rgba(46, 204, 113, 0.18);
-  color: #6ee7a8;
-  border: 1px solid rgba(46, 204, 113, 0.4);
+  border-color: color-mix(in srgb, var(--ok) 42%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
 }
 
 /* 「启动中」：进程已起、登录链接还没就绪（npx 首次下载也会停在这一步） */
 .badge-starting {
-  background: rgba(96, 165, 250, 0.16);
-  color: #93c5fd;
-  border: 1px solid rgba(96, 165, 250, 0.42);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 面板头里的状态徽章：靠右，跟着标题一行。 */
+.panel-badge {
+  margin-left: auto;
+  flex: none;
 }
 
 .spinner {
@@ -242,8 +296,8 @@ body::before {
   height: 12px;
   flex: none;
   border-radius: 50%;
-  border: 2px solid rgba(147, 197, 253, 0.3);
-  border-top-color: #93c5fd;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
   animation: dsh-spin var(--spin-ms) linear infinite;
 }
 
@@ -253,13 +307,197 @@ body::before {
   }
 }
 
-/* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
-   出现在徽章里，以及 <label> / .setting-label / .theme-field-label 的文字后面。
-   徽章里是行内形式（跟文字排在同一条线上）；装在标签文字后面的那几个是角标：
-   绝对定位到标签的右上角、像上标一样不占文字的位置。尺寸一路收下来：14→12px，
-   2026-10-17 标签角标 13→11px；同日维护者仍嫌大、且相对所在元素偏高，再收成
-   行内 10px / 角标 9px；当轮晚些时候第三次反馈仍大，最终收成行内 8.5px / 角标 8px。 */
+/* ---- 左侧分区导航 ---- */
+.rail {
+  width: 168px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 10px 0 0;
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
 
+.ico-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 140ms,
+    background 140ms;
+}
+
+.ico-item svg {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ico-item .txt {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ico-item:hover {
+  background: var(--elev);
+  color: var(--fg);
+}
+
+.ico-item[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 选中标记：胶囊内左侧一根 3px 竖条。画在胶囊内侧而不是栏外，免得贴到窗口边。 */
+.ico-item[aria-current="true"]::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* ---- 右侧面板 ---- */
+.card-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.panels {
+  /* 承载面板与自绘滚动条（.scroll-track 绝对定位在这里，见下方），要当定位上下文。 */
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px 0 18px;
+  overflow-y: auto;
+}
+
+.panel.hidden {
+  display: none;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+}
+
+.panel-head h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+/* 面板里的输入框 / 下拉框撑满可用宽度（定稿稿里控件与标签同一行、控件吃掉余量；
+   真实界面保持标签在上一行的结构，只把控件拉宽）。给一台上限，免得超宽屏上
+   下拉框长得像一条横幅。 */
+.panel .picker,
+.panel input[type="text"] {
+  width: 100%;
+  max-width: 760px;
+}
+
+/* 并排两个控件（渠道下拉 + 版本徽章 / 端口 + 还原）时控件按比例分宽。 */
+.panel .control-line > .picker,
+.panel .port-row > input[type="text"] {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* 两列并排的字段组（附加参数 / 端口）：定稿稿里是同一行两个宽控件，
+   窄窗自动收成一列（见下方 .grid-2 与它的 @media）。 */
+.panel .grid-2 {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* 面板里的小节标题：文字 + 紧跟的徽章 + 一条填满余量的细线。 */
+.sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+.sec > span:first-child {
+  flex: none;
+}
+
+.sec::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* 内凹的信息块：面板里成组的内容（补丁层、插件、桥接插件操作等）装在这里。 */
+.sub-block {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+}
+
+/* 面板底部那句说明。 */
+.foot {
+  margin-top: auto;
+  flex: none;
+  padding-top: 6px;
+  font-size: 11.5px;
+  color: var(--fg-mute);
+}
+
+/* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
+   出现在徽章里，以及 <label> / .field-label 的文字后面。
+   徽章里是行内形式（跟文字排在同一条线上）；装在标签文字后面的那几个是角标：
+   绝对定位到标签的右上角、像上标一样不占文字的位置（尺寸一路收到 8.5 / 8px）。 */
 .info-dot {
   position: relative;
   display: inline-flex;
@@ -276,21 +514,17 @@ body::before {
   cursor: help;
 }
 
-/* 角标形式：贴在标签文字的右上角（2026-10-17 晚三轮微调：1px→-1px→top:0，
-   定在与文字轻微咬合的高度、横向留缝 right:-10px）。
-   承载它的元素要能当定位上下文，且宽度要收紧到文字
-   （三个标签在各自的列里都是撑满的，不收的话 right: -10px 会把角标摆到列表右缘、
+/* 角标形式：贴在标签文字的右上角。承载它的元素要能当定位上下文，且宽度要收紧到文字
+   （标签在各自的列里都是撑满的，不收的话 right: -10px 会把角标摆到列表右缘、
    悬停气泡再向右展开就凸出窗口）。 */
 .fields label,
-.setting-label,
-.theme-field-label {
+.field-label {
   position: relative;
   width: max-content;
 }
 
 .fields label > .info-dot,
-.setting-label > .info-dot,
-.theme-field-label > .info-dot {
+.field-label > .info-dot {
   position: absolute;
   top: 0;
   right: -10px;
@@ -310,10 +544,10 @@ body::before {
   max-width: 300px;
   padding: 7px 11px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: #0c1830;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
-  color: #dbe6fb;
+  border: 1px solid var(--line-strong);
+  background: var(--tip-bg);
+  box-shadow: var(--shadow);
+  color: var(--fg);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.6;
@@ -334,86 +568,109 @@ body::before {
   outline: none;
 }
 
-/* 标签里的 ⓘ 现在贴着卡片左缘（原生主题下 .fields > label 只有 128px 宽），
-   气泡再按 50% 居中就会向左撑出窗口：最窄窗口 720px 时，卡片左留白约 14~20px +
-   卡片内边距约 18px，圆点中心离窗口左缘只有几十像素，300px 宽的气泡一半就落到窗外。
-   这些位置的圆点改成气泡左边缘对齐圆点左边缘、只向右展开：
-   若圆点最靠左也只到 x≈60px，60 + 300 = 360px < 720px，不会越过窗口右缘。
-   徽章里（状态行、桥接状态等位于卡片中部）仍用居中，保持原有观感。 */
+/* 标签里的 ⓘ 贴着卡片左缘，气泡再按 50% 居中就会向左撑出窗口：
+   这些位置的圆点改成气泡左边缘对齐圆点左边缘、只向右展开。 */
 .fields label .info-dot::after,
-.setting-label .info-dot::after,
-.theme-field-label .info-dot::after {
+.field-label .info-dot::after {
   left: 0;
   transform: none;
 }
 
 .badge-stopped {
-  background: rgba(148, 163, 184, 0.15);
-  color: #a8b6cf;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-color: var(--line-strong);
+  background: var(--elev);
+  color: var(--fg-dim);
 }
 
 .badge-failed {
-  background: rgba(239, 68, 68, 0.16);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.badge-version {
+  border-color: var(--line-strong);
+  background: var(--elev);
+  color: var(--fg-dim);
+}
+
+.badge-version svg {
+  width: 12px;
+  height: 12px;
+  transform: translateY(-1.5px);
 }
 
 .status-meta {
-  font-size: 13px;
-  color: #9fb2d8;
+  font-size: 12.5px;
+  color: var(--fg-mute);
+  white-space: nowrap;
 }
 
 .status-meta b {
-  color: #eef2fa;
+  color: var(--fg-dim);
+  font-weight: 500;
 }
 
 .actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
-/* 按钮行（维护者要求，三个主题统一）：排在状态徽章行下面、占满一整行。
-   主组（启动 DSH，或运行后的 停止 + 重启 DSH）撑满左侧余量、组内两颗平分宽度；
+/* 按钮行：主组（启动 DSH，或运行后的 停止 + 重启 DSH）撑满左侧余量、组内两颗平分；
    打开组（应用内打开 / 浏览器打开）按内容宽度靠右，由 render() 只在运行后移除 .hidden。
    窗口窄到放不下两组时打开组整体换行到下一行，仍靠右，不挤压按钮。 */
 .actions-row {
   display: flex;
   align-items: stretch;
   flex-wrap: wrap;
-  gap: 10px;
-}
-
-.actions-row > .actions-primary {
-  flex: 1 1 auto;
-}
-
-.actions-row > .actions-primary > button {
-  flex: 1 1 0;
-}
-
-.actions-row > .actions-open {
+  gap: 8px;
+  min-width: 0;
+  /* 主操作贴着窗口右侧排：左侧留给登录提示（出错时才有）。 */
   margin-left: auto;
 }
 
+/* 按钮按内容取宽（不再拉满一行）：「启动 DSH」一颗时只占自己的宽，
+   运行后 停止 / 重启 / 应用内打开 / 浏览器打开 四颗依次排在右侧。 */
+.actions-row > .actions-primary {
+  flex: none;
+}
+
+.actions-row > .actions-primary > button {
+  flex: none;
+}
+
+.actions-row > .actions-open {
+  flex: none;
+}
+
 /* 登录说明只在出错时出现；正常状态改挂在登录徽章的感叹号气泡里。
-   独立成段（不再和按钮同排），出现或消失都不会挤动上面的两排按钮。 */
+   独立成段（不再和按钮同排），出现或消失都不会挤动上面的按钮行。 */
 .login-note {
-  margin-top: 10px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 button {
-  padding: 8px 22px;
+  padding: 7px 16px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.07);
-  color: #eef2fa;
-  font-size: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
   cursor: pointer;
+  transition:
+    background 140ms,
+    border-color 140ms;
 }
 
 button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.13);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
 }
 
 button:disabled {
@@ -422,12 +679,15 @@ button:disabled {
 }
 
 button.primary {
-  background: #3b6fe0;
-  border-color: #4f82f0;
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 button.primary:hover:not(:disabled) {
-  background: #4a7cf0;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 84%, #ffffff);
 }
 
 /* 会话按钮的图标段 + 悬停「文字推出 + 图标板漫过」动效（2026-10-17 维护者定稿：
@@ -455,6 +715,9 @@ button.primary:hover:not(:disabled) {
 /* 图标段占右端一个方格（38px）：给带图标的按钮把右侧内边距让出来（10px 间隙 + 方格），
    保证居中的文字不会被图标分段压住；「启动 DSH」形态没有图标段，不受影响。 */
 .actions-row button:has(.btn-ico) {
+  /* 内宽 = 图标段边长 + 原来两侧对称的内边距，文字在剩下的空间里真正居中；
+     否则按钮被加宽后文字会偏左。 */
+  padding-left: calc(16px + var(--btn-ico-size));
   padding-right: calc(10px + var(--btn-ico-size));
 }
 
@@ -711,9 +974,9 @@ button.primary:hover:not(:disabled) {
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.6;
-  color: #fecaca;
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -725,7 +988,7 @@ button.primary:hover:not(:disabled) {
 .log-box {
   margin-top: 14px;
   font-size: 13px;
-  color: #9fb2d8;
+  color: var(--fg-dim);
 }
 
 .log-box summary {
@@ -742,12 +1005,12 @@ button.primary:hover:not(:disabled) {
   max-height: 310px;
   overflow: auto;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--bg) 60%, var(--card));
+  border: 1px solid var(--line);
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 12px;
   line-height: 1.6;
-  color: #c8d6f0;
+  color: var(--fg-dim);
   white-space: pre-wrap;
   word-break: break-all;
   /* 日志要能随手拖选复制（维护者要求）；上面标题行保持不可选。 */
@@ -774,7 +1037,7 @@ button.primary:hover:not(:disabled) {
   background: none;
   font-size: var(--badge-font-size);
   line-height: 1;
-  color: #9fb2d8;
+  color: var(--fg-dim);
   opacity: 0.45;
   pointer-events: none;
   transition: opacity 0.12s ease;
@@ -787,7 +1050,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .log-copy:hover:not(:disabled) {
-  color: #eef2fa;
+  color: var(--fg);
 }
 
 /* 端口「还原」按钮（原来是显示当前状态的徽章）：点一下清空端口输入框 = 回到
@@ -803,12 +1066,12 @@ button.primary:hover:not(:disabled) {
   font-size: var(--badge-font-size);
   line-height: 1;
   font-weight: 600;
-  color: #9fb2d8;
+  color: var(--fg-dim);
 }
 
 .port-reset:hover:not(:disabled),
 .path-browse:hover:not(:disabled) {
-  color: #eef2fa;
+  color: var(--fg);
 }
 
 /* 「指定程序路径」行：输入框 + 「浏览…」按钮同一行。输入框在上方的 #binary-path
@@ -835,7 +1098,7 @@ p.hint.error {
   margin: 0;
   border: none;
   background: none;
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .mode {
@@ -849,12 +1112,12 @@ p.hint.error {
 }
 
 .mode:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--card-2);
 }
 
 .mode input {
   margin-top: 4px;
-  accent-color: #4f82f0;
+  accent-color: var(--accent);
 }
 
 .mode b {
@@ -864,7 +1127,7 @@ p.hint.error {
 }
 
 .mode small {
-  color: #8296b8;
+  color: var(--fg-mute);
   font-size: 12px;
 }
 
@@ -872,7 +1135,7 @@ p.hint.error {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 4px 0 10px 34px;
+  padding: 4px 0 10px;
 }
 
 /* 「指定程序路径」「自定义命令」两组参数靠 .hidden 收起，但上面那条 display:flex
@@ -883,14 +1146,14 @@ p.hint.error {
 
 .fields label {
   font-size: 13px;
-  color: #9fb2d8;
+  color: var(--fg-dim);
 }
 
 /* 非 <label> 的字段标题（运行环境 / 渠道）：<label for> 必须指向真实控件，
    自绘下拉框是一整块 div，用 span 更名实相符，外观跟着 label 走。 */
 .fields .field-label {
   font-size: 13px;
-  color: #9fb2d8;
+  color: var(--fg-dim);
 }
 
 /* 同一行放两个控件（渠道下拉 + 版本徽章 / 版本下拉）。260px 放得下两个 260px 控件的地方
@@ -921,16 +1184,16 @@ input[type="text"],
   border-radius: 10px;
   /* 输入框/下拉框的凹陷底色与描边跟页面背景同一族冷蓝，不用中性黑，
      否则在拟合后的钢蓝底色上会显得发灰、跟背景脱节。 */
-  border: 1px solid rgba(170, 197, 233, 0.2);
-  background: rgba(9, 21, 38, 0.42);
-  color: #eef2fa;
+  border: 1px solid var(--line-strong);
+  background: var(--card-2);
+  color: var(--fg);
   font-size: 13px;
 }
 
 input[type="text"]:focus,
 .picker-btn:focus-visible {
   outline: none;
-  border-color: #5f8fd8;
+  border-color: var(--accent);
 }
 
 /* 短输入框固定 260px、左对齐（原来撑满整行）。260px 取自 .picker 里的最长选项
@@ -969,13 +1232,13 @@ input[type="text"] {
 
 .hint {
   font-size: 12px;
-  color: #6d7f9e;
+  color: var(--fg-mute);
   line-height: 1.7;
 }
 
 .hint code,
 .mode small code {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--elev);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -986,8 +1249,8 @@ input[type="text"] {
 
 .picker {
   position: relative;
-  /* 自绘下拉框与短输入框同为 260px（原来是撑满整行）；按钮仍撑满这 260px，
-     弹层跟着这个宽度（.picker-list 用 left/right: 0）。 */
+  /* 自绘下拉框默认 260px；面板里由 .panel .picker 拉宽到整行（见 .panel-body 前的适配段）。
+     弹层跟这个宽度（.picker-list 用 left/right: 0）。 */
   width: 260px;
 }
 
@@ -1003,11 +1266,11 @@ input[type="text"] {
 }
 
 .picker-btn:hover {
-  border-color: rgba(170, 197, 233, 0.34);
+  border-color: var(--accent);
 }
 
 .picker-btn[aria-expanded="true"] {
-  border-color: #6f9fe0;
+  border-color: var(--accent);
 }
 
 .picker-label {
@@ -1053,7 +1316,7 @@ input[type="text"] {
 .picker-chev {
   flex: none;
   font-size: 11px;
-  color: #a8bdd9;
+  color: var(--fg-dim);
   transition: transform 0.15s ease;
 }
 
@@ -1066,18 +1329,18 @@ input[type="text"] {
   z-index: 30;
   top: calc(100% + 6px);
   left: 0;
-  right: 0;  margin: 0;
+  right: 0;
+  margin: 0;
   padding: 6px;
   list-style: none;
   max-height: 260px;
   overflow-y: auto;
   border-radius: 12px;
-  /* 弹层比卡片略深一档、带一点透明度，让页面背景的钢蓝雾光透上来（原来是偏紫的不透明深藏蓝 #111f38）；
-     背景本身是渐变的，所以用 backdrop-filter 把透上来的底色抹平，文字才不会跟着背景忽明忽暗。 */
-  border: 1px solid rgba(206, 224, 248, 0.28);
-  background: rgba(52, 82, 120, 0.5);
-  backdrop-filter: blur(12px) saturate(1.1);
-  box-shadow: 0 14px 34px rgba(3, 10, 22, 0.5);
+  /* 弹层用卡片底色：面板本身是卡片，弹层再深/再浅一档就容易和背后的控件糊在一起。
+     旧的半透明毛玻璃已经去掉——它会把底下的文字透上来，长列表看着脏。 */
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  box-shadow: var(--shadow);
 }
 
 .picker-option {
@@ -1087,7 +1350,7 @@ input[type="text"] {
   padding: 7px 10px;
   border-radius: 8px;
   font-size: 13px;
-  color: #eaf1fa;
+  color: var(--fg-dim);
   cursor: pointer;
 }
 
@@ -1110,26 +1373,26 @@ input[type="text"] {
 
 .picker-option:hover,
 .picker-option.active {
-  background: rgba(124, 172, 230, 0.34);
-  color: #f7faff;
+  background: var(--accent-soft);
+  color: var(--fg);
 }
 
 /* 占位项不能吃 hover 蓝底（上面的选择器特指度不够，得单独压回去）。 */
 .picker-option.disabled:hover {
   background: none;
-  color: #eaf1fa;
+  color: var(--fg-dim);
 }
 
 .picker-list:not(:hover):not(:has(.picker-option.active))
   .picker-option[aria-selected="true"] {
-  background: rgba(124, 172, 230, 0.34);
-  color: #f7faff;
+  background: var(--accent-soft);
+  color: var(--fg);
 }
 
 .picker-option .tick {
   flex: none;
   font-size: 11px;
-  color: #cfe1fa;
+  color: var(--accent);
 }
 
 .picker-option .text {
@@ -1150,21 +1413,23 @@ html::-webkit-scrollbar {
   height: 0;
 }
 
+/* 指示条挂在 .panels 上（面板外层）：面板是滚动容器，绝对定位的子元素会跟着内容滚走。
+   贴面板右缘、与面板等高。 */
 .scroll-track {
-  position: fixed;
-  top: 40px;
-  right: 3px;
-  bottom: 4px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 5px;
   pointer-events: auto;
-  z-index: 60;
+  z-index: 5;
 }
 
 .scroll-thumb {
   width: 100%;
   height: 0;
   border-radius: 999px;
-  background: rgba(190, 214, 244, 0.42);
+  background: color-mix(in srgb, var(--fg) 42%, transparent);
   opacity: 0;
   transition: opacity 0.25s ease;
   cursor: grab;
@@ -1196,17 +1461,17 @@ html::-webkit-scrollbar {
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
-  background: rgba(170, 197, 233, 0.14);
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(190, 214, 244, 0.42);
+  background: color-mix(in srgb, var(--fg) 42%, transparent);
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:active {
-  background: rgba(206, 226, 250, 0.55);
+  background: color-mix(in srgb, var(--fg) 55%, transparent);
   background-clip: content-box;
 }
 
@@ -1217,9 +1482,9 @@ html::-webkit-scrollbar {
 /* 展开开关（最近输出 / 操作输出）：整行可点、带旋转箭头指示 */
 .log-box {
   padding: 10px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.12);
+  background: var(--card-2);
 }
 
 .log-box summary {
@@ -1227,7 +1492,7 @@ html::-webkit-scrollbar {
   align-items: center;
   gap: 8px;
   padding: 2px 0;
-  color: #b9c8e6;
+  color: var(--fg-dim);
   font-size: 13px;
   list-style: none;
 }
@@ -1237,13 +1502,13 @@ html::-webkit-scrollbar {
 }
 
 .log-box summary:hover {
-  color: #eef2fa;
+  color: var(--fg);
 }
 
 .log-box .chev {
   display: inline-block;
   font-size: 11px;
-  color: #7f93bb;
+  color: var(--fg-mute);
   transition: transform 0.15s ease;
 }
 
@@ -1263,15 +1528,15 @@ html::-webkit-scrollbar {
 .subcard {
   margin-top: 12px;
   padding: 14px 16px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.14);
+  background: var(--card-2);
 }
 
 .subcard-title {
   margin-bottom: 10px;
   font-size: 13px;
-  color: #b9c8e6;
+  color: var(--fg-dim);
   letter-spacing: 0.4px;
 }
 
@@ -1297,29 +1562,29 @@ html::-webkit-scrollbar {
   width: 100%;
   padding: 7px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(170, 197, 233, 0.16);
-  background: rgba(9, 21, 38, 0.32);
+  border: 1px solid var(--line);
+  background: var(--card-2);
   font-size: 13px;
   text-align: left;
 }
 
 .profile-manage-list .profile-manage-item:hover:not(:disabled) {
-  background: rgba(95, 143, 216, 0.16);
+  background: var(--elev);
 }
 
 /* 选中的那一行用主色描边而不是填色：填色会和「运行中」徽章的语义撞车。 */
 .profile-manage-list .profile-manage-item.is-selected {
-  border-color: #5f8fd8;
-  background: rgba(95, 143, 216, 0.14);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .profile-manage-name-text {
-  color: #eef2fa;
+  color: var(--fg);
 }
 
 .profile-manage-meta {
   font-size: 12px;
-  color: #9fb2d8;
+  color: var(--fg-dim);
 }
 
 .profile-manage-tag {
@@ -1327,8 +1592,8 @@ html::-webkit-scrollbar {
   padding: 1px 7px;
   border-radius: 6px;
   font-size: 12px;
-  color: #ffd47a;
-  background: rgba(255, 201, 92, 0.14);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 
 /* 删除的二次确认行：与动作按钮同宽的一段，视觉上从面板里「浮」出来提醒这是危险动作。 */
@@ -1336,8 +1601,8 @@ html::-webkit-scrollbar {
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 88, 88, 0.4);
-  background: rgba(255, 88, 88, 0.08);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .profile-confirm .hint {
@@ -1346,12 +1611,13 @@ html::-webkit-scrollbar {
 
 /* 危险动作按钮（删除环境）：常态用语言提示而不是红色禁用色，悬停才亮红。 */
 button.danger {
-  border-color: rgba(255, 88, 88, 0.45);
-  color: #ff9b9b;
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
 }
 
 button.danger:hover:not(:disabled) {
-  background: rgba(255, 88, 88, 0.16);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 
 /* 补丁层面板：备份按钮 + 备份清单（一行一份，最新的在最上面）。
@@ -1360,7 +1626,7 @@ button.danger:hover:not(:disabled) {
 .patch-panel {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--line);
 }
 
 .patch-panel .hint {
@@ -1381,22 +1647,22 @@ button.danger:hover:not(:disabled) {
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border: 1px solid rgba(170, 197, 233, 0.16);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(9, 21, 38, 0.32);
+  background: var(--card-2);
   font-size: 13px;
 }
 
 .patch-backup-time {
   flex: none;
-  color: #c8d6f0;
+  color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
 }
 
 .patch-backup-path {
   flex: 1;
   min-width: 0;
-  color: #9fb2d8;
+  color: var(--fg-mute);
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 12px;
   word-break: break-all;
@@ -1415,9 +1681,9 @@ button.danger:hover:not(:disabled) {
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  border: 1px solid rgba(170, 197, 233, 0.16);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(9, 21, 38, 0.32);
+  background: var(--card-2);
   font-size: 13px;
   cursor: pointer;
   user-select: none;
@@ -1427,7 +1693,7 @@ button.danger:hover:not(:disabled) {
   flex: none;
   width: 15px;
   height: 15px;
-  accent-color: #4f82f0;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
@@ -1444,7 +1710,7 @@ button.danger:hover:not(:disabled) {
 .plugin-name {
   flex: 1;
   min-width: 0;
-  color: #eef2fa;
+  color: var(--fg);
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 12.5px;
   word-break: break-all;
@@ -1453,13 +1719,13 @@ button.danger:hover:not(:disabled) {
 .plugin-state {
   flex: none;
   font-size: 12px;
-  color: #9fb2d8;
+  color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
 }
 
 .plugin-row.is-off .plugin-name,
 .plugin-row.is-off .plugin-state {
-  color: #7f8ca6;
+  color: var(--fg-mute);
 }
 
 .plugin-tag {
@@ -1467,24 +1733,24 @@ button.danger:hover:not(:disabled) {
   padding: 1px 7px;
   border-radius: 6px;
   font-size: 12px;
-  color: #9fb2d8;
-  background: rgba(170, 197, 233, 0.12);
+  color: var(--fg-dim);
+  background: var(--elev);
 }
 
 /* 桥接插件是唯一能让壳自动拿到登录链接的插件，标记用主色，与其它标记区分开。 */
 .plugin-tag-bridge {
-  color: #7fb2ff;
-  background: rgba(79, 130, 240, 0.18);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* 关掉桥接后的提醒：不提示就是用户自己把登录链接弄丢了，所以用警告色而不是 hint 灰。 */
 .plugin-warning {
-  color: #ffd47a;
+  color: var(--warn);
 }
 
 .plugin-empty {
   padding: 12px;
-  border: 1px dashed rgba(170, 197, 233, 0.24);
+  border: 1px dashed var(--line-strong);
   border-radius: 8px;
   text-align: center;
 }
@@ -1534,7 +1800,7 @@ button.danger:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
   margin: 14px 0 16px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -1545,7 +1811,7 @@ button.danger:hover:not(:disabled) {
   align-items: baseline;
   padding: 10px 14px;
   font-size: 13px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--line);
 }
 
 .kv-row:first-child {
@@ -1554,11 +1820,11 @@ button.danger:hover:not(:disabled) {
 
 .kv-key {
   flex: 0 0 76px;
-  color: #8fa3c8;
+  color: var(--fg-mute);
 }
 
 .kv-value {
-  color: #eef2fa;
+  color: var(--fg);
   line-height: 1.6;
   word-break: break-all;
 }
@@ -1587,114 +1853,6 @@ button.danger:hover:not(:disabled) {
   margin-bottom: 4px;
 }
 
-/* ---- 版本徽章（DSH 会话卡片状态行内，配色与「已停止」一致） ---- */
-
-.badge-version {
-  background: rgba(148, 163, 184, 0.15);
-  color: #a8b6cf;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-}
-
-.badge-version svg {
-  width: 12px;
-  height: 12px;
-  flex: none;
-  /* 官网原样是 -translate-y-[1.5px]：星形视觉重心偏上，微调以对齐文字基线。 */
-  transform: translateY(-1.5px);
-}
-
-/* ---- 卡片折叠（「DSH 会话」「关于」不折叠；默认展开，收起状态经 localStorage 键
-   dsharbor.ui.cardCollapsed 持久化） ---- */
-
-.card-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* 负外边距 + 内边距：平时与卡片标题左对齐，同时留出一圈圆角热区（不留直角）。 */
-  margin: -4px -10px;
-  padding: 4px 10px;
-  border: none;
-  border-radius: 10px;
-  background: none;
-  color: #cdd9f2;
-  font-size: 16px;
-  letter-spacing: 1px;
-  text-align: left;
-  cursor: pointer;
-}
-
-/* 悬停/聚焦只给文字色与箭头反馈，不加底色（用 :not(:disabled) 提特指度，
-   压过通用的 button:hover:not(:disabled) 填充，故不用 !important）。 */
-.card-toggle:hover {
-  color: #eef2fa;
-}
-
-.card-toggle:hover:not(:disabled) {
-  background: none;
-}
-
-.card-toggle:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(79, 130, 240, 0.45);
-}
-
-.card-toggle:focus-visible:not(:disabled) {
-  background: none;
-}
-
-.card-toggle .chev {
-  display: inline-block;
-  font-size: 11px;
-  color: #7f93bb;
-  transition: transform 0.15s ease;
-}
-
-.card-toggle[aria-expanded="true"] .chev {
-  transform: rotate(90deg);
-}
-
-/* 收起后显示的摘要徽章（展开时不显示）：紧跟折叠标题文字，不再推到最右侧。
-   与标题之间那 8px 由 .card-toggle 的 gap 给出（徽章是它里面的 flex 项，
-   标题文字是匿名 flex 项），这里不用再补外边距。 */
-.card-summary {
-  display: none;
-}
-
-.card.collapsed .card-summary {
-  display: inline-flex;
-}
-
-.card.collapsed .card-head {
-  margin-bottom: 0;
-}
-
-.card.collapsed .card-body {
-  display: none;
-}
-
-/* ---- 「关于」卡片 ---- */
-
-/* 「界面主题」字段：标签在上、控件在下（三套主题共用）。
-   配色写死基础层的中性蓝灰，不用主题 2/3 的 --j-* 变量——那是主题层的事，
-   只加载 style.css 的「原版」主题取不到那些变量。 */
-.theme-fields {
-  margin-top: 12px;
-}
-
-.theme-field {
-  display: flex;
-  flex-direction: column;
-  /* 左对齐：下拉框固定 260px，不跟着容器拉伸（拉伸也不会生效，
-     这里只是把「左对齐」写成显式规则，并挡住将来换掉固定宽度的情况）。 */
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.theme-field-label {
-  font-size: 13px;
-  color: #9fb2d8;
-}
-
 /* 操作按钮已并入各条目（见 .kv-row-action）；说明文字与上方条目留出间距。 */
 #about-note {
   margin-top: 12px;
@@ -1711,7 +1869,7 @@ button.danger:hover:not(:disabled) {
   margin-bottom: 8px;
   font-size: 13px;
   line-height: 1.6;
-  color: #eef2fa;
+  color: var(--fg);
   cursor: pointer;
   user-select: none;
 }
@@ -1721,7 +1879,7 @@ button.danger:hover:not(:disabled) {
   width: 15px;
   height: 15px;
   margin-top: 3px;
-  accent-color: #4f82f0;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 

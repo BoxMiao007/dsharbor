@@ -925,112 +925,15 @@ fn open_external(target: String) -> Result<(), String> {
     launch_default_browser(url)
 }
 
-/// 给系统标题栏指定颜色（`None` = 交回系统，跟随系统主题与强调色）。
-/// 界面底色是 #202020，而 Windows 的标题栏带透明度（受壁纸色调影响），对不齐；
-/// 主题「系统原生」用它把标题栏钉成和界面一样的色。`DWMWA_CAPTION_COLOR` 是
-/// Windows 11（build 22000）起才有的属性，旧系统上调用会失败——保持系统颜色即可。
-#[tauri::command]
-#[cfg(windows)]
-fn set_caption_color(window: tauri::Window, color: Option<u32>) -> Result<(), String> {
-    let hwnd = window
-        .hwnd()
-        .map_err(|err| format!("拿不到窗口句柄：{err}"))?
-        .0;
-    set_caption_color_raw(hwnd as isize, color);
-    Ok(())
-}
-
-/// 非 Windows 上没有 hwnd 可言：收下参数、保持系统颜色（本应用也只在 Windows 发版）。
-#[tauri::command]
-#[cfg(not(windows))]
-fn set_caption_color(window: tauri::Window, color: Option<u32>) -> Result<(), String> {
-    let _ = (window, color);
-    Ok(())
-}
-
-/// 上色动作本体：按句柄干活，`tauri::Window`（命令入口）与 `tauri::WebviewWindow`
-/// （建窗/启动流程入口）都能喂进来。
-fn set_caption_color_raw(hwnd: isize, color: Option<u32>) {
-    #[cfg(windows)]
-    {
-        // dwmapi 是系统库，直接声明省一个依赖。
-        #[link(name = "dwmapi")]
-        extern "system" {
-            fn DwmSetWindowAttribute(
-                hwnd: *mut core::ffi::c_void,
-                attribute: u32,
-                value: *const core::ffi::c_void,
-                size: u32,
-            ) -> i32;
-        }
-        const DWMWA_CAPTION_COLOR: u32 = 35;
-        // 这个值表示「没有自定义颜色」，交给系统主题决定。
-        const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
-
-        let value = color.unwrap_or(DWMWA_COLOR_DEFAULT);
-        // SAFETY：hwnd 来自本进程的窗口；value 是栈上的 u32，按属性要求传 4 字节。
-        let result = unsafe {
-            DwmSetWindowAttribute(
-                hwnd as *mut core::ffi::c_void,
-                DWMWA_CAPTION_COLOR,
-                std::ptr::from_ref(&value).cast(),
-                4,
-            )
-        };
-        if result < 0 && color.is_some() {
-            eprintln!("自定义标题栏颜色失败（Windows 版本可能不支持）：0x{result:08X}");
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (hwnd, color);
-    }
-}
-
-/// 按已存主题在窗口层摆好外观：系统原生 → 系统标题栏 + 深色主题 + 界面同色 caption；
-/// 其余两套 → 无装饰（自绘标题栏）、caption 交回系统。
-///
-/// 必须在建窗/首帧之前调用：等前端挂载完再切，每次开窗（含托盘重开）都会先闪一帧
-/// 自绘标题栏（主题 1 的样子）再换成系统标题栏——这正是每次启动闪主题 1 的根因。
-fn apply_native_chrome(window: &tauri::WebviewWindow, native: bool) {
-    if let Err(err) = window.set_decorations(native) {
-        eprintln!("[dsharbor] 设置窗口装饰失败：{err}");
-    }
-    if native {
-        // 界面本身深色：钉成深色主题，免得系统标题栏给条浅色带（同前端 applyWindowChrome）。
-        if let Err(err) = window.set_theme(Some(tauri::Theme::Dark)) {
-            eprintln!("[dsharbor] 设置窗口深色主题失败：{err}");
-        }
-    }
-    // 界面底 #202020 → COLORREF 是 0x00202020（0x00BBGGRR）；非原生主题交回系统。
-    // hwnd() 只在 Windows 上存在（本应用也只在 Windows 发版，Linux 只是单测编译目标）。
-    #[cfg(windows)]
-    match window.hwnd() {
-        Ok(hwnd) => set_caption_color_raw(hwnd.0 as isize, native.then_some(0x0020_2020)),
-        Err(err) => eprintln!("[dsharbor] 拿不到窗口句柄，标题栏颜色保持默认：{err}"),
-    }
-    #[cfg(not(windows))]
-    let _ = native;
-}
-
-/// 主题 3（native）才用系统标题栏；classic / nativeDark 走自绘。
-/// 判定收在这一个函数：建窗装饰、托盘重建、底色都问它，改判定不漏点。
-fn is_native_theme(theme: Option<settings::UiTheme>) -> bool {
-    matches!(theme, Some(settings::UiTheme::Native))
-}
-
 /// 开窗即定 webview 底色：WebView2 首次绘制前有一帧自身底色（纯白），index.html
-/// 再怎么预着色也管不到它。原生暗色主题（nativeDark/native）给 #202020（与
-/// index.html 预着色、src/themes/native-dark.css 页面底同值，改色三处同步），
-/// classic 给近页面底的浅灰。前端切主题不调这个——亮暗外壳瞬间整页覆盖，露不出底。
+/// 再怎么预着色也管不到它。深色给页面底 #0b0f14、浅色给 #eef2f7，与 index.html
+/// 的预着色规则、src/style.css 里 --bg 的取值同值，改色三处同步。
+/// 前端切深浅不调这个：外观切换只重染页面，露不出底。
 fn webview_base_color(theme: Option<settings::UiTheme>) -> tauri::window::Color {
-    if matches!(
-        theme,
-        Some(settings::UiTheme::NativeDark | settings::UiTheme::Native)
-    ) {
-        tauri::window::Color(32, 32, 32, 255)
+    if matches!(theme, Some(settings::UiTheme::Dark)) {
+        tauri::window::Color(11, 15, 20, 255)
     } else {
-        tauri::window::Color(250, 251, 252, 255)
+        tauri::window::Color(238, 242, 247, 255)
     }
 }
 
@@ -1551,31 +1454,32 @@ fn show_or_create_main(app: &tauri::AppHandle) {
     dispatch_lifecycle(app, ShellEvent::TrayShow);
 }
 
-/// 建主窗口并把装饰、webview 底色一次性摆到位：第一帧就是正确外观。
+/// 建主窗口并把 webview 底色一次性摆到位：第一帧就是正确外观。
 /// 建窗参数只在这里一处（tauri.conf.json 已不声明窗口）——setup 首开与
 /// create_main_window 托盘重建共用；装饰的「已知陷阱」见下方：
-/// 漏写 `decorations(is_native_theme(..))` 不会有编译错误，只会让重建出来的窗口
-/// 套回系统标题栏，而页面里的 .titlebar 依旧照画，于是「关窗后从托盘重开界面」
-/// 变成上下两个标题栏（真机实测：客户区高度之外的标题栏从 8px 变成 38px）。
+/// 漏写 `decorations(false)` 不会有编译错误，只会让重建出来的窗口套回系统标题栏，
+/// 而页面里的 .titlebar 依旧照画，于是「关窗后从托盘重开界面」变成上下两个标题栏
+/// （真机实测：客户区高度之外的标题栏从 8px 变成 38px）。
+/// 窗口尺寸要容得下「上行窄卡 + 下行主卡（左导航 168px + 右面板）」：
+/// 1080 是 #app 的宽度上限，内宽给到它就不用在常见屏宽上压缩内容。
 /// 必须在主线程调用（背景见 create_main_window 注释）。
 fn build_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, tauri::Error> {
     let theme = settings::load(app).ui_theme;
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("DSHarbor")
-        .inner_size(760.0, 700.0)
-        .min_inner_size(720.0, 520.0)
+        .inner_size(1120.0, 760.0)
+        .min_inner_size(820.0, 560.0)
         .center()
-        .decorations(is_native_theme(theme))
+        .decorations(false)
         .background_color(webview_base_color(theme))
         .build()?;
     dress_main_window(&window, theme);
     Ok(window)
 }
 
-/// 把已在的窗口按主题补摆外观（建窗参数定不了的部分：标题栏主题、caption 颜色）。
+/// 把已在的窗口的 webview 底色补齐（建窗参数之外只有这一项与外观有关）。
 /// setup 的防御分支（窗口已存在时）与 build_main_window 共用这一份。
 fn dress_main_window(window: &tauri::WebviewWindow, theme: Option<settings::UiTheme>) {
-    apply_native_chrome(window, is_native_theme(theme));
     let _ = window.set_background_color(Some(webview_base_color(theme)));
 }
 
@@ -1651,10 +1555,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .setup(|app| {
-            // 主窗口不在 tauri.conf.json 里声明：conf 的装饰/底色是写死的，暗色主题
+            // 主窗口不在 tauri.conf.json 里声明：conf 的装饰/底色是写死的，深浅外观（底色）
             // 在这里按镜像的 ui_theme 现建，开窗第一帧就是正确外观（若由 conf 静态建窗，
-            // setup 再改也追不上 webview 的第一次绘制，暗色主题开窗必闪一帧浅底）。
-            // 必须赶在页面加载前，否则每次开窗都先闪一帧自绘标题栏（主题 3 尤其明显）。
+            // setup 再改也追不上 webview 的第一次绘制，深色下开窗必闪一帧浅底）。
+            // 必须赶在页面加载前，否则每次开窗都先闪一帧默认底色。
             match app.get_webview_window("main") {
                 // conf 已不再声明窗口，这个分支只是防御：真有窗口（异常场景）也把外观摆对。
                 Some(window) => {
@@ -1739,7 +1643,6 @@ pub fn run() {
             plugin_list,
             plugin_toggle,
             open_external,
-            set_caption_color,
             save_ui_theme,
             check_binary_path,
             open_shell_dir,

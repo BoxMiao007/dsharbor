@@ -1,0 +1,383 @@
+/* 候选乙改：上下两张卡片。
+   - 上卡：品牌、状态、登录链接与主操作。
+   - 下卡：左栏「图标＋文字」的固定导航 + 右侧内容区（不弹窗）。
+   - 左栏不再有「仅图标」态，也没有收起按钮。 */
+
+.frame {
+  --rail: 168px;
+  /* 模拟真窗口的固定高度：内容超高时由内容区自己滚，不把窗口撑高 */
+  height: min(680px, calc(100vh - 44px));
+  padding: 0 16px 16px;
+  gap: 12px;
+}
+
+.card {
+  margin: 0;
+  gap: 10px;
+}
+
+/* ---- 上卡 ---- */
+.top-card {
+  flex: none;
+  padding: 14px 18px;
+}
+
+.head-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.head-line .head-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.head-text {
+  flex: none;
+}
+
+.head-text h1 {
+  font-size: 16px;
+}
+
+.head-text p {
+  margin-top: 1px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.head-line .badges {
+  margin-left: 4px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tool-row .tip {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-row .tip b {
+  color: var(--fg-dim);
+  font-weight: 500;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+}
+
+.tool-row .actions {
+  flex: none;
+}
+
+.tool-row .btn {
+  height: 30px;
+  padding: 0 13px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+/* ---- 下卡：左栏 + 右侧内容区 ---- */
+.main-card {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 18px 10px;
+}
+
+.card-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  gap: 0;
+}
+
+/* 覆盖 common.css 里给旧「胶囊图标条」写的样式 */
+.rail {
+  width: var(--rail);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px 10px 0 0;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  overflow: hidden;
+}
+
+.ico-item {
+  height: 36px;
+  max-width: none;
+  width: 100%;
+  justify-content: flex-start;
+  gap: 11px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: var(--fg-dim);
+  position: relative;
+  /* 悬停只换颜色，不动尺寸，文字不会跳 */
+  transition: color 140ms, background 140ms;
+}
+
+.ico-item::before {
+  display: none; /* 不再用悬停胶囊 */
+}
+
+.ico-item svg {
+  width: 19px;
+  height: 19px;
+  flex: none;
+}
+
+.ico-item:hover svg,
+.ico-item:focus-visible svg {
+  transform: none;
+}
+
+.ico-item .txt {
+  max-width: none;
+  opacity: 1;
+  transform: none;
+  margin-left: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: none;
+}
+
+.ico-item:hover .txt,
+.ico-item:focus-visible .txt {
+  opacity: 1;
+  max-width: none;
+  transform: none;
+  margin-left: 0;
+}
+
+.ico-item:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--elev) 70%, transparent);
+}
+
+.ico-item[aria-current="true"] {
+  color: var(--fg);
+  background: var(--accent-soft);
+}
+
+/* 选中竖条画在胶囊内部，避免贴边或溢到栏外 */
+.ico-item[aria-current="true"]::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* ---- 右侧内容区 ---- */
+.panel {
+  flex: 1;
+  min-width: 0;
+  /* 内容超高时只让内容区自己滚，不把卡片撑高 */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px 0 18px;
+  overflow-y: auto;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+}
+
+.panel-head .p-ico {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  flex: none;
+}
+
+.panel-head .p-ico svg {
+  width: 16px;
+  height: 16px;
+}
+
+.panel-head h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.panel-head .p-note {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--fg-mute);
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.panel-body .field .lbl {
+  min-width: 84px;
+  font-size: 12.5px;
+}
+
+.panel-body .log {
+  font-size: 11px;
+}
+
+/* 长内容里的小节：标题、紧跟的徽标，剩下空白用一条细线填满 */
+.panel-body .sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+.panel-body .sec > span {
+  flex: none;
+}
+
+.panel-body .sec::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.panel-body .sec .tag-ok {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sub-block {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--elev) 40%, transparent);
+}
+
+.sub-block .hint {
+  margin: 0;
+}
+
+.row-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row-line .mute {
+  font-size: 11px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: Consolas, "Courier New", monospace;
+}
+
+.row-line .btn {
+  height: 28px;
+  padding: 0 11px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.row-line .btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg-dim);
+}
+
+.row-line .btn.ghost:hover {
+  border-color: var(--line);
+  color: var(--fg);
+}
+
+/* 无边框窗口的标题栏不画分割线，靠留白分隔 */
+@media (max-width: 900px) {
+  .tool-row .tip {
+    display: none;
+  }
+
+  .tool-row {
+    justify-content: flex-end;
+  }
+
+  .head-line .badges {
+    gap: 6px;
+  }
+
+  .head-line .meta:last-child {
+    display: none;
+  }
+}
+
+/* 窗口拉到最小时把纵向间距压一压，保证一屏不滚 */
+@media (max-height: 640px) {
+  .frame {
+    padding: 0 10px 10px;
+    gap: 10px;
+  }
+
+  .top-card {
+    padding: 10px 14px;
+    gap: 8px;
+  }
+
+  .main-card {
+    padding: 10px 14px 8px;
+  }
+
+  .ico-item {
+    height: 32px;
+  }
+
+  .panel {
+    padding-top: 2px;
+    gap: 9px;
+  }
+
+  .foot {
+    font-size: 11px;
+  }
+}
