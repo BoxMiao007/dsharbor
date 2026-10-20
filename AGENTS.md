@@ -23,16 +23,16 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
    - `node --test plugins/dsharbor-bridge/test/bridge.test.js`(桥接插件测试)
    - `pnpm build`(前端类型检查 + 构建)
    - `pnpm pack:bridge`(打桥接插件 tgz 到 `src-tauri/resources`;`pnpm build` 会清空 `dist` 但不会生成它,缺了它 clippy/打包会报 `glob pattern resources/*.tgz path not found`)
-   - `pnpm exec tauri build`(完整 Windows 安装包,本地测试默认「速度优先」构建;改动涉及外壳或打包时必须跑)
-2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。界面改动先用 `node scripts/mock-preview.mjs`(跑完 `pnpm build` 后在普通浏览器里按假数据渲染、量尺寸、截图)出预览与证据,再交给维护者看;它比打包 + 静默安装 + 真机一轮快得多。注意 `pnpm build`(验证门里那步也一样)会清空 `dist`,交付预览前必须重跑一次 `node scripts/mock-preview.mjs --no-serve` 重新生成 `dist/mock.html`,否则预览地址返回 404。它的盲区——WebView2 与 Chromium 的渲染差异(例如 `::-webkit-scrollbar` 在预览的 overlay 滚动条下被忽略)、无边框窗口的原生拖动/缩放/贴靠、真 DSH 进程与托盘——只能上真机看。
+   - `pnpm exec tauri build`(完整 Windows 安装包,本地测试默认「速度优先」构建;**只在改动涉及打包配置、发版或验安装器时跑**,日常改界面不算验证门)
+2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。界面改动按两档验,**任何一档都不打安装包**:
+   - 量尺寸、看排版:`pnpm build` 后用 `node scripts/mock-preview.mjs` 在普通浏览器里按假数据渲染、量尺寸、截图。注意验证门里的 `pnpm build` 会清空 `dist`,交付预览前必须重跑一次 `node scripts/mock-preview.mjs --no-serve` 重新生成 `dist/mock.html`,否则预览地址返回 404。
+   - 需要在真窗口里点一遍:`pnpm exec tauri dev`(首次或桥接插件改过时先 `pnpm pack:bridge`)。一条命令同时起 Vite(`127.0.0.1:1420`)与真 Tauri 窗口,前端存盘即刷新、Rust 改动自动重编重启。拖动/缩放/贴靠、WebView2 与 Chromium 的渲染差异(例如 `::-webkit-scrollbar` 在预览的 overlay 滚动条下被忽略)、真 DSH 进程与托盘、日志自动展开收起这类交互,都在这档验。
+   - 禁止用「`tauri build` + 静默安装 + 装出来的 exe」验界面:一轮要几分钟,且必须先关掉在跑的实例;那一套只在发版、验安装器/卸载、验开机自启动时才用。
 3. 交付说明讲给不写代码的人听:做了什么、怎么看到结果(地址/命令/截图)、有什么限制和后续建议;没把握或未完成的部分明说,不藏在细节里。
-4. 构建完成后默认把产物装到本机安装目录(维护者要求,无需再问;运行中的 DSHarbor 会占用文件,先关掉再装):
-   - 关掉在跑的实例:`Stop-Process -Name dsharbor -Force`(或托盘里完全退出)
-   - 静默执行 `target/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe /S`(安装包会一并刷新注册表卸载项、开始菜单与 `uninstall.exe`,不用再手工 copy 文件)
-   - 安装目录沿用上次选择的位置(已实测:NSIS 从注册表卸载项读回 `InstallLocation`,当前是 `D:\Program Files\DSHarbor`;装完 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSHarbor` 的 `DisplayVersion` 会跟着更新)
-   - 装完启动该目录下的 exe 确认界面能打开,然后关掉
-   - 不要再用纯文件替换:那只换 exe 与资源、不动注册表与 `uninstall.exe`,装出来的版本信息会对不上
-   - 更不要拿裸 `cargo build --release` 的 `target/release/dsharbor.exe` 去替换:那是开发版(没开 tauri 的 `custom-protocol`,运行时按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server),脱离 dev server 只会看到「localhost 拒绝连接」的错误页,而无边框主窗口的关闭按钮就在页面里
+4. 打出来的安装包只在发版或专门验安装器时用,不用于日常界面验证:
+   - 需要装到本机时:先关掉在跑的实例(`Stop-Process -Name dsharbor -Force`,或托盘里完全退出),再静默执行 `target/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe /S`(安装包会一并刷新注册表卸载项、开始菜单与 `uninstall.exe`,不用再手工 copy 文件)。安装目录沿用上次选择的位置(已实测:NSIS 从注册表卸载项读回 `InstallLocation`,当前是 `D:\Program Files\DSHarbor`;装完 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSHarbor` 的 `DisplayVersion` 会跟着更新)。
+   - 不要用纯文件替换:那只换 exe 与资源、不动注册表与 `uninstall.exe`,装出来的版本信息会对不上。
+   - 更不要拿裸 `cargo build --release` 的 `target/release/dsharbor.exe` 去运行或替换安装目录:那是开发版(没开 tauri 的 `custom-protocol`,运行时按 `devUrl` 去连 `http://127.0.0.1:1420` 的 Vite dev server),脱离 dev server 只会看到「127.0.0.1 拒绝连接」的错误页,而无边框主窗口的关闭按钮就在页面里。开发期要看真窗口行为,用 `pnpm exec tauri dev`。
 
 ## 提交与推送
 

@@ -1,8 +1,11 @@
 # Windows 手动验收手册（真机复核用）
 
-日常界面改动不用走这里：跑完 `pnpm build` 后用 `node scripts/mock-preview.mjs` 在普通浏览器里按假数据渲染，量尺寸 / 截图即可（快得多）。本手册用于需要真机才能确认的部分——WebView2 的渲染差异、无边框窗口的拖动 / 缩放 / 贴靠、真 DSH 进程与托盘、安装与卸载——需要时逐项走；每步给出「操作」与「期望结果」，不满足时看文末「排查」。
+日常界面改动分两档验，都不用打安装包：
 
-> 开发机参考：自动化脚本与截图存放于 `C:\Users\<你>\AppData\Local\Temp\dsharbor-test`（`launch-app.ps1`、`capture-window2.ps1`、`kill-app.ps1` 等）。正式验收只需按本手册手动操作。
+1. **量尺寸、看排版**：`pnpm build` 后 `node scripts/mock-preview.mjs`，在普通浏览器里按假数据渲染（最快，但没有原生窗口行为）。
+2. **真窗口里点一遍**：`pnpm exec tauri dev`（配合首次的 `pnpm pack:bridge`）。它就是真 WebView2 窗口，改前端存盘即刷新、改 Rust 自动重编重启，拖动 / 缩放 / 贴靠 / 托盘 / 真 DSH 进程都能直接验。**不要**为了验界面去跑 `pnpm exec tauri build` 再装包，那一轮要几分钟。
+
+本手册用于需要**装出来的东西**才能确认的部分——安装器与卸载、注册表与开始菜单、静默安装、开机自启动——逐项走；每步给出「操作」与「期望结果」，不满足时看文末「排查」。
 
 ## 0. 构建与产物（Windows 本机）
 
@@ -99,7 +102,7 @@
 
 ## 排查
 
-- **打开只有一个「无法访问此页面 / localhost 拒绝连接（ERR_CONNECTION_REFUSED）」的错误页，而且窗口没有关闭按钮**：安装目录里的 exe 是裸 `cargo build` 编出来的开发版——没开 tauri 的 `custom-protocol`，前端没嵌进去，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server。主窗口是无边框的（`decorations: false`），页面没渲染出来就没有自绘标题栏、也就没有关闭按钮。退出方式：`Alt+F4`、任务栏图标右键「关闭窗口」，或托盘图标右键「完全退出」。修复：用 `pnpm exec tauri build` 出的安装包重装（安装目录里那份安装包也可以 `<setup>.exe /S` 静默重装）；不要用裸构建的 `target/release/dsharbor.exe` 去替换安装目录。
+- **打开只有一个「无法访问此页面 / 127.0.0.1 拒绝连接（ERR_CONNECTION_REFUSED）」的错误页，而且窗口没有关闭按钮**：安装目录里的 exe 是裸 `cargo build` 编出来的开发版——没开 tauri 的 `custom-protocol`，前端没嵌进去，它按 `devUrl` 去连 `http://127.0.0.1:1420` 的 Vite dev server。主窗口是无边框的（`decorations: false`），页面没渲染出来就没有自绘标题栏、也就没有关闭按钮。退出方式：`Alt+F4`、任务栏图标右键「关闭窗口」，或托盘图标右键「完全退出」。修复：用 `pnpm exec tauri build` 出的安装包重装（安装目录里那份安装包也可以 `<setup>.exe /S` 静默重装）；不要用裸构建的 `target/release/dsharbor.exe` 去替换安装目录。
 - **端口被占用（EADDRINUSE）**：profile 里 webserver 端口被别的程序占用（注意 WSL 镜像网络下 Windows/WSL 共用 localhost 端口，刚停过 DSH 时等 1~2 分钟 TIME_WAIT 消散）。改「端口」字段用自定义端口，或释放占用。
 - **桥接未启用**：DSH 启动时没带 nonce（例如你自己在终端跑 `dsh web`），属预期降级；此时工具条第 1 颗徽章显示「桥接未安装」，登录链接改由日志解析取得。
 - **WSL 插件安装报 pnpm 错误**：确认壳运行时已注入清洗后的 PATH（4.0 起内置）；发行版内 pnpm 版本冲突时 `npx @deepseek-ai/dsh plugin --profile web …` 手动复核。

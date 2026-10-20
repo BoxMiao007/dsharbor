@@ -1138,7 +1138,7 @@ async fn rename_profile(
         if shell.prefs.profile == old_name {
             shell.prefs.profile = name.clone();
             if let Err(err) = settings::save(&app, &shell) {
-                error = Some(format!("环境已改名，但启动用环境没跟着改：{err}"));
+                error = Some(format!("环境已改名，但当前管理的环境没跟着改：{err}"));
             }
         }
         Ok::<_, String>((outcome, error))

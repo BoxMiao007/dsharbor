@@ -885,11 +885,6 @@ body {
   width: auto;
 }
 
-/* 两列并排的字段组（附加参数 / 端口） */
-.block .grid-2 {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
 /* 命令预览：等宽、淡底、可选中复制。 */
 .command-preview {
   display: block;
@@ -904,17 +899,6 @@ body {
   white-space: pre-wrap;
   word-break: break-all;
   user-select: text;
-}
-
-/* 块内的小节标题：文字 + 紧跟的徽章 + 一条填满余量的细线。 */
-.sec {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--fg-dim);
 }
 
 /* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
@@ -2181,74 +2165,6 @@ html::-webkit-scrollbar {
   gap: 8px;
 }
 
-.subcard {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-/* 子分组的第一层不再需要那条分隔线（它就在小卡正文最上面）。 */
-.cell > .subcard:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.subcard-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--fg-dim);
-  letter-spacing: 0.4px;
-}
-
-.subcard .fields {
-  padding: 0;
-}
-
-/* 「管理环境」面板：一行一个环境，点一行把它选为后续动作的对象。
-   自绘成按钮而不是原生 radio：这里不是「启动用环境」的单选，而是「要对谁操作」的
-   临时选择，视觉上也该弱于上面那个下拉。 */
-.profile-manage-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-/* 全局 button 的 8px 22px 内边距在这里太胖（一行只有名字与几个标记），单独收窄。 */
-.profile-manage-list .profile-manage-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--card-2);
-  font-size: 13px;
-  text-align: left;
-}
-
-.profile-manage-list .profile-manage-item:hover:not(:disabled) {
-  background: var(--elev);
-}
-
-/* 选中的那一行用主色描边而不是填色：填色会和「运行中」徽章的语义撞车。 */
-.profile-manage-list .profile-manage-item.is-selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.profile-manage-name-text {
-  color: var(--fg);
-}
-
-.profile-manage-meta {
-  font-size: 12px;
-  color: var(--fg-dim);
-}
-
 .profile-manage-tag {
   margin-left: auto;
   padding: 1px 7px;
@@ -2280,19 +2196,6 @@ button.danger {
 button.danger:hover:not(:disabled) {
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 16%, transparent);
-}
-
-/* 补丁层面板：备份按钮 + 备份清单（一行一份，最新的在最上面）。
-   与「启动方式」正文里那些合并框（.subcard）同一阶：面板本身在 .subcard 里，
-   这里只用一条分隔线把「环境生命周期」与「补丁层」两段分开。 */
-.patch-panel {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.patch-panel .hint {
-  margin: 0 0 10px;
 }
 
 /* 备份清单：一份备份一行。路径是等宽字（用户可能要照着去找文件），
@@ -2421,16 +2324,6 @@ button.danger:hover:not(:disabled) {
   margin: 0 0 10px;
 }
 
-/* 会话卡片里的「托盘单击打开」是卡片顶层字段，不跟随启动方式单选组的左缩进 */
-.tray-fields {
-  padding-left: 0;
-}
-
-/* 「网络」卡的下载源也是卡片顶层字段，同样不需要单选组的左缩进 */
-.network-fields {
-  padding-left: 0;
-}
-
 /* 代理地址框只在手动模式露出来；它包一层 div 是为了跟下载源一样能整行隐藏
    （input 自己 hidden 也行，但 .hidden 与 input[type="text"] 选择器特指度打平后
    要靠声明顺序取胜，包一层更稳）。 */
@@ -2440,21 +2333,6 @@ button.danger:hover:not(:disabled) {
 
 .proxy-manual.hidden {
   display: none;
-}
-
-.grid-2 {
-  display: grid;
-  /* minmax(0, 1fr) 而不是 1fr：1fr 的最小值是 min-content，端口行里的输入框会把轨道顶宽
-     （「260px 输入框 + 12px 间距 + 徽章」约 378px > 列的 289px），整行就溢出到卡片外。
-     给轨道一个 0 的最小值，列宽只由容器决定，输入框再跟着收窄（见 .port-row input）。 */
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 8px 18px;
-}
-
-@media (max-width: 620px) {
-  .grid-2 {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* 键值行（桥接插件卡片） */

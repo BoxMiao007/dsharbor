@@ -59,6 +59,19 @@ pnpm install                                       # 前端依赖
 
 NSIS 不用手装：首次 `tauri build` 会自动下载到 `%LOCALAPPDATA%\tauri\NSIS`（需要能访问 GitHub，墙内先开代理）。
 
+### 跑起来看效果（改界面时默认用这个）
+
+```powershell
+pnpm pack:bridge          # 只在第一次或桥接插件源码改过时需要
+pnpm exec tauri dev
+```
+
+一条命令同时起 Vite（`127.0.0.1:1420`）和真正的 Tauri 窗口：改前端（`src/`）存盘即在窗口里刷新（CSS 走 HMR 不重载），改 Rust（`src-tauri/`、`crates/`）会增量重编并自动重启窗口。它是**真 WebView2 窗口**，所以拖动、缩放、贴靠、托盘、WebView2 渲染差异这些都能直接手动验；普通浏览器里的预览台（`node scripts/mock-preview.mjs`）量尺寸更快，但没有原生窗口行为。
+
+别用 `pnpm exec tauri build` 加装包来验界面：那一轮要几分钟，装完还得先关掉在跑的实例。只有发版、验安装器、验托盘或自启动这类「装出来的东西」时才需要。
+
+报 `Port 1420 is already in use` 是上一次的 dev server 没退干净：先 `Stop-Process -Name dsharbor -Force`，再占用 1420 端口的进程一起收掉，然后重开。
+
 ### 验证门（提交前必过）
 
 ```powershell
@@ -72,6 +85,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 `pnpm build` 会清空 `dist` 但不会生成桥接插件包；缺了 `src-tauri/resources/*.tgz` 时 clippy 与打包会报 `glob pattern resources/*.tgz path not found`，所以打安装包前先跑 `pnpm pack:bridge`。
 
+`pnpm exec tauri build` 只在发版、验安装包、验托盘或自启动这类「装出来的东西」时才跑，日常改界面不必等它。
+
 ### 一条命令出 Windows 安装包
 
 ```powershell
@@ -79,7 +94,7 @@ pnpm exec tauri build
 # 产物：target/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe
 ```
 
-别把 `cargo build --release` 单独编出来的 `target/release/dsharbor.exe` 直接拷去运行或替换安装目录：那是不带 tauri `custom-protocol` 的**开发版**，它按 `devUrl` 去连 `http://localhost:1420` 的 Vite dev server，脱离 dev server 只会看到「localhost 拒绝连接」的错误页。能独立运行的产物只有上面这条命令出的安装包（或它装出来的安装目录里的 exe）。
+别把 `cargo build --release` 单独编出来的 `target/release/dsharbor.exe` 直接拷去运行或替换安装目录：那是不带 tauri `custom-protocol` 的**开发版**，它按 `devUrl` 去连 `http://127.0.0.1:1420` 的 Vite dev server，脱离 dev server 只会看到「127.0.0.1 拒绝连接」的错误页。能独立运行的产物只有上面这条命令出的安装包（或它装出来的安装目录里的 exe）。
 
 ### 仓库结构
 

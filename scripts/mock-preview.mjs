@@ -732,6 +732,17 @@ window.__mockUnimplemented = [];
     start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
     stop_dsh: () => { seen("stop_dsh"); S.counter += 1; S.session = "stopped"; return status(); },
     restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
+    // 工具条主按钮区在「运行中」时点「重启 DSH」：与 start_dsh 一样产生输出。
+    // 「复制登录链接」每次现取（token 是一次性铸造的），预览里给个固定假地址。
+    dsh_login_url: () => {
+      seen("dsh_login_url");
+      return "http://127.0.0.1:3099/?token=mock-token";
+    },
+    // 主题镜像给 Rust（开窗前定 WebView 底色）。预览里没有窗口，记一笔即可。
+    save_ui_theme: (a) => {
+      seen("save_ui_theme:" + (a && a.theme ? a.theme : "?"));
+      return null;
+    },
     bridge_install: () => {
       seen("bridge_install");
       if (S.bridgeInstallFails) throw new Error("mock：安装失败（可把 __MOCK_STATE__.bridgeInstallFails 改回 false）");
@@ -743,8 +754,6 @@ window.__mockUnimplemented = [];
     open_dsh_window: () => { seen("open_dsh_window"); return null; },
     open_dsh_in_browser: () => { seen("open_dsh_in_browser"); return null; },
     open_external: (a) => { seen("open_external:" + (a && a.target ? a.target : "?")); return null; },
-    // 系统标题栏取色（Windows 专用），预览里没有窗口，直接当成功。
-    set_caption_color: () => null,
     open_shell_dir: (a) => {
       seen("open_shell_dir:" + (a && a.kind ? a.kind : "?"));
       return "C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\DSHarbor\\\\" + (a && a.kind ? a.kind : "");
