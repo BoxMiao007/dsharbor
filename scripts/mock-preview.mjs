@@ -83,6 +83,8 @@ const state = {
     failure: null,
   },
   counter: 0,
+  /** 让运行中的日志尾巴别每秒自己长（测试要可复现时打开它，改 counter 就能造出一次性的一大批行）。 */
+  freezeLog: false,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
   /** 「启动后自动清理」的假结果：start_dsh / restart_dsh 在缓存开关打开时把结果写进这里，
@@ -157,6 +159,14 @@ const state = {
 
 const stub = `<script>
 window.__MOCK_STATE__ = ${JSON.stringify(state)};
+// 调试协议 / 测试脚本可以直接改假状态：URL 带 ?state={"session":"running"} 就在首轮渲染前
+// 覆盖初始值（只覆盖已声明的键，其余照旧），省掉「先开页再改再等刷新」那一步。
+try {
+  const fromUrl = new URLSearchParams(location.search).get("state");
+  if (fromUrl) Object.assign(window.__MOCK_STATE__, JSON.parse(fromUrl));
+} catch (err) {
+  console.warn("[mock] URL 上的 ?state= 解析失败：", err);
+}
 window.__mockUnimplemented = [];
 (function () {
   const S = window.__MOCK_STATE__;
@@ -785,7 +795,7 @@ window.__mockUnimplemented = [];
     },
   };
   // 运行中时日志行每秒增长，用来验证「滚动 / 拖选时界面不会被刷没」
-  window.setInterval(() => { if (S.session === "running") S.counter += 1; }, 1000);
+  window.setInterval(() => { if (S.session === "running" && !S.freezeLog) S.counter += 1; }, 1000);
 })();
 </script>
 `;

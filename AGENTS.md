@@ -21,6 +21,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
    - `cargo clippy --workspace --all-targets -- -D warnings`(静态检查;开发机就是 Windows msvc 宿主,不需要交叉参数)
    - `cargo test -p dsharbor-core`(纯逻辑核心库单元测试,开发机直接跑)
    - `node --test plugins/dsharbor-bridge/test/bridge.test.js`(桥接插件测试)
+   - `node --test test/frontend/*.test.mjs`(前端界面测试:用 `puppeteer-core` 驱动 Edge 在假数据预览台上跑,覆盖用量尺寸/可见性/动画这类浏览器里才说得清的接缝;依赖本机 `C:\Users\BOXMIAO\.pi\agent\npm\node_modules\puppeteer-core` 与 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,可用 `DSHARBOR_PUPPETEER` / `DSHARBOR_BROWSER` 覆盖,缺失时整组 skip)
    - `pnpm build`(前端类型检查 + 构建)
    - `pnpm pack:bridge`(打桥接插件 tgz 到 `src-tauri/resources`;`pnpm build` 会清空 `dist` 但不会生成它,缺了它 clippy/打包会报 `glob pattern resources/*.tgz path not found`)
    - `pnpm exec tauri build`(完整 Windows 安装包,本地测试默认「速度优先」构建;**只在改动涉及打包配置、发版或验安装器时跑**,日常改界面不算验证门)
