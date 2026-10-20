@@ -47,7 +47,7 @@ interface AppInfo {
   name: string;
   version: string;
   core_version: string;
-  /** 项目仓库地址（「关于」卡片展示与一键打开）。 */
+  /** 项目仓库地址（「关于」面板展示与一键打开）。 */
   repository: string;
   /** DSH 官网地址。 */
   site_url: string;
@@ -234,7 +234,7 @@ function downloadSourceHint(source: DownloadSource): string {
   }
 }
 
-/** 收起卡片时显示的摘要：与下拉选项同一个名字。 */
+/** 面板标题旁的摘要徽章用的名字：与下拉选项同一套文案。 */
 function downloadSourceLabel(source: DownloadSource): string {
   return DOWNLOAD_SOURCE_CHOICES.find((choice) => choice.value === source)?.label ?? "沿用 npm 全局配置";
 }
@@ -246,7 +246,7 @@ const PROXY_MODE_CHOICES: PickerChoice[] = [
   { value: "off", label: "不走代理" },
 ];
 
-/** 收起卡片时显示的代理摘要：与下拉选项同一个名字。 */
+/** 面板标题旁的代理摘要：与下拉选项同一套文案。 */
 function proxyModeLabel(mode: ProxyMode): string {
   return PROXY_MODE_CHOICES.find((choice) => choice.value === mode)?.label ?? "跟随系统";
 }
@@ -898,7 +898,7 @@ function buildHtml(info: AppInfo): string {
       </div>
     </details>
   `;
-  // 原版排版把两条托盘设置留在会话卡片里，说明直接写在控件下方。
+  // 两条托盘设置（单击打开 / 释放界面内存）留在「托盘与网络」面板里，说明直接写在控件下方。
   const trayFields = `
     <div class="fields tray-fields">
       <label>托盘单击打开</label>
@@ -1019,7 +1019,7 @@ function buildHtml(info: AppInfo): string {
     </div>
     </div>
   `;
-  // 「集成」卡：命令行集成（PATH 与 dsh 垫片）+ npx 缓存盘面。卡片内容全部由后端算好
+  // 「集成」面板：命令行集成（PATH 与 dsh 垫片）+ npx 缓存盘面。内容全部由后端算好
   // （目录、垫片内容、手动命令、占用字节与状态说明），界面只负责显示，避免两边各算一套口径。
   // 非 Windows 宿主把「自动接入」与缓存那两段整段藏起来，只留手动命令。
   const integrationsBody = `
@@ -1130,11 +1130,11 @@ function buildHtml(info: AppInfo): string {
       <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行这条命令。">!</span></span>
       <div class="picker" id="custom-runtime-picker"></div>
       <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
-      <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」卡里的其它环境时不会改写这条命令——自己写进去才算数。</p>
+      <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」面板里的其它环境时不会改写这条命令——自己写进去才算数。</p>
     </div>
   `;
   const portControl = `<input id="port" type="text" inputmode="numeric" placeholder="例如 3099" />`;
-  // 通用设置：原版是「启动方式」卡片里的子面板，主题三由 native-layout.css 覆盖成两列并排的底色框。
+  // 通用设置（附加参数与端口）：放在「启动方式」面板的最后，两个字段并排成两列。
   // 两处说明都进 ⓘ 气泡（维护者要求），端口那条由 renderPortHint() 动态改写 data-tip。
   const commonBody = `
     <div class="subcard">
@@ -1718,7 +1718,7 @@ async function main(): Promise<void> {
     /** 结果行的文案：三态各一句，通了要说清是走代理通的还是直连通的。 */
     function selfCheckLine(report: SelfCheckReport): string {
       const source = report.registry ?? "npm 全局配置里的源";
-      // 当前代理状态由后端一句话给出（跟卡片上方 hint 同一套口径），这里只负责拼上去。
+      // 当前代理状态由后端一句话给出（与上方 hint 同一套口径），这里只负责拼上去。
       const proxyNow = proxyState?.stateText ? ` ${proxyState.stateText}。` : "";
       switch (report.state) {
         case "proxyOk":
@@ -1814,7 +1814,7 @@ async function main(): Promise<void> {
     const btnAboutConfig = $<HTMLButtonElement>("btn-about-config");
     const btnAboutLogs = $<HTMLButtonElement>("btn-about-logs");
 
-    // ---- 集成卡片：命令行集成（PATH 与 dsh 垫片） ------------------------------
+    // ---- 集成面板：命令行集成（PATH 与 dsh 垫片） ------------------------------
     // 展示内容全部由后端算好（目录、垫片内容、手动命令、状态说明），界面只负责渲染，
     // 免得两边各算一套口径对不上。
     const cliSummary = $<HTMLSpanElement>("integrations-summary");
@@ -1831,7 +1831,7 @@ async function main(): Promise<void> {
     // 「自动接入」那两半截（开关 + 目录、垫片内容）只在 Windows 下有意义。
     const cliWindowsOnly = Array.from(root.querySelectorAll<HTMLElement>(".cli-windows-only"));
 
-    // ---- 集成卡片：npx 缓存盘面 --------------------------------------------------
+    // ---- 集成面板：npx 缓存盘面 --------------------------------------------------
     // 占用字节、可回收字节、目录明细、每次删除的结果都在后端算好，界面只渲染。
     const CACHE_WINDOWS_ONLY = Array.from(root.querySelectorAll<HTMLElement>(".cache-windows-only"));
     const cacheOwn = $<HTMLElement>("cache-own");
@@ -1955,7 +1955,7 @@ async function main(): Promise<void> {
       });
     }
 
-    // 桥接插件卡片状态：busy 防重复点击；lastBridgeState 供「恢复最近备份」用。
+    // 桥接插件小节的状态：busy 防重复点击；lastBridgeState 供「恢复最近备份」用。
     let bridgeBusy = false;
     let lastBridgeState: BridgeState | null = null;
 
@@ -2083,7 +2083,7 @@ async function main(): Promise<void> {
       $("npx-fields").classList.toggle("hidden", currentMode() !== "npx");
       $("binary-fields").classList.toggle("hidden", currentMode() !== "binary");
       $("custom-fields").classList.toggle("hidden", currentMode() !== "custom");
-      // 卡片收起后靠这个徽章显示当前启动方式（展开时徽章隐藏，见 CSS）。
+      // 面板标题旁的徽章显示当前启动方式。
       const mode = currentMode();
       modesSummary.textContent = MODE_LABELS[mode] ?? "启动方式";
       // 桥接插件与端口提示都跟随运行环境（Windows 宿主 / WSL 发行版），换模式就刷新。
@@ -2437,7 +2437,7 @@ async function main(): Promise<void> {
         lastBridgeState = state;
         bridgeTarget.textContent = state.target;
         bridgeStatus.textContent = state.installed ? "已安装（优先走桥接通道）" : "未安装（走日志兜底）";
-        // 卡片收起后靠这个徽章显示安装状态（展开时徽章隐藏，见 CSS）。
+        // 桥接小节标题旁的徽章显示安装状态。
         bridgeSummary.className = `badge ${state.installed ? "badge-running" : "badge-stopped"} panel-badge`;
         bridgeSummary.textContent = state.installed ? "已安装" : "未安装";
         bridgeBackup.textContent = state.latestBackup
@@ -2455,7 +2455,7 @@ async function main(): Promise<void> {
         bridgeBusy = true;
         updateBridgeButtons();
         bridgeError.classList.add("hidden");
-        // 桥接操作会产生 pnpm/命令的终端输出：自动展开卡片与「操作输出」（维护者要求）。
+        // 桥接操作会产生 pnpm/命令的终端输出：自动切到「环境」面板并展开「最近输出」（维护者要求）。
         selectPanel("env", true);
         expandBridgeOutput();
         setBridgeOutput("执行中…（首次可能较慢，pnpm 需要解析依赖）");
@@ -2490,7 +2490,7 @@ async function main(): Promise<void> {
         bridgeBusy = true;
         updateBridgeButtons();
         try {
-          // 恢复同样产生终端输出：自动展开卡片与「操作输出」。
+          // 恢复同样产生终端输出：自动切到「环境」面板并展开「最近输出」。
           selectPanel("env", true);
           expandBridgeOutput();
           const message = await invoke<string>("bridge_restore", {
@@ -2510,7 +2510,7 @@ async function main(): Promise<void> {
       })();
     });
 
-    // ---- 环境卡片：选当前启动用哪一份 DSH 环境（profile） ----------------------
+    // ---- 环境面板：选当前启动用哪一份 DSH 环境（profile） ----------------------
     // 只列能起网页界面的环境；下拉项文案与摘要徽章都由核心库的 `ProfileSummary`
     // 算好（名字 · 插件数 · 桥接状态），界面不另算一套口径。
     const profilesSummary = $<HTMLSpanElement>("profiles-summary");
@@ -3329,7 +3329,7 @@ async function main(): Promise<void> {
       btnProfileCreate.click();
     });
 
-    // ---- 集成卡片：命令行集成（用户级 PATH + dsh 垫片） ------------------------
+    // ---- 集成面板：命令行集成（用户级 PATH + dsh 垫片） ------------------------
     // 目录、垫片内容、手动命令与状态说明都由后端算好，界面只负责渲染，
     // 免得两边各算一套口径对不上。
     let cliBusy = false;
@@ -3464,7 +3464,7 @@ async function main(): Promise<void> {
       })();
     });
 
-    // ---- 集成卡片：npx 缓存盘面 --------------------------------------------------
+    // ---- 集成面板：npx 缓存盘面 --------------------------------------------------
     // 归属判定、保留集合、占用与可回收字节、每次删除成败与原因全部在后端算好，
     // 界面只负责渲染（数字已由后端格式化成 `1.8 GB` 这种形式）。
     let cacheBusy = false;
@@ -3614,7 +3614,7 @@ async function main(): Promise<void> {
       })();
     });
 
-    /** 「桥接插件」卡片：在资源管理器里打开备份目录（安装/卸载的备份都落在这里）。 */    btnBridgeBackups.addEventListener("click", () => {
+    /** 桥接插件：「打开备份目录」（安装/卸载的备份都落在这里）。 */    btnBridgeBackups.addEventListener("click", () => {
       void (async () => {
         bridgeNote.classList.add("hidden");
         try {
@@ -3628,7 +3628,7 @@ async function main(): Promise<void> {
       })();
     });
 
-    /** 「关于」卡片：打开项目仓库 / DSH 官网（URL 固定在 Rust 侧，界面只传目标键）。 */
+    /** 「关于」面板：打开项目仓库 / DSH 官网（URL 固定在 Rust 侧，界面只传目标键）。 */
     function openExternal(target: "repo" | "site"): void {
       void (async () => {
         aboutNote.classList.add("hidden");
@@ -3641,7 +3641,7 @@ async function main(): Promise<void> {
       })();
     }
 
-    /** 「关于」卡片：在系统文件管理器里打开壳配置目录 / DSH 日志目录。 */
+    /** 「关于」面板：在系统文件管理器里打开壳配置目录 / DSH 日志目录。 */
     function openShellDir(kind: "config" | "logs"): void {
       void (async () => {
         aboutNote.classList.add("hidden");
@@ -3760,7 +3760,7 @@ async function main(): Promise<void> {
     }
 
     await loadSavedConfig();
-    // 运行环境候选与官方版本列表都提前读好，展开卡片即可选。
+    // 运行环境候选与官方版本列表都提前读好，切到对应面板即可直接选。
     await loadDistros();
     await loadRegistry();
     await refreshPortHint();

@@ -29,7 +29,7 @@ use launcher::{SessionHandle, SessionStatus};
 use serde::Serialize;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// DSH 官网页（「关于」卡片的「打开 DSH 官网」按钮；也作为背景视觉的取色依据）。
+/// DSH 官网页（「关于」面板的「打开 DSH 官网」按钮）。
 const DSH_SITE_URL: &str = "https://www.deepseek.com/harness/";
 
 /// 查询 DSH 版本号时追加的启动器层旗标（排在 app 参数之前，`dsh web --version` 只打印版本后退出）。
@@ -38,14 +38,14 @@ const VERSION_ARG: &str = "--version";
 /// 版本查询的超时：正常几百毫秒内出结果；npx 冷缓存要下载时给足时间，超时就放弃。
 const VERSION_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// 前端启动时查询的应用信息（欢迎页展示 + 「关于」卡片）。
+/// 前端启动时查询的应用信息（「关于」面板展示）。
 #[derive(Serialize)]
 struct AppInfo {
     name: &'static str,
     version: &'static str,
     /// 核心库版本，与外壳版本分开返回，便于以后独立升级核心逻辑。
     core_version: &'static str,
-    /// 项目仓库地址（「关于」卡片展示与一键打开）。
+    /// 项目仓库地址（「关于」面板展示与一键打开）。
     repository: &'static str,
     /// DSH 官网地址。
     site_url: &'static str,
@@ -97,7 +97,7 @@ struct AutoCleanupReport {
 
 #[tauri::command]
 fn app_info(app: tauri::AppHandle) -> AppInfo {
-    // 目录取不到（环境变量缺失等）时把原因显示在卡片里，而不是让整条命令失败。
+    // 目录取不到（环境变量缺失等）时把原因显示在面板里，而不是让整条命令失败。
     let config_dir = app_data_root(&app)
         .map(|dir| dir.display().to_string())
         .unwrap_or_else(|err| format!("（未知：{err}）"));
@@ -914,7 +914,7 @@ fn launch_default_browser(url: &str) -> Result<(), String> {
     }
 }
 
-/// 打开「关于」卡片里的外部链接（地址固定在壳里，界面只能传这两个键）。
+/// 打开「关于」面板里的外部链接（地址固定在壳里，界面只能传这两个键）。
 #[tauri::command]
 fn open_external(target: String) -> Result<(), String> {
     let url = match target.as_str() {
@@ -938,7 +938,7 @@ fn webview_base_color(theme: Option<settings::UiTheme>) -> tauri::window::Color 
 }
 
 /// 在系统文件管理器里打开壳配置目录 / DSH 日志目录 / 桥接插件备份目录。
-/// 备份目录入口在「桥接插件」卡片（安装/卸载的备份都落在那里）。
+/// 备份目录入口在「环境」面板的桥接插件小节（安装/卸载的备份都落在那里）。
 #[tauri::command]
 fn open_shell_dir(app: tauri::AppHandle, kind: String) -> Result<String, String> {
     let dir = match kind.as_str() {

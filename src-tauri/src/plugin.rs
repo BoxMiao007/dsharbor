@@ -95,7 +95,7 @@ pub struct BridgeState {
 // 目标环境访问（宿主直连 / WSL 内经 wsl.exe）
 // ---------------------------------------------------------------------------
 
-/// DSH 主目录（宿主直连时用）。「关于」卡片要打开它的 logs 子目录，所以对外可见。
+/// DSH 主目录（宿主直连时用）。「关于」面板要打开它的 logs 子目录，所以对外可见。
 pub(crate) fn host_dsh_home() -> Result<String, String> {
     if let Ok(custom) = std::env::var("DSH_HOME") {
         if !custom.trim().is_empty() {
