@@ -47,11 +47,11 @@ html[data-mode="dark"] {
   --ok: #57c98b;
   --warn: #e8c85c;
   --danger: #ef5f6b;
-  /* 日志条与日志浮层：全站唯一用红色系的地方，把「这是控制台输出」和别的卡片区分开。
-     solid = 折叠态窄条与展开后的浮层底；fill = 浮层里的正文底；fg = 红底上的文字。
-     两套外观共用同一组红（控制台语义色，不跟着浅深切换）。 */
-  --log-solid: #fe0000;
-  --log-fill: #820000;
+  /* 日志条与日志浮层：走强调色（蓝），把「这是控制台输出」和别的卡片区分开。
+     solid = 折叠态窄条与展开后的浮层底；fill = 浮层里的正文底；fg = 蓝底上的文字。
+     这一组跟着外观走（浅色外观下用浅色那套），不再固定成红。 */
+  --log-solid: #1f6feb;
+  --log-fill: #12325e;
   --log-fg: #ffffff;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
   --shadow-soft: 0 3px 14px rgba(0, 0, 0, 0.34);
@@ -77,9 +77,9 @@ html[data-mode="light"] {
   --ok: #1e9e5f;
   --warn: #b8860b;
   --danger: #d33a4a;
-  /* 日志红与深色外观共用同一组值（见 html[data-mode="dark"] 上的注释）。 */
-  --log-solid: #fe0000;
-  --log-fill: #820000;
+  /* 浅色外观下的日志色：条与浮层用浅色那支强调蓝，正文底压深一档保证白字够读。 */
+  --log-solid: #1f6feb;
+  --log-fill: #1b4b9c;
   --log-fg: #ffffff;
   --shadow: 0 18px 48px rgba(21, 38, 60, 0.16);
   --shadow-soft: 0 2px 10px rgba(21, 38, 60, 0.1);
@@ -107,23 +107,52 @@ body {
 }
 
 /* ---- 悬浮卡片骨架（维护者草图：浅色是页面背景，色块是浮在上面的卡片） ----
-   左栏一张通高卡片；右栏自上而下是工具条卡片、日志窄条、主卡（里面每个条目
-   各装一张小卡）、两张并排次卡。块与块之间留缝露出页面背景，卡片靠圆角 + 描边 + 阴影立起来。 */
+   最上面一条通栏透明顶栏（品牌在左上角 + 右端三只窗口按钮，整条可拖动）；
+   下面左栏一张通高卡片、右栏一张工具条卡片 + 日志窄条 + 主卡（里面每个条目
+   各装一张小卡）。块与块之间留缝露出页面背景，靠圆角 + 描边 + 阴影立起来。 */
 
-/* 三只窗口按钮浮在窗口最右上角，压在所有卡片之上（tauri.conf.json: decorations: false）。
-   整条区域可拖动，按钮本身不吃拖拽事件。 */
+/* 顶栏：不吃背景色、不画分隔线，它就是一条透明的拖拽区，品牌和三只窗口按钮都住在这里。
+   拖拽属性必须挂在真正被命中的元素上（顶栏本身 + 品牌文字），挂父元素拖不动文字——
+   浏览器大改时就是这么把拖拽弄丢的。 */
+.titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 10px 0 20px;
+  user-select: none;
+}
+
+/* 品牌：DSHarbor 加粗在左，副标题用更小的字号跟在末尾、不再另起一行。 */
+.titlebar-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.titlebar-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+.titlebar-sub {
+  font-size: 11.5px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+
+/* 三只窗口按钮：住顶栏右端（不再是浮在窗口右上角的独立小块）。 */
 .win-controls {
-  position: fixed;
-  top: 8px;
-  right: 10px;
-  z-index: 80;
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 2px;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--bg) 72%, transparent);
-  backdrop-filter: blur(8px);
 }
 
 .win-btn {
@@ -163,13 +192,14 @@ body {
 }
 
 /* ---- 左右分栏：左栏一张卡片，右栏吃掉余量 ---- */
-/* 顶部留出一条：三只窗口按钮浮在这条空白里（草图里它们也在所有块之上、块之外）。 */
+/* 四周留白由这里给：左右各 20px（卡片不贴窗口边）、底部 20px、
+   与顶栏之间再让 4px（顶栏自己 40 高）。卡片之间用 gap 16px。 */
 .shell {
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 12px;
-  padding: 46px 12px 12px;
+  gap: 16px;
+  padding: 4px 20px 20px;
 }
 
 /* 左栏：一张通高卡片。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。 */
@@ -197,32 +227,17 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
-.sidebar-brand-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-/* 图标源与托盘/安装包同一个（assets/logo.png）：小尺寸下让指针穿透，
-   否则点在图上不会触发卡片拖拽，还可能拖出一个图片残影。 */
-.sidebar-logo {
-  display: block;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  pointer-events: none;
-  -webkit-user-drag: none;
-}
-
+/* 左栏顶部：主标题 + 一行小字副标题（不配图标，品牌信息已经搬到顶栏）。 */
 .sidebar-name {
-  font-size: 18px;
+  display: block;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--fg);
 }
 
 .sidebar-sub {
-  margin-top: 5px;
+  margin-top: 4px;
   font-size: 11.5px;
   color: var(--fg-mute);
 }
@@ -324,6 +339,17 @@ body {
   transition:
     background 140ms,
     color 140ms;
+}
+
+/* 官网 / GitHub 两颗图标是官方 mark（实心 path），用 <img> 引。GitHub 那颗写
+   fill="currentColor"，直接跟着按钮文字色变；DeepSeek 那颗保留品牌蓝，深色外观下
+   同样看得清。 */
+.icon-btn img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
 
 .icon-btn svg {
@@ -455,6 +481,21 @@ body {
   white-space: nowrap;
 }
 
+/* 窗口拉窄时按重要性依次收起次要信息（先 PID/监听，再版本），
+   保证工具条始终是「一排」——按钮掉到第二行就挤占内容区了。
+   900 是本窗口允许的最小宽度，两档断点都落在它之上。 */
+@media (max-width: 1120px) {
+  .status-meta {
+    display: none;
+  }
+}
+
+@media (max-width: 1000px) {
+  #version-badge {
+    display: none;
+  }
+}
+
 .status-meta b {
   font-weight: 600;
   color: var(--fg-dim);
@@ -480,8 +521,11 @@ body {
 .open-split #btn-open {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+  /* 图标在左、不再画竖线；竖线归右边那颗三角（见 #btn-open-more）。 */
+  border-right: 0;
 }
 
+/* 右半边那颗三角：自带左边线（= 主按钮与三角之间的那根竖线），和主按钮拼成一颗。 */
 #btn-open-more {
   display: grid;
   place-items: center;
@@ -489,7 +533,6 @@ body {
   height: 34px;
   padding: 0;
   border: 1px solid var(--line-strong);
-  border-left: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   background: var(--elev);
@@ -584,13 +627,15 @@ body {
   flex-direction: column;
 }
 
-/* 折叠态的日志条：内容区顶端一条居中的窄横条（草图里那根窄红条），点它展开日志。
-   红色是全站唯一一处：日志是控制台输出，用颜色跟别的卡片区分开。 */
+/* 折叠态的日志条：内容区顶端一条居中的窄横条，点它展开日志。
+   蓝色是日志组件的语义色：它是控制台输出，跟别的卡片用颜色区分开。
+   下边留 margin 把窄条从主卡上提一点——否则窄条贴着主卡顶边，看着像长在主卡上。 */
 .log-bar {
   flex: none;
   display: flex;
   justify-content: center;
   height: 12px;
+  margin-bottom: 10px;
 }
 
 .log-toggle {
@@ -637,8 +682,8 @@ body {
   display: none;
 }
 
-/* 日志浮层：宽度与折叠态那根窄条一致、从同一条顶边往下垂，高度约内容区一半，
-   盖在主卡上半部分；点外面或底部的收起箭头关掉。红系、不是白卡。 */
+/* 日志浮层：宽度与折叠态那根窄条一致、从同一条顶边往下垂，盖在主卡上半部分；
+   点外面或底部的收起箭头关掉。整块是强调色、不是白卡。 */
 .log-panel {
   position: absolute;
   left: 50%;
@@ -667,14 +712,14 @@ body {
   gap: 8px;
 }
 
-/* 浮层头顶那一行：右上两颗白胶囊（草图里就是白底黑字的两颗按钮，左边不写字）。 */
+/* 浮层头顶那一行：右上两颗胶囊按钮，左边不写字。 */
 .log-action {
   height: 24px;
   padding: 0 10px;
   border: 0;
   border-radius: 999px;
   background: #ffffff;
-  color: #1c1114;
+  color: #12233a;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -1057,7 +1102,9 @@ button.primary:hover:not(:disabled) {
   /* 悬停提亮的过渡（时长 --btn-hl-ms）：停止换 background、重启换 filter，
      两个都给过渡，避免重启的提亮瞬时跳变。 */
   transition: background var(--btn-hl-ms), filter var(--btn-hl-ms);
-  --btn-ico-size: 38px;
+  /* 图标段边长：34px 够放 18px 图标且留出呼吸，同时让「停止 / 重启 DSH」这类
+     会话按钮收窄一档——它们一出现，工具条左侧还有三颗徽章要一起排下。 */
+  --btn-ico-size: 34px;
 }
 
 .toolbar-actions button .btn-text {
@@ -1065,25 +1112,24 @@ button.primary:hover:not(:disabled) {
   transition: transform var(--btn-sweep-ms) ease;
 }
 
-/* 图标段占右端一个方格（38px）：给带图标的按钮把右侧内边距让出来（10px 间隙 + 方格），
-   保证居中的文字不会被图标分段压住；「启动 DSH」形态没有图标段，不受影响。 */
+/* 图标段占左端一个方格（38px）：图标在左、文字在右，分隔线落在图标右侧。
+   给带图标的按钮把左侧内边距让出来（10px 间隙 + 方格），文字整体往右让一点、
+   不再被图标压住；「启动 DSH」形态没有图标段，不受影响。 */
 .toolbar-actions button:has(.btn-ico) {
-  /* 内宽 = 图标段边长 + 原来两侧对称的内边距，文字在剩下的空间里真正居中；
-     否则按钮被加宽后文字会偏左。 */
-  padding-left: calc(16px + var(--btn-ico-size));
-  padding-right: calc(10px + var(--btn-ico-size));
+  padding-left: calc(6px + var(--btn-ico-size));
+  padding-right: 13px;
 }
 
 .toolbar-actions button .btn-ico {
   position: absolute;
   top: 0;
-  right: 0;
+  left: 0;
   height: 100%;
   width: var(--btn-ico-size);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-left: 1px solid var(--btn-ico-line, rgba(255, 255, 255, 0.28));
+  border-right: 1px solid var(--btn-ico-line, rgba(255, 255, 255, 0.28));
   transition: width var(--btn-sweep-ms) ease, border-color var(--btn-sweep-ms) ease;
 }
 
@@ -1099,17 +1145,17 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 悬停与「重启 DSH」点击后的持续转动（.is-restarting）共用同一组终态值（review 建议合并，
-   只此一份不会出现「改了悬停忘了转动」）：图标板漫过整颗按钮（宽度全开、分隔线消失、
-   图标随板居中，时长 --btn-sweep-ms），文字沿左推出按钮外、被 overflow 裁掉（位移不是淡出）。
-   推出量 = 文字自身宽度 + 64px：文字起点在按钮中央，这段距离足够连最宽的
-   「浏览器打开」（170px 按钮里约偏右 50px 起）也完全滑出左缘。 */
+   只此一份不会出现「改了悬停忘了转动」）：图标板从左端漫过整颗按钮（宽度全开、分隔线消失、
+   图标随板居中，时长 --btn-sweep-ms），文字被往右推出按钮外、被 overflow 裁掉（位移不是淡出）。
+   推出量 = 文字自身宽度 + 64px：文字起点在图标右侧，这段距离足够连最宽的
+   「浏览器打开」也完全滑出右缘。 */
 .toolbar-actions button:is(:hover:not(:disabled), .is-restarting) .btn-ico {
   width: 100%;
-  border-left-color: transparent;
+  border-right-color: transparent;
 }
 
 .toolbar-actions button:is(:hover:not(:disabled), .is-restarting) .btn-text {
-  transform: translateX(calc(-100% - 64px));
+  transform: translateX(calc(100% + 64px));
 }
 
 .toolbar-actions button:active:not(:disabled) .btn-ico svg {
@@ -1865,6 +1911,276 @@ html::-webkit-scrollbar {
 
 /* 卡片里的子分组（补丁层 / 插件）：小卡（.cell）已经是「卡中卡」那一层，
    再往下就只花一条细线分区，不叠第三个边框。 */
+/* ---- 环境大按钮：一排并列的环境卡片（点卡片切管理目标，点三点开操作菜单） ---- */
+/* 一排环境 + 行末竖排两颗按钮。宽度不够时整行换行，不把环境卡片压扁。 */
+.env-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.env-cards {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* 一张环境卡：本体是按钮，右上角叠一颗三点按钮。
+   选中的那张换底色 + 强调色描边，一眼能看出「现在管理的是它」。 */
+.env-card {
+  position: relative;
+  flex: 0 1 168px;
+  min-width: 0;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-2);
+  transition:
+    border-color 140ms,
+    background 140ms;
+}
+
+.env-card.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.env-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 右边给三点按钮留位置，别让名字压到它底下。 */
+  padding: 9px 30px 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.env-card-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-card-meta,
+.env-card-marks {
+  font-size: 11.5px;
+  color: var(--fg-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-card-marks {
+  color: var(--fg-dim);
+}
+
+/* 三点按钮：叠在卡片右上角，本身不占布局宽度。 */
+.env-more {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+}
+
+.env-more:hover,
+.env-more[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.env-more svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+/* 行末两颗按钮上下排列：桥接插件 / 补丁层，各自弹浮窗。 */
+.env-aside {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 116px;
+}
+
+.env-aside button {
+  width: 100%;
+}
+
+/* 「新建空白环境」紧跟在大按钮行后面，左对齐。 */
+.env-create {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.env-create .hint {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* 环境操作菜单：跟着三点按钮定位（坐标由 JS 算，贴边会往里收）。 */
+.env-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.env-menu button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.env-menu button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.env-menu button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.env-menu button.danger:not(:disabled) {
+  color: var(--danger);
+}
+
+/* 插件卡里的插件清单：外层不再画框（小卡已经是卡中卡那一层）。 */
+.plugin-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---- 浮窗层：桥接插件 / 补丁层 / 环境名输入（一个遮罩 + 三张卡共用） ---- */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(4, 8, 14, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+/* 三张浮窗各自 fixed 居中（与遮罩并列，不是它的子元素；靠 z-index 压在上面）。
+   居中用 inset + margin:auto：内容高度变化时不会跳，也不必知道具体尺寸。 */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 91;
+  margin: auto;
+  width: min(520px, calc(100vw - 48px));
+  /* 高度按内容走：inset:0 只用来居中，配上 fit-content 才不会把浮窗拉满整屏。 */
+  height: fit-content;
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.modal-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.modal-close {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.modal-close svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+/* 浮窗正文自己滚：内容长短不一（补丁层备份清单可能很长），别把浮窗撑出屏幕。 */
+.modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.modal-foot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .subcard {
   display: flex;
   flex-direction: column;

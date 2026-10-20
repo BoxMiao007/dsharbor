@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import logoUrl from "./assets/logo.png";
+import iconDs from "./assets/dsh-mark.svg";
 import "./style.css";
 
 /** 左侧导航的五个分区图标：统一 24 单位视框、描边 1.55，与左栏底部的浅/深图标同源。 */
@@ -18,7 +18,7 @@ const ICON_MOON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5
 /** 左侧导航的五个分区：导航按钮与面板标题都按这份表生成，顺序即显示顺序。 */
 const PANELS: ReadonlyArray<{ key: PanelKey; label: string; icon: string }> = [
   { key: "launch", label: "启动方式", icon: ICON_LAUNCH },
-  { key: "env", label: "环境", icon: ICON_ENV },
+  { key: "env", label: "环境/插件", icon: ICON_ENV },
   { key: "integ", label: "集成", icon: ICON_INTEG },
   { key: "traynet", label: "托盘与网络", icon: ICON_TRAYNET },
   { key: "about", label: "关于", icon: ICON_ABOUT },
@@ -43,6 +43,19 @@ const ICON_OPEN_APP = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5"
 const ICON_OPEN_BROWSER = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" /><path d="M2.5 12h19" /><path d="M12 2.5a14.7 14.7 0 0 1 3.8 9.5 14.7 14.7 0 0 1-3.8 9.5 14.7 14.7 0 0 1-3.8-9.5A14.7 14.7 0 0 1 12 2.5z" /></svg>`;
 /** 左栏底部的「GitHub 仓库」入口与打开方式里的「复制登录链接」共用这颗代码括号图标。 */
 const ICON_CODE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 7.5-5 4.5 5 4.5" /><path d="m15.5 7.5 5 4.5-5 4.5" /><path d="M13.5 4.5 10.5 19.5" /></svg>`;
+/** 左栏底部的「DSH 官网」入口：DeepSeek 官方 mark（单条 path，品牌蓝）。 */
+const ICON_DSH_SITE = `<img src="${iconDs}" alt="" draggable="false" />`;
+/**
+ * 左栏底部的「GitHub 仓库」入口：GitHub 官方 mark。
+ *
+ * 内联而不是引 .svg 文件：`<img>` 里的 `currentColor` 拿不到页面颜色，深色外观下会画成
+ * 黑色、几乎看不见。内联 path 才能跟着按钮文字色走。
+ */
+const ICON_GITHUB = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" stroke="none" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z" /></svg>`;
+/** 环境大按钮后面的竖向三点：展开重命名 / 复制 / 删除 / 安装依赖 / 打开目录。 */
+const ICON_MORE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg>`;
+/** 浮窗右上角的关闭叉（比三颗窗口按钮的 ICON_CLOSE 大一圈，用 24 视框）。 */
+const ICON_MODAL_CLOSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" /></svg>`;
 /** 打开方式的两段式按钮右侧那颗小三角，以及日志条的展开/收起箭头。 */
 const ICON_CHEVRON_DOWN = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" /></svg>`;
 const ICON_CHEVRON_UP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14.5 6-6 6 6" /></svg>`;
@@ -707,6 +720,14 @@ function readStoredTheme(): ThemeId {
 }
 
 /** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
+/**
+ * 启动 DSH 恒用的环境名：核心库 `launch.rs::PROFILE_NAME`（= "web"）。
+ *
+ * 界面里点别的环境只是把「插件与补丁层的管理对象」切过去，真正拉起的会话永远是这一个；
+ * 桥接插件也恒装在这一份上（登录链接的取法只跟启动用的环境有关）。
+ */
+const START_PROFILE = "web";
+
 const TOGGLE_TEXT_REST = "启动 DSH";
 const TOGGLE_TEXT_HOVER = "开始运行";
 
@@ -862,28 +883,36 @@ function badgeLine(key: string, text: string): string {
   return `<span id="${key}" class="badge badge-stopped panel-badge">${text}</span>`;
 }
 
-/** 界面骨架：一张通高的左栏悬浮块 + 右栏（工具条悬浮块 / 主卡 / 两张并排次卡）+ 统一日志浮层。
-    三只窗口按钮不在任何块里，浮在窗口右上角；块与块之间留缝，露出页面背景。
-    所有可交互元素的 id 不变，绑定代码共用。 */
+/** 界面骨架：顶部一条通栏透明拖拽条（品牌 + 三只窗口按钮）+ 左栏悬浮块 + 右栏
+    （工具条悬浮块 / 日志窄条 / 主卡）+ 统一日志浮层 + 弹窗层。
+    块与块之间留缝，露出页面背景。所有可交互元素的 id 不变，绑定代码共用。 */
 function buildHtml(info: AppInfo): string {
-  // 窗口按钮：浮在窗口最右上角，压在所有块之上（tauri.conf.json 里 decorations: false）。
-  const winControls = `
-    <div class="win-controls">
-      <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">${ICON_MINIMIZE}</button>
-      <button id="win-max" class="win-btn" type="button" title="最大化" aria-label="最大化">${ICON_MAXIMIZE}</button>
-      <button id="win-close" class="win-btn win-close" type="button" title="关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻" aria-label="关闭">${ICON_CLOSE}</button>
-    </div>
+  // 顶栏：整条可拖动，左边品牌、右边三只窗口按钮。
+  // 品牌文字自身也带 data-tauri-drag-region：Tauri 只认事件命中的那个元素是否带属性，
+  // 属性只挂在父元素上时，点在文字上就拖不动（旧版把属性挂在左栏卡片上的回归缺陷就是这么来的）。
+  const titlebar = `
+    <header class="titlebar" data-tauri-drag-region>
+      <span class="titlebar-brand" data-tauri-drag-region>
+        <span class="titlebar-name" data-tauri-drag-region>${info.name}</span><span
+          class="titlebar-sub"
+          data-tauri-drag-region
+          >DSH Web 的桌面壳</span
+        >
+      </span>
+      <div class="win-controls">
+        <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">${ICON_MINIMIZE}</button>
+        <button id="win-max" class="win-btn" type="button" title="最大化" aria-label="最大化">${ICON_MAXIMIZE}</button>
+        <button id="win-close" class="win-btn win-close" type="button" title="关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻" aria-label="关闭">${ICON_CLOSE}</button>
+      </div>
+    </header>
   `;
 
-  // 左栏：一张通高的悬浮块。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。
+  // 左栏：一张通高的悬浮块。顶部一句话 + 小字署名，中间五个分区，底部三个纯图标快捷入口。
   const sidebar = `
     <aside class="sidebar" data-tauri-drag-region>
       <div class="sidebar-brand" data-tauri-drag-region>
-        <div class="sidebar-brand-row">
-          <img class="sidebar-logo" src="${logoUrl}" alt="" draggable="false" />
-          <span class="sidebar-name">${info.name}</span>
-        </div>
-        <p class="sidebar-sub">DSH Web 的桌面壳</p>
+        <span class="sidebar-name">探索未至之境</span>
+        <p class="sidebar-sub">DeepSeek</p>
       </div>
       <nav class="rail" id="nav" aria-label="设置分区">
         ${PANELS.map(
@@ -892,8 +921,8 @@ function buildHtml(info: AppInfo): string {
         ).join("\n        ")}
       </nav>
       <div class="sidebar-links">
-        <button id="link-site" class="icon-btn" type="button" title="打开 DSH 官网" aria-label="打开 DSH 官网">${ICON_OPEN_BROWSER}</button>
-        <button id="link-repo" class="icon-btn" type="button" title="打开 GitHub 仓库" aria-label="打开 GitHub 仓库">${ICON_CODE}</button>
+        <button id="link-site" class="icon-btn" type="button" title="打开 DSH 官网" aria-label="打开 DSH 官网">${ICON_DSH_SITE}</button>
+        <button id="link-repo" class="icon-btn" type="button" title="打开 GitHub 仓库" aria-label="打开 GitHub 仓库">${ICON_GITHUB}</button>
         <button id="mode-btn" class="icon-btn" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}</button>
       </div>
     </aside>
@@ -905,7 +934,7 @@ function buildHtml(info: AppInfo): string {
   const toolbar = `
     <section class="block toolbar-block">
       <div class="status-row">
-        <span id="login-badge" class="badge badge-stopped"><span id="login-text">登录等待中</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="登录链接说明" data-tip="登录链接就绪后即可打开 DSH 界面">!</span></span>
+        <span id="login-badge" class="badge badge-stopped"><span id="login-text">桥接未安装</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="桥接插件说明" data-tip="正在读取桥接插件状态…">!</span></span>
         <span id="status-badge" class="badge badge-stopped"><span id="status-spinner" class="spinner hidden"></span><span id="status-text">已停止</span></span>
         <span id="version-badge" class="badge badge-version" title="每次成功启动 DSH 后自动读取">${SPARKLE_SVG}<span id="version-text">DSH 版本未知</span></span>
         <span class="status-meta">PID <b id="status-pid">—</b></span>
@@ -954,84 +983,43 @@ function buildHtml(info: AppInfo): string {
     </div>
   `;
 
-  // 分区里的次要内容（补丁层与插件）：平时隐藏在「管理环境」展开区里，展开后才出现。
-  const manageBlockBody = `
-    <div id="profile-manage" class="subcard hidden">
-      <span class="subcard-title">管理环境</span>
-      <div id="profile-manage-list" class="profile-manage-list"></div>
-      <div class="fields">
-        <span class="field-label" id="profile-manage-name-label">环境名</span>
-        <input id="profile-manage-name" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lab">
-      </div>
-      <p class="hint">环境名只能用字母、数字和 - _ .，且以字母或数字开头。</p>
-      <div class="actions">
-        <button id="btn-profile-create" class="ghost">新建空白环境</button>
-        <button id="btn-profile-copy" class="ghost">复制所选环境</button>
-        <button id="btn-profile-rename" class="ghost">重命名所选环境</button>
-        <button id="btn-profile-delete" class="ghost danger">删除所选环境</button>
-        <button id="btn-profile-deps" class="ghost">重装依赖</button>
-      </div>
-      <div id="profile-manage-confirm" class="profile-confirm hidden">
-        <p id="profile-manage-confirm-text" class="hint"></p>
-        <div class="actions">
-          <button id="btn-profile-confirm-yes" class="danger">确定删除</button>
-          <button id="btn-profile-confirm-no" class="ghost">取消</button>
+  // 「环境/插件」卡：顶部一排能起网页界面的环境大按钮，点一下就切「当前管理的环境」；
+  // 行末竖排「桥接插件」「补丁层」两颗按钮（都是弹浮窗）；按钮行下面是「新建空白环境」。
+  // 启动 DSH 永远用 web 环境（核心库 launch::PROFILE_NAME），这里选的只是「管理目标」。
+  const profilesBody = `
+    ${colHead("环境与插件", badgeLine("profiles-summary", "读取中…"))}
+    <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
+    <div id="profiles-content" class="profiles-content">
+      <div class="env-row">
+        <div id="profile-cards" class="env-cards"></div>
+        <div class="env-aside">
+          <button id="btn-bridge" class="ghost" type="button">桥接插件</button>
+          <button id="btn-patch" class="ghost" type="button">补丁层</button>
         </div>
       </div>
-      <div id="profile-patch" class="patch-panel hidden">
-        <span class="subcard-title">补丁层（cordis.patch.yml）</span>
-        <p class="hint">补丁层是你手写的插件覆盖层，改坏了 DSH 可能起不来。改动前先备份一份，改坏了再还原回来：每个环境只保留最近 5 份备份；还原前会自动把当前版本另存一份，所以还原本身也能再退回去。补丁层与依赖都要重启 DSH 后才生效，操作前请先停止 DSH。</p>
-        <div class="actions">
-          <button id="btn-patch-backup" class="ghost">备份补丁层</button>
-        </div>
-        <div id="patch-restore-confirm" class="profile-confirm hidden">
-          <p id="patch-restore-confirm-text" class="hint"></p>
-          <div class="actions">
-            <button id="btn-patch-confirm-yes" class="danger">确定还原</button>
-            <button id="btn-patch-confirm-no" class="ghost">取消</button>
-          </div>
-        </div>
-        <div id="patch-backup-list" class="patch-backup-list"></div>
+      <div class="env-create">
+        <button id="btn-profile-create" class="ghost" type="button">新建空白环境</button>
+        <p class="hint">环境名只能用字母、数字和 - _ .，且以字母或数字开头。启动 DSH 始终用 web 环境；选中别的环境只是把插件与补丁层的管理对象切过去。</p>
       </div>
-      <div id="profile-plugins" class="patch-panel hidden">
-        <span class="subcard-title">插件</span>
-        <p class="hint">开关改的是补丁层里的禁用表达，<b>不会卸载插件包</b>：关掉后重启 DSH 才不再加载它，重新打开也不需要重新下载。每次开关前会自动备份一份补丁层（每个环境保留最近 5 份）；改完要重启 DSH 才生效，所以操作前请先停止 DSH。</p>
-        <div id="plugin-list" class="plugin-list"></div>
-        <div id="plugin-empty" class="plugin-empty hidden">
-          <p class="hint">这个环境还没有装任何插件。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
-          <div class="actions">
-            <button id="btn-plugin-deps" class="ghost">去安装依赖</button>
-          </div>
-        </div>
-        <p id="plugin-note" class="hint hidden"></p>
-        <p id="plugin-warning" class="hint plugin-warning hidden"></p>
-      </div>
-      <p id="profile-manage-note" class="hint hidden"></p>
-      <p id="profile-manage-error" class="error hidden"></p>
+      <p id="profile-note" class="hint hidden"></p>
+      <p id="profile-error" class="error hidden"></p>
     </div>
   `;
 
-  // 「环境」块：选当前启动用哪一份 DSH 环境（profile）。下拉只列能起网页界面的环境
-  // （官方桌面端专用目录整份隐藏，见核心库 profiles.rs）。切换只写配置、不自动重启。
-  // `${manageBlockBody}` 是「管理环境」的展开区（补丁层与插件），默认隐藏。
-  const profilesBody = `
-    ${colHead("当前环境", badgeLine("profiles-summary", "读取中…"))}
-    <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
-    <div id="profiles-content" class="profiles-content">
-    <div class="fields profiles-fields">
-      <span class="field-label">启动用环境 <span class="info-dot" role="img" tabindex="0" aria-label="环境说明" data-tip="环境是 ~/.dsh/profiles 下的一份独立 DSH 安装，各自有自己的插件与配置。只有登记了网页应用的环境才能起界面；切换后需要重启 DSH 才生效。">!</span></span>
-      <div class="picker" id="profile-picker"></div>
-      <p class="hint" id="profile-hint"></p>
-    </div>
-    <div id="profile-restart-row" class="actions hidden">
-      <button id="btn-profile-restart" class="primary">重启 DSH 使切换生效</button>
-    </div>
-    <p id="profile-note" class="hint hidden"></p>
-    <p id="profile-error" class="error hidden"></p>
-    <div class="actions">
-      <button id="btn-profile-manage" class="ghost">管理环境</button>
-    </div>
-    ${manageBlockBody}
+  // 插件管理卡：跟着「选中的环境」走。开关改的是补丁层里的禁用表达，不卸载插件包。
+  const pluginBody = `
+    ${colHead("插件", badgeLine("plugin-summary", "读取中…"))}
+    <p class="hint">开关改的是补丁层里的禁用表达，<b>不会卸载插件包</b>：关掉后重启 DSH 才不再加载它，重新打开也不需要重新下载。每次开关前会自动备份一份补丁层（每个环境保留最近 5 份）；改完要重启 DSH 才生效，所以操作前请先停止 DSH。</p>
+    <div id="profile-plugins" class="plugin-panel">
+      <div id="plugin-list" class="plugin-list"></div>
+      <div id="plugin-empty" class="plugin-empty hidden">
+        <p class="hint">这个环境还没有装任何插件。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
+        <div class="actions">
+          <button id="btn-plugin-deps" class="ghost">去安装依赖</button>
+        </div>
+      </div>
+      <p id="plugin-note" class="hint hidden"></p>
+      <p id="plugin-warning" class="hint plugin-warning hidden"></p>
     </div>
   `;
 
@@ -1198,15 +1186,14 @@ function buildHtml(info: AppInfo): string {
       <p class="hint" id="port-hint">留空即跟随 DSH 自身的配置。</p>
     </div>`;
 
-  // 「桥接插件」块：登录链接的可靠通道，挂在「环境」里与它所属的环境挨着。
+  // 「桥接插件」浮窗：登录链接的可靠通道，恒装在启动用的 web 环境上。
   const bridgeBody = `
-    ${colHead("桥接插件", badgeLine("bridge-summary", "读取中…"))}
-    <p class="hint">安装后壳经 DSH 内部插件接口直接取带 token 的登录链接，不依赖日志格式；未安装时自动降级为日志解析（可用但较脆）。安装/卸载前请先停止 DSH。每次安装或卸载都会自动备份 profile 文件，只保留最近 5 份，超出后删掉最旧的。</p>
     <div class="kv">
       <div class="kv-row"><span class="kv-key">目标环境</span><span class="kv-value" id="bridge-target">—</span></div>
       <div class="kv-row"><span class="kv-key">安装状态</span><span class="kv-value" id="bridge-status">读取中…</span></div>
       <div class="kv-row"><span class="kv-key">最近备份</span><span class="kv-value" id="bridge-backup">—</span></div>
     </div>
+    <p class="hint">安装后壳经 DSH 内部插件接口直接取带 token 的登录链接，不依赖日志格式；未安装时自动降级为日志解析（可用但较脆）。安装/卸载前请先停止 DSH。每次安装或卸载都会自动备份 profile 文件，只保留最近 5 份，超出后删掉最旧的。</p>
     <div class="actions bridge-actions">
       <button id="btn-bridge-install" class="primary">安装桥接插件</button>
       <button id="btn-bridge-uninstall">卸载</button>
@@ -1215,6 +1202,24 @@ function buildHtml(info: AppInfo): string {
     </div>
     <p id="bridge-note" class="hint hidden"></p>
     <p id="bridge-error" class="error hidden"></p>
+  `;
+
+  // 「补丁层」浮窗：备份与还原所选环境的 cordis.patch.yml。
+  const patchBody = `
+    <p class="hint">补丁层是你手写的插件覆盖层，改坏了 DSH 可能起不来。改动前先备份一份，改坏了再还原回来：每个环境只保留最近 5 份备份；还原前会自动把当前版本另存一份，所以还原本身也能再退回去。补丁层与依赖都要重启 DSH 后才生效，操作前请先停止 DSH。</p>
+    <div class="actions">
+      <button id="btn-patch-backup" class="primary">备份补丁层</button>
+    </div>
+    <div id="patch-restore-confirm" class="profile-confirm hidden">
+      <p id="patch-restore-confirm-text" class="hint"></p>
+      <div class="actions">
+        <button id="btn-patch-confirm-yes" class="danger">确定还原</button>
+        <button id="btn-patch-confirm-no" class="ghost">取消</button>
+      </div>
+    </div>
+    <p id="patch-note" class="hint hidden"></p>
+    <p id="patch-error" class="error hidden"></p>
+    <div id="patch-backup-list" class="patch-backup-list"></div>
   `;
 
   // 「关于」：只留版本与两个目录（仓库 / 官网的入口挪到了左栏底部的图标）。
@@ -1242,7 +1247,7 @@ function buildHtml(info: AppInfo): string {
       "launch",
       mainCard([cell(modesBody), cell(commandPreviewBody), cellRow("1-1", extraArgsBody, portBody)]),
     ),
-    panelSection("env", mainCard([cell(profilesBody), cell(bridgeBody)])),
+    panelSection("env", mainCard([cell(profilesBody), cell(pluginBody)])),
     panelSection("integ", mainCard([cell(cliBlockBody), cell(cacheBlockBody)])),
     panelSection(
       "traynet",
@@ -1252,6 +1257,7 @@ function buildHtml(info: AppInfo): string {
   ].join("\n");
 
   // 日志：折叠时只是工具条下方的一条窄箭头；展开时是从工具条往下盖住内容的浮层。
+  // 窄条与主卡之间留一条缝（.page 的上内边距），不再紧贴。
   const logBar = `
     <div class="log-bar">
       <button id="log-toggle" class="log-toggle" type="button" aria-expanded="false" aria-controls="log-panel" title="展开日志" aria-label="展开日志">${ICON_CHEVRON_DOWN}</button>
@@ -1271,7 +1277,61 @@ function buildHtml(info: AppInfo): string {
     </section>
   `;
 
-  return `${winControls}
+  // 浮窗层：一颗遮罩 + 三张卡片式浮窗（桥接插件 / 补丁层 / 环境名输入）。
+  // 遮罩负责点外面关闭，浮窗自己 stopPropagation 不受影响；Esc 与右上角的叉也能关。
+  const modals = `
+    <div id="modal-scrim" class="modal-scrim hidden"></div>
+    <section id="modal-bridge" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-bridge-title">
+      <header class="modal-head">
+        <span class="modal-title" id="modal-bridge-title">桥接插件</span>
+        <button class="modal-close" type="button" data-modal-close="bridge" title="关闭" aria-label="关闭">${ICON_MODAL_CLOSE}</button>
+      </header>
+      <div class="modal-body">${bridgeBody}</div>
+    </section>
+    <section id="modal-patch" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-patch-title">
+      <header class="modal-head">
+        <span class="modal-title" id="modal-patch-title">补丁层（cordis.patch.yml）</span>
+        <button class="modal-close" type="button" data-modal-close="patch" title="关闭" aria-label="关闭">${ICON_MODAL_CLOSE}</button>
+      </header>
+      <div class="modal-body">
+        <p class="hint">环境：<b id="patch-target">—</b></p>
+        ${patchBody}
+      </div>
+    </section>
+    <section id="modal-name" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-name-title">
+      <header class="modal-head">
+        <span class="modal-title" id="modal-name-title">环境名</span>
+        <button class="modal-close" type="button" data-modal-close="name" title="关闭" aria-label="关闭">${ICON_MODAL_CLOSE}</button>
+      </header>
+      <div class="modal-body">
+        <div class="fields" id="profile-manage-name-row">
+          <input id="profile-manage-name" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lab">
+        </div>
+        <div id="profile-manage-confirm" class="profile-confirm hidden">
+          <p id="profile-manage-confirm-text" class="hint"></p>
+          <div class="actions">
+            <button id="btn-profile-confirm-yes" class="danger">确定删除</button>
+            <button id="btn-profile-confirm-no" class="ghost">取消</button>
+          </div>
+        </div>
+        <p id="profile-manage-note" class="hint hidden"></p>
+        <p id="profile-manage-error" class="error hidden"></p>
+      </div>
+      <footer class="modal-foot">
+        <button id="btn-name-confirm" class="primary" type="button">确定</button>
+        <button id="btn-name-cancel" class="ghost" type="button">取消</button>
+      </footer>
+    </section>
+    <div id="env-menu" class="env-menu hidden" role="menu" aria-label="环境操作">
+      <button type="button" role="menuitem" data-env-act="rename">重命名</button>
+      <button type="button" role="menuitem" data-env-act="copy">复制</button>
+      <button type="button" role="menuitem" data-env-act="delete" class="danger">删除</button>
+      <button type="button" role="menuitem" data-env-act="deps">安装依赖</button>
+      <button type="button" role="menuitem" data-env-act="open">打开目录</button>
+    </div>
+  `;
+
+  return `${titlebar}
   <div class="shell">
     ${sidebar}
     <main class="content">
@@ -1284,7 +1344,8 @@ function buildHtml(info: AppInfo): string {
         ${logOverlay}
       </div>
     </main>
-  </div>`;
+  </div>
+  ${modals}`;
 }
 
 async function main(): Promise<void> {
@@ -1850,7 +1911,6 @@ async function main(): Promise<void> {
 
     renderNetworkUI();
     const modesSummary = $<HTMLSpanElement>("modes-summary");
-    const bridgeSummary = $<HTMLSpanElement>("bridge-summary");
     const btnCopyLog = $<HTMLButtonElement>("btn-copy-log");
     const bridgeTarget = $<HTMLElement>("bridge-target");
     const bridgeStatus = $<HTMLElement>("bridge-status");
@@ -1970,8 +2030,6 @@ async function main(): Promise<void> {
     }
 
     let logOpen = readLogOpen();
-    /** 用户手动收过一次：本次会话里不再被主动操作拉起来。 */
-    let logSuppressed = false;
     /** 浮层打开、内容刷新后要不要把滚动条拉到底（用户往上翻时不抢）。 */
     let logFollow = true;
 
@@ -1992,7 +2050,6 @@ async function main(): Promise<void> {
 
     function setLogOpen(open: boolean): void {
       logOpen = open;
-      logSuppressed = !open;
       paintLogOpen();
       try {
         window.localStorage.setItem(LOG_OPEN_KEY, open ? "1" : "0");
@@ -2001,12 +2058,21 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 主动操作（启动 / 重启 / 桥接 / 环境 / 缓存）产生的输出：自动展开浮层，除非用户手动收过。 */
+    /**
+     * 主动操作（启动 / 重启 / 桥接 / 环境动作 / 缓存清理）产生的输出：无条件展开浮层。
+     *
+     * 维护者要求这些按钮一点就把日志拉起来——用户手动收过也要再展开一次，否则点了
+     * 「安装桥接插件」界面毫无反应、还以为没生效。收起只由「点浮层外 / 点收起 / Esc」触发。
+     */
     const expandLog = (): void => {
-      if (logSuppressed) return;
       if (!logOpen) {
         logOpen = true;
         paintLogOpen();
+        try {
+          window.localStorage.setItem(LOG_OPEN_KEY, "1");
+        } catch {
+          // 存储被禁用时只影响下次启动的初始状态
+        }
       }
       logFollow = true;
       scrollLogToEnd();
@@ -2027,6 +2093,20 @@ async function main(): Promise<void> {
     logBarToggle.addEventListener("click", () => setLogOpen(!logOpen));
     logCollapse.addEventListener("click", () => setLogOpen(false));
     logScrim.addEventListener("click", () => setLogOpen(false));
+    // 「点日志组件以外的任何位置就收起」（维护者要求）：scrim 只盖住内容区，点左栏或工具条
+    // 时收不到，所以在捕获阶段统一判定——事件落在浮层里就放过，落在外头才收起。
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (!logOpen) return;
+        const target = event.target;
+        if (target instanceof Node && (logPanel.contains(target) || logBarToggle.contains(target))) {
+          return;
+        }
+        setLogOpen(false);
+      },
+      true,
+    );
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && logOpen) setLogOpen(false);
     });
@@ -2502,28 +2582,12 @@ async function main(): Promise<void> {
       btnOpen.disabled = !status.loginReady;
       btnOpenMore.disabled = !status.loginReady;
 
-      // 登录链接徽章：桥接就绪 > 日志兜底就绪 > 等待中 > 获取失败。
-      // 正常状态的细节说明放在徽章的感叹号气泡里（维护者要求），失败信息仍留在行内便于直接排查。
-      if (status.loginReady) {
-        const viaBridge = status.loginChannel === "bridge";
-        loginBadge.className = "badge badge-running";
-        loginText.textContent = viaBridge ? "桥接就绪" : "日志兜底就绪";
-        setLoginTip(
-          viaBridge
-            ? "已通过桥接插件取得带 token 的登录链接。"
-            : "桥接插件未启用，已从启动日志解析出带 token 的登录链接（可用，但依赖 DSH 的日志格式）。",
-        );
-        loginNote.classList.add("hidden");
-      } else if (status.loginError) {
-        loginBadge.className = "badge badge-failed";
-        loginText.textContent = "登录获取失败";
-        setLoginTip(status.loginError);
+      // 顶部徽章只报告「桥接插件装没装」（纯两态，维护者要求），文案由 paintBridgeBadge 统一写。
+      // 登录链接本身的状态不占一格，但出问题时仍要能看见：有错就写进下面那一行。
+      if (status.loginError) {
         loginNote.textContent = status.loginError;
         loginNote.classList.remove("hidden");
       } else {
-        loginBadge.className = "badge badge-stopped";
-        loginText.textContent = running ? "登录等待中…" : "登录等待中";
-        setLoginTip("登录链接就绪后即可打开 DSH 界面。");
         loginNote.classList.add("hidden");
       }
       // 「重启 DSH」的持续转动：拿这次状态过一遍收场条件（每秒轮询都会走到这里）。
@@ -2565,9 +2629,7 @@ async function main(): Promise<void> {
         if (command === "restart_dsh") endRestartSpin();
       }
       await refresh();
-      // 新会话已经换成配置里的环境了：收起「需要重启」那一行，免得一直挂在那儿。
-      pendingProfile = null;
-      renderProfilesUI();
+      // 启动/重启都会重读一次环境清单：插件数、依赖状态可能刚变过。
       void loadProfiles();
     }
 
@@ -2701,23 +2763,48 @@ async function main(): Promise<void> {
       btnBridgeRestore.disabled = bridgeBusy;
     }
 
+    /**
+     * 读桥接插件状态。
+     *
+     * 顶部那颗徽章是「纯两态」（维护者要求）：桥接已安装就算已连接，没装就说没装；
+     * 登录链接有没有拿到不再单独占一格（那是会话状态，跟插件是否装好是两件事）。
+     * 徽章恒看启动用的 web 环境——桥接只装在那份上。
+     */
     async function refreshBridgeState(): Promise<void> {
       try {
         const state = await invoke<BridgeState>("bridge_state", { config: collectConfig() });
         lastBridgeState = state;
         bridgeTarget.textContent = state.target;
         bridgeStatus.textContent = state.installed ? "已安装（优先走桥接通道）" : "未安装（走日志兜底）";
-        // 「桥接插件」卡片顶部的徽章显示安装状态。
-        bridgeSummary.className = `badge ${state.installed ? "badge-running" : "badge-stopped"} panel-badge`;
-        bridgeSummary.textContent = state.installed ? "已安装" : "未安装";
         bridgeBackup.textContent = state.latestBackup
           ? `最近备份：${state.latestBackup}`
           : "还没有备份：安装或卸载时会自动创建，可用「恢复最近备份」回滚。";
+        paintBridgeBadge(state.installed, null);
       } catch (err) {
         bridgeStatus.textContent = `读取失败：${err}`;
-        bridgeSummary.className = "badge badge-failed panel-badge";
-        bridgeSummary.textContent = "读取失败";
+        paintBridgeBadge(null, String(err));
       }
+    }
+
+    /**
+     * 把桥接状态画到顶部徽章上。
+     *
+     * `installed === null` 表示没读到（读取失败），这时如实说读取失败，不假装「未安装」。
+     */
+    function paintBridgeBadge(installed: boolean | null, error: string | null): void {
+      if (installed === null) {
+        loginBadge.className = "badge badge-failed";
+        loginText.textContent = "桥接状态读取失败";
+        setLoginTip(error ?? "读取桥接插件状态失败。");
+        return;
+      }
+      loginBadge.className = `badge ${installed ? "badge-running" : "badge-stopped"}`;
+      loginText.textContent = installed ? "桥接已连接" : "桥接未安装";
+      setLoginTip(
+        installed
+          ? "桥接插件已装在启动用的 web 环境上：登录链接直接经它取得，不依赖日志格式。"
+          : "桥接插件还没装：现在只能从启动日志里解析登录链接。到「环境/插件」里点「桥接插件」装上更稳。",
+      );
     }
 
     function runBridgeOp(name: "bridge_install" | "bridge_uninstall"): void {
@@ -2778,29 +2865,33 @@ async function main(): Promise<void> {
       })();
     });
 
-    // ---- 环境面板：选当前启动用哪一份 DSH 环境（profile） ----------------------
-    // 只列能起网页界面的环境；下拉项文案与摘要徽章都由核心库的 `ProfileSummary`
-    // 算好（名字 · 插件数 · 桥接状态），界面不另算一套口径。
+    // ---- 环境/插件卡：一排环境大按钮 + 插件开关 --------------------------------
+    // 点大按钮只把「当前管理的环境」切过去（写进配置，下次打开还是它）；真正拉起 DSH
+    // 永远用 web 环境（核心库 launch::PROFILE_NAME）。重命名 / 复制 / 删除 / 安装依赖 /
+    // 打开目录收进每张环境卡右上角的竖向三点菜单；桥接插件（恒装在 web 上）与补丁层
+    // 是行末上下两颗按钮，各自弹浮窗。
     const profilesSummary = $<HTMLSpanElement>("profiles-summary");
-    const profileHintEl = $<HTMLParagraphElement>("profile-hint");
+    const profileCards = $<HTMLElement>("profile-cards");
     const profileNote = $<HTMLParagraphElement>("profile-note");
     const profileError = $<HTMLParagraphElement>("profile-error");
-    const profileRestartRow = $<HTMLElement>("profile-restart-row");
-    const btnProfileRestart = $<HTMLButtonElement>("btn-profile-restart");
     // 非 Windows 宿主把整卡内容收起、只留一条说明（同集成卡的 .cli-windows-only）。
     const profilesWindowsOnly = $<HTMLElement>("profiles-windows-only");
     const profilesContent = $<HTMLElement>("profiles-content");
-    /** 后端枚举回来的全部环境（含不能选的，便于提示「当前环境不可用」）。 */
+    const pluginSummary = $<HTMLSpanElement>("plugin-summary");
+    const btnProfileCreate = $<HTMLButtonElement>("btn-profile-create");
+    const btnBridge = $<HTMLButtonElement>("btn-bridge");
+    const btnPatch = $<HTMLButtonElement>("btn-patch");
+    const envMenu = $<HTMLElement>("env-menu");
+
+    /** 后端枚举回来的全部环境（含不能起网页的：照样列出来，只是标一句）。 */
     let profileList: ProfileSummary[] = [];
     /** 当前宿主能不能枚举环境；false 时环境卡收起并只说这一件事。 */
     let profilesSupported = true;
-    /** 已切换但还没重启时记住目标名字，用来决定「提示重启」那一行显不显示。 */
-    let pendingProfile: string | null = null;
 
     const profileOf = (name: string): ProfileSummary | null =>
       profileList.find((item) => item.name === name) ?? null;
 
-    /** 徽章文案：优先说当前选中的那份，选中的找不到时（环境被删了）如实说。 */
+    /** 徽章文案：优先说当前管理的那份，选中的找不到时（环境被删了）如实说。 */
     function profileBadgeText(): string {
       if (!profilesSupported) {
         return "仅 Windows 可用";
@@ -2809,36 +2900,91 @@ async function main(): Promise<void> {
       if (!current) {
         return profileList.length === 0 ? "没有可用环境" : `${prefs.profile}（找不到）`;
       }
-      return `${current.name} · ${current.plugins} 个插件 · ${current.bridgeInstalled ? "桥接已装" : "桥接未装"}`;
+      return `${current.name} · ${current.plugins} 个插件`;
+    }
+
+    /** 环境大按钮上的小标签：启动用 / 依赖状态 / 能不能起网页。 */
+    function envMarks(item: ProfileSummary): string[] {
+      const marks: string[] = [];
+      if (item.name === START_PROFILE) {
+        marks.push("启动用");
+      }
+      if (!item.depsInstalled) {
+        marks.push("依赖未安装");
+      }
+      if (!item.webCapable) {
+        marks.push("不能起网页");
+      }
+      return marks;
+    }
+
+    /** 一排环境大按钮：点卡片切管理目标，点右上角三点展开操作菜单。 */
+    function renderEnvCards(): void {
+      if (!profilesSupported) {
+        profileCards.innerHTML = "";
+        return;
+      }
+      if (profileList.length === 0) {
+        profileCards.innerHTML = `<p class="hint">还没读到任何环境；先启动一次 DSH 会创建默认的 web 环境。</p>`;
+        return;
+      }
+      profileCards.innerHTML = profileList
+        .map((item) => {
+          const active = item.name === prefs.profile ? " is-active" : "";
+          const marks = envMarks(item);
+          const marksHtml =
+            marks.length > 0 ? `<span class="env-card-marks">${marks.join(" · ")}</span>` : "";
+          return `<div class="env-card${active}" data-env="${escapeHtml(item.name)}">
+            <button class="env-card-main" type="button" data-env-pick="${escapeHtml(item.name)}">
+              <span class="env-card-name">${escapeHtml(item.name)}</span>
+              <span class="env-card-meta">${item.plugins} 个插件</span>
+              ${marksHtml}
+            </button>
+            <button class="env-more" type="button" title="环境操作" aria-label="环境操作" aria-haspopup="menu" aria-expanded="false" data-env-more="${escapeHtml(item.name)}">${ICON_MORE}</button>
+          </div>`;
+        })
+        .join("");
+      for (const pick of profileCards.querySelectorAll<HTMLButtonElement>("[data-env-pick]")) {
+        pick.addEventListener("click", () => {
+          void selectProfile(pick.dataset.envPick ?? "");
+        });
+      }
+      for (const more of profileCards.querySelectorAll<HTMLButtonElement>("[data-env-more]")) {
+        more.addEventListener("click", (event) => {
+          // 别让这一下冒到 document 上，否则刚开就被「点外面关闭」收掉。
+          event.stopPropagation();
+          toggleEnvMenu(more.dataset.envMore ?? "", more);
+        });
+      }
+    }
+
+    /** 插件卡的徽章与空状态跟着选中的环境走。 */
+    function renderPluginSummary(): void {
+      const target = profileOf(prefs.profile);
+      pluginSummary.textContent = target ? `${target.name} · ${target.plugins} 个插件` : "未选中环境";
+      pluginSummary.className = `badge ${target && target.depsInstalled ? "badge-running" : "badge-stopped"} panel-badge`;
+    }
+
+    function setProfileNote(text: string | null): void {
+      if (!text) {
+        profileNote.textContent = "";
+        profileNote.classList.add("hidden");
+        return;
+      }
+      profileNote.textContent = text;
+      profileNote.classList.remove("hidden");
     }
 
     function renderProfilesUI(): void {
       // 不支持的环境下收起整卡内容，只留一条「仅在 Windows 宿主可用」的说明，
-      // 免得在下拉里看到一个永远为空的列表还以为环境全丢了。
+      // 免得看到一排永远为空的环境按钮还以为环境全丢了。
       profilesWindowsOnly.classList.toggle("hidden", profilesSupported);
       profilesContent.classList.toggle("hidden", !profilesSupported);
       const current = profileOf(prefs.profile);
       profilesSummary.textContent = profileBadgeText();
       profilesSummary.className = `badge ${profilesSupported && current ? "badge-running" : "badge-stopped"} panel-badge`;
-      profileHintEl.textContent = current
-        ? `已登记 ${current.plugins} 个插件，${current.bridgeInstalled ? "桥接插件已装（能直接取带 token 的登录链接）" : "桥接插件未装（登录链接走日志兜底）"}。`
-        : profileList.length === 0
-          ? "还没读到任何能起网页界面的环境；先启动一次 DSH 会创建默认环境。"
-          : `配置里记的环境「${prefs.profile}」已经不在了，从下拉里重新选一个。`;
-      // 只有「已存进配置」且与当前环境不同的目标才需要重启生效。
-      profileRestartRow.classList.toggle("hidden", pendingProfile === null || !profilesSupported);
-    }
-
-    function fillProfilePicker(): void {
-      const selectable = profileList.filter((item) => item.webCapable && item.name !== "desktop");
-      profilePicker.setChoices(
-        selectable.map((item) => ({ value: item.name, label: `${item.name} · ${item.plugins} 个插件` })),
-      );
-      // 当前环境不在可选集里（被删了 / 还没读到）时不强行改 value，让下拉停在原值上，
-      // 由下面的说明文字告诉用户去重选。
-      if (selectable.some((item) => item.name === prefs.profile)) {
-        profilePicker.setValue(prefs.profile);
-      }
+      renderEnvCards();
+      renderPluginSummary();
     }
 
     async function loadProfiles(): Promise<void> {
@@ -2855,93 +3001,179 @@ async function main(): Promise<void> {
         profileError.textContent = `读取环境列表失败：${err}`;
         profileError.classList.remove("hidden");
       }
-      fillProfilePicker();
       renderProfilesUI();
-      // 管理面板与下拉看的是同一份环境清单，重读后一起刷新。
+      // 插件卡与补丁层浮窗看的也是这份清单，重读后一起刷新。
       renderManageUI();
     }
 
-    /** 切环境：写配置 → 需要时补装桥接 → 提示重启。不自动重启，免得断掉正在跑的会话。 */
+    /** 切管理目标：写配置 → 换插件清单。不重启、不打断正在跑的会话（启动恒用 web）。 */
     async function selectProfile(name: string): Promise<void> {
-      if (name === prefs.profile) {
+      if (!name || name === prefs.profile) {
         return;
       }
       profileError.classList.add("hidden");
-      const previous = prefs.profile;
+      setProfileNote(null);
       prefs = { ...prefs, profile: name };
-      pendingProfile = name;
       renderProfilesUI();
+      // 配置里记的是「下次打开还是它」，所以必须落盘；后端插件操作也从这里读。
       await persistConfigQuiet();
-      // 环境名进了配置文件，后续所有插件操作与启动都按新环境走（后端从磁盘读）。
-      const target = profileOf(name);
-      const running = currentStatus?.state === "running";
-      if (target && !target.bridgeInstalled) {
-        if (running) {
-          // 实例在跑的时候不能改它的 profile 文件（pnpm 会抢锁）：只提示，不打断。
-          profileNote.textContent = `「${name}」里还没装桥接插件；先停止 DSH，重启时会自动装好。`;
-          profileNote.classList.remove("hidden");
-        } else {
-          profileNote.textContent = `正在给「${name}」安装桥接插件…`;
-          profileNote.classList.remove("hidden");
-          try {
-            // 后端从磁盘读环境名，所以必须先落盘再调。
-            const outcome = await invoke<BridgeOutcome>("bridge_install", { config: collectConfig() });
-            profileNote.textContent = outcome.ok
-              ? `已给「${name}」装好桥接插件。`
-              : `给「${name}」装桥接插件没成功：${outcome.message}`;
-          } catch (err) {
-            profileNote.textContent = `给「${name}」装桥接插件失败：${err}`;
-          }
-        }
-      } else {
-        profileNote.classList.add("hidden");
-      }
-      // 切换后重读列表（桥接可能刚装上）与桥接卡状态。
-      await loadProfiles();
-      void refreshBridgeState();
-      void syncCliShim();
-      if (running) {
-        // 实例还在跑：写清「现在跑的还是旧环境」——这句比「已装好桥接」重要，覆盖它。
-        profileNote.classList.remove("hidden");
-        profileNote.textContent = `已切到「${name}」；正在跑的会话仍是「${previous}」，重启后才会用新环境。`;
+      // 插件与补丁层跟着换：清掉旧缓存让它重新拉一次。
+      pluginLoadedFor = null;
+      patchLoadedFor = null;
+      renderManageUI();
+      if (currentStatus?.state === "running" && name !== START_PROFILE) {
+        setProfileNote(
+          `正在跑的会话仍是 web 环境（启动恒用 web）；这里切的是插件与补丁层的管理对象。`,
+        );
       }
     }
 
-    const profilePicker = new Picker("profile-picker", (value) => {
-      void selectProfile(value);
+    // ---- 环境操作菜单：重命名 / 复制 / 删除 / 安装依赖 / 打开目录 ----------------
+    /** 菜单当前操作的环境；null 表示菜单是收起的。 */
+    let envMenuTarget: string | null = null;
+
+    function closeEnvMenu(): void {
+      if (envMenuTarget === null) {
+        return;
+      }
+      envMenuTarget = null;
+      envMenu.classList.add("hidden");
+      for (const btn of profileCards.querySelectorAll<HTMLElement>("[data-env-more]")) {
+        btn.setAttribute("aria-expanded", "false");
+      }
+    }
+
+    /** 在三点按钮旁边展开菜单；靠视口边缘时往回收，别被窗口裁掉。 */
+    function toggleEnvMenu(name: string, anchor: HTMLElement): void {
+      const already = envMenuTarget === name;
+      closeEnvMenu();
+      if (already || !name) {
+        return;
+      }
+      envMenuTarget = name;
+      envMenu.classList.remove("hidden");
+      anchor.setAttribute("aria-expanded", "true");
+      const rect = anchor.getBoundingClientRect();
+      const width = envMenu.offsetWidth;
+      const height = envMenu.offsetHeight;
+      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+      // 下方放不下就往上翻，避免贴着窗口底边被裁。
+      const below = rect.bottom + 6;
+      const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 6) : below;
+      envMenu.style.left = `${Math.round(left)}px`;
+      envMenu.style.top = `${Math.round(top)}px`;
+      // 不能管理的项置灰：web 是启动用的环境，当前正管理的那个也不能删。
+      const target = profileOf(name);
+      const isWeb = name === START_PROFILE;
+      for (const item of envMenu.querySelectorAll<HTMLButtonElement>("[data-env-act]")) {
+        const act = item.dataset.envAct;
+        const disabled =
+          (act === "delete" && (isWeb || name === prefs.profile)) ||
+          (act === "deps" && target === null);
+        item.disabled = disabled;
+        item.title = disabled
+          ? act === "delete"
+            ? isWeb
+              ? "web 是启动 DSH 用的环境，不能删"
+              : "这是当前正管理的环境，先在上面选一个别的再删"
+            : "这个环境已经不在清单里了"
+          : "";
+      }
+    }
+
+    for (const item of envMenu.querySelectorAll<HTMLButtonElement>("[data-env-act]")) {
+      item.addEventListener("click", () => {
+        const name = envMenuTarget;
+        const act = item.dataset.envAct ?? "";
+        closeEnvMenu();
+        if (!name) {
+          return;
+        }
+        if (act === "rename") {
+          openNameModal("rename", name);
+        } else if (act === "copy") {
+          openNameModal("copy", name);
+        } else if (act === "delete") {
+          openNameModal("delete", name);
+        } else if (act === "deps") {
+          void runEnvAction(() => installDeps(name));
+        } else if (act === "open") {
+          void openProfileDir(name);
+        }
+      });
+    }
+
+    // ---- 浮窗层：桥接插件 / 补丁层 / 环境名输入 --------------------------------
+    const modalScrim = $<HTMLElement>("modal-scrim");
+    const modalBridge = $<HTMLElement>("modal-bridge");
+    const modalPatch = $<HTMLElement>("modal-patch");
+    const modalName = $<HTMLElement>("modal-name");
+    const modalNameTitle = $<HTMLElement>("modal-name-title");
+    type ModalId = "bridge" | "patch" | "name";
+    let openModal: ModalId | null = null;
+
+    function setModal(id: ModalId | null): void {
+      openModal = id;
+      modalBridge.classList.toggle("hidden", id !== "bridge");
+      modalPatch.classList.toggle("hidden", id !== "patch");
+      modalName.classList.toggle("hidden", id !== "name");
+      modalScrim.classList.toggle("hidden", id === null);
+      if (id === null) {
+        closeEnvMenu();
+      }
+    }
+
+    modalScrim.addEventListener("click", () => setModal(null));
+    for (const close of root.querySelectorAll<HTMLButtonElement>("[data-modal-close]")) {
+      close.addEventListener("click", () => setModal(null));
+    }
+    // 捕获阶段处理 Esc：先关浮窗，且不再让底下「按 Esc 收日志」那一条跟着动。
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key !== "Escape") {
+          return;
+        }
+        if (openModal !== null) {
+          event.stopPropagation();
+          setModal(null);
+        } else if (envMenuTarget !== null) {
+          event.stopPropagation();
+          closeEnvMenu();
+        }
+      },
+      true,
+    );
+    // 点菜单与浮窗以外的地方收起菜单。
+    document.addEventListener("click", () => closeEnvMenu());
+
+    btnBridge.addEventListener("click", () => {
+      void refreshBridgeState();
+      setModal("bridge");
     });
-    btnProfileRestart.addEventListener("click", () => {
-      pendingProfile = null;
-      renderProfilesUI();
-      beginRestartSpin();
-      void startOrRestart("restart_dsh");
+    btnPatch.addEventListener("click", () => {
+      syncPatchModal();
+      setModal("patch");
     });
 
-    // ---- 管理环境：新建 / 复制 / 重命名 / 删除 ---------------------------------
+    // ---- 环境名输入：新建 / 重命名 / 复制 / 删除确认 ---------------------------
     // 四个动作的规则（名字合法性、哪些不能删、依赖目录与锁文件不跟着复制）全在后端，
-    // 界面只负责收集名字、转述后端那句中文说明、刷新列表。
-    const profileManagePanel = $<HTMLElement>("profile-manage");
-    const profileManageList = $<HTMLElement>("profile-manage-list");
+    // 界面只负责弹输入框收集名字、转述后端那句中文说明、重读列表。
     const profileManageName = $<HTMLInputElement>("profile-manage-name");
-    const profileManageNameLabel = $<HTMLElement>("profile-manage-name-label");
     const profileManageNote = $<HTMLParagraphElement>("profile-manage-note");
     const profileManageError = $<HTMLParagraphElement>("profile-manage-error");
     const profileManageConfirm = $<HTMLElement>("profile-manage-confirm");
     const profileManageConfirmText = $<HTMLParagraphElement>("profile-manage-confirm-text");
-    const btnProfileManage = $<HTMLButtonElement>("btn-profile-manage");
-    const btnProfileCreate = $<HTMLButtonElement>("btn-profile-create");
-    const btnProfileCopy = $<HTMLButtonElement>("btn-profile-copy");
-    const btnProfileRename = $<HTMLButtonElement>("btn-profile-rename");
-    const btnProfileDelete = $<HTMLButtonElement>("btn-profile-delete");
-    const btnProfileDeps = $<HTMLButtonElement>("btn-profile-deps");
-    const btnProfileConfirmYes = $<HTMLButtonElement>("btn-profile-confirm-yes");
-    const btnProfileConfirmNo = $<HTMLButtonElement>("btn-profile-confirm-no");
-    /** 面板里选中的「操作对象」环境；与「启动用环境」是两件事，互不影响。 */
-    let manageTarget: string | null = null;
-    /** 正在跑的动作（忙时所有按钮置灰，防重复提交）。 */
+    const nameInputRow = $<HTMLElement>("profile-manage-name-row");
+    const btnNameConfirm = $<HTMLButtonElement>("btn-name-confirm");
+    const btnNameCancel = $<HTMLButtonElement>("btn-name-cancel");
+
+    type NameMode = "create" | "rename" | "copy" | "delete";
+    let nameMode: NameMode = "create";
+    /** 重命名 / 复制 / 删除针对的环境；新建时为 null。 */
+    let nameTarget: string | null = null;
+    /** 正在跑的环境动作（忙时按钮置灰，防重复提交）。 */
     let manageBusy = false;
-    /** 删除的二次确认阶段：非空时确认行显示。 */
-    let managePendingDelete: string | null = null;
 
     /** 后端返回值：与 Rust 侧 `profile_ops::ProfileOutcome` 对应。 */
     interface ProfileOutcome {
@@ -2951,16 +3183,230 @@ async function main(): Promise<void> {
       summary: ProfileSummary | null;
     }
 
-    // ---- 管理环境：补丁层备份 / 还原 ---------------------------------------------
+    function setManageNote(text: string | null): void {
+      if (!text) {
+        profileManageNote.textContent = "";
+        profileManageNote.classList.add("hidden");
+        return;
+      }
+      profileManageNote.textContent = text;
+      profileManageNote.classList.remove("hidden");
+    }
+
+    function setManageError(text: string | null): void {
+      if (!text) {
+        profileManageError.textContent = "";
+        profileManageError.classList.add("hidden");
+        return;
+      }
+      profileManageError.textContent = text;
+      profileManageError.classList.remove("hidden");
+    }
+
+    /** 打开名字浮窗：新建收集新名字，重命名/复制预填旧名字，删除只做确认。 */
+    function openNameModal(mode: NameMode, target: string | null): void {
+      nameMode = mode;
+      nameTarget = target;
+      setManageNote(null);
+      setManageError(null);
+      const deleting = mode === "delete";
+      nameInputRow.classList.toggle("hidden", deleting);
+      profileManageConfirm.classList.toggle("hidden", !deleting);
+      if (deleting && target) {
+        profileManageConfirmText.textContent = `确定删除环境「${target}」？目录与里面的插件配置会被一起删掉，这个操作没法撤销。`;
+      }
+      modalNameTitle.textContent =
+        mode === "create"
+          ? "新建空白环境"
+          : mode === "rename"
+            ? "重命名环境"
+            : mode === "copy"
+              ? "复制环境"
+              : "删除环境";
+      profileManageName.value = mode === "rename" && target ? target : "";
+      profileManageName.placeholder = mode === "create" ? "例如 lab" : `把「${target ?? ""}」改成…`;
+      profileManageName.disabled = manageBusy;
+      btnNameConfirm.textContent = deleting ? "确定删除" : "确定";
+      btnNameConfirm.classList.toggle("danger", deleting);
+      btnNameConfirm.classList.toggle("primary", !deleting);
+      btnNameCancel.disabled = manageBusy;
+      setModal("name");
+      if (!deleting) {
+        profileManageName.focus();
+        profileManageName.select();
+      }
+    }
+
+    /**
+     * 跑一个环境动作：清提示 → 置忙 → 调后端 → 转述结果 → 重读列表。
+     *
+     * `reloadPrefs` 用于重命名：后端可能已经把配置里的环境名改掉了，界面必须重读，
+     * 否则下一次保存配置会把旧名字写回去。
+     */
+    async function runEnvAction(
+      action: () => Promise<ProfileOutcome>,
+      options: { reloadPrefs?: boolean; output?: boolean } = {},
+    ): Promise<void> {
+      if (manageBusy) {
+        return;
+      }
+      manageBusy = true;
+      setManageError(null);
+      setManageNote(null);
+      btnNameConfirm.disabled = true;
+      btnNameCancel.disabled = true;
+      profileManageName.disabled = true;
+      try {
+        const outcome = await action();
+        if (options.output) {
+          // 重装依赖的说明里有命令原文、退出码与输出尾部，整段贴进日志浮层；
+          // 界面上只留一句结论，否则一行提示会被几百行输出撞长。
+          logAction(outcome.message);
+          if (outcome.ok) {
+            setModal(null);
+            void appendSystemNote(`环境「${outcome.name}」的依赖已就绪。`);
+          } else {
+            setManageError(
+              `重装依赖没有完成（环境「${outcome.name}」）：命令原文、退出码与输出尾部都在日志浮层里。`,
+            );
+          }
+        } else if (outcome.ok) {
+          setModal(null);
+          void appendSystemNote(outcome.message);
+        } else {
+          setManageError(outcome.message);
+        }
+        // 新建/复制/重命名都会改变清单，删掉的更得重读：一律重读一次。
+        // 重装依赖同样可能让插件数从零变成若干，插件清单也得重新拉。
+        pluginLoadedFor = null;
+        patchLoadedFor = null;
+        await loadProfiles();
+        if (options.reloadPrefs) {
+          await reloadPrefsFromDisk();
+        }
+      } catch (err) {
+        setManageError(String(err));
+      } finally {
+        manageBusy = false;
+        btnNameConfirm.disabled = false;
+        btnNameCancel.disabled = false;
+        profileManageName.disabled = false;
+        renderManageUI();
+      }
+    }
+
+    /** 环境动作的一句话结果：写进日志（浮层已关时静默追加，不硬拉起来）。 */
+    function appendSystemNote(text: string): void {
+      appendLog([text], true);
+    }
+
+    async function createProfile(name: string): Promise<ProfileOutcome> {
+      return invoke<ProfileOutcome>("create_profile", { config: collectConfig(), name });
+    }
+
+    async function copyProfile(source: string, name: string): Promise<ProfileOutcome> {
+      return invoke<ProfileOutcome>("copy_profile", { config: collectConfig(), source, name });
+    }
+
+    async function renameProfile(oldName: string, name: string): Promise<ProfileOutcome> {
+      return invoke<ProfileOutcome>("rename_profile", { config: collectConfig(), oldName, name });
+    }
+
+    async function deleteProfile(name: string): Promise<ProfileOutcome> {
+      return invoke<ProfileOutcome>("delete_profile", { config: collectConfig(), name });
+    }
+
+    /** 重装依赖：几分钟起步，先给一句「别关窗口」再发命令。 */
+    async function installDeps(name: string): Promise<ProfileOutcome> {
+      setPluginNote(`正在给「${name}」重装依赖，可能要几分钟…（期间请不要关窗口）`);
+      void appendSystemNote(`环境「${name}」：开始重装依赖…`);
+      return invoke<ProfileOutcome>("install_profile_deps", { config: collectConfig(), name });
+    }
+
+    /** 打开某个环境自己的目录（宿主与 WSL 下的路径都由后端拼，前端算不出来）。 */
+    async function openProfileDir(name: string): Promise<void> {
+      try {
+        const dir = await invoke<string>("open_shell_dir", { kind: "profile", profile: name });
+        void appendSystemNote(`已在资源管理器中打开环境「${name}」的目录：${dir}`);
+      } catch (err) {
+        void appendSystemNote(`打开环境「${name}」的目录失败：${String(err)}`);
+      }
+    }
+
+    btnProfileCreate.addEventListener("click", () => {
+      if (manageBusy) {
+        return;
+      }
+      openNameModal("create", null);
+    });
+
+    btnNameCancel.addEventListener("click", () => setModal(null));
+
+    btnNameConfirm.addEventListener("click", () => {
+      if (manageBusy) {
+        return;
+      }
+      const name = profileManageName.value.trim();
+      if (nameMode === "delete") {
+        const target = nameTarget;
+        if (!target) {
+          return;
+        }
+        void runEnvAction(() => deleteProfile(target));
+        return;
+      }
+      if (name === "") {
+        setManageError("先填一个环境名。");
+        profileManageName.focus();
+        return;
+      }
+      if (nameMode === "create") {
+        void runEnvAction(() => createProfile(name));
+        return;
+      }
+      const target = nameTarget;
+      if (!target) {
+        return;
+      }
+      if (nameMode === "copy") {
+        void runEnvAction(() => copyProfile(target, name));
+        return;
+      }
+      void runEnvAction(() => renameProfile(target, name), { reloadPrefs: true });
+    });
+
+    profileManageName.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      btnNameConfirm.click();
+    });
+
+    /** 配置里的环境名可能被后端改过（重命名/删除），重读一遍再回写界面。 */
+    async function reloadPrefsFromDisk(): Promise<void> {
+      try {
+        const saved = await invoke<ShellConfig>("load_shell_config");
+        prefs = normalizePrefs(saved);
+        renderProfilesUI();
+        renderCacheAutoToggle();
+      } catch (err) {
+        setManageError(`重读配置失败：${err}`);
+      }
+    }
+
+    // ---- 补丁层浮窗 ------------------------------------------------------------
     // 规则（文件名、保留份数、还原前另存与说明文案）全在后端 `patch_layer` 里算，
     // 界面只负责：对选中的那个环境发命令、把备份列表列出来、把说明原文贴出来。
-    const profilePatchPanel = $<HTMLElement>("profile-patch");
+    const patchTargetEl = $<HTMLElement>("patch-target");
     const patchBackupList = $<HTMLElement>("patch-backup-list");
     const btnPatchBackup = $<HTMLButtonElement>("btn-patch-backup");
     const patchRestoreConfirm = $<HTMLElement>("patch-restore-confirm");
     const patchRestoreConfirmText = $<HTMLParagraphElement>("patch-restore-confirm-text");
     const btnPatchConfirmYes = $<HTMLButtonElement>("btn-patch-confirm-yes");
     const btnPatchConfirmNo = $<HTMLButtonElement>("btn-patch-confirm-no");
+    const patchNote = $<HTMLParagraphElement>("patch-note");
+    const patchError = $<HTMLParagraphElement>("patch-error");
 
     /** 与 Rust 侧 `patch_layer::PatchBackup` 对应（最旧在前）。 */
     interface PatchBackup {
@@ -2976,16 +3422,189 @@ async function main(): Promise<void> {
       backups: PatchBackup[];
     }
 
-    /** 当前选中环境的补丁层备份（最旧在前，与后端返回顺序一致）。 */
+    /** 当前管理环境的补丁层备份（最旧在前，与后端返回顺序一致）。 */
     let patchBackups: PatchBackup[] = [];
     /** 补丁层动作是否在跑（忙时按钮置灰，防重复提交）。 */
     let patchBusy = false;
     /** 已拉取备份清单的那个环境；换环境才重新拉，避免每次渲染都打一趟后端。 */
     let patchLoadedFor: string | null = null;
-    /** 待确认的还原目标（备份文件名）；非 null 时确认行展开（与删除那处同一个写法）。 */
+    /** 待确认的还原目标（备份文件名）；非 null 时确认行展开。 */
     let patchPendingRestore: string | null = null;
 
-    // ---- 管理环境：插件开关 ------------------------------------------------------
+    function setPatchNote(text: string | null): void {
+      if (!text) {
+        patchNote.textContent = "";
+        patchNote.classList.add("hidden");
+        return;
+      }
+      patchNote.textContent = text;
+      patchNote.classList.remove("hidden");
+    }
+
+    function setPatchError(text: string | null): void {
+      if (!text) {
+        patchError.textContent = "";
+        patchError.classList.add("hidden");
+        return;
+      }
+      patchError.textContent = text;
+      patchError.classList.remove("hidden");
+    }
+
+    /** 备份时间戳（unix 秒）→ 本地时间文本；文件名里就是它，用户能对着看。 */
+    function stampLabel(stamp: number): string {
+      const date = new Date(stamp * 1000);
+      const pad = (value: number): string => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    /** 备份清单：最新的在最上面，每行能直接点「还原」；路径原文照抄，方便自己去翻。 */
+    function renderPatchList(): void {
+      if (patchBackups.length === 0) {
+        patchBackupList.innerHTML = `<p class="hint">这个环境还没有补丁层备份。改补丁层之前先点「备份补丁层」留个底。</p>`;
+        return;
+      }
+      const newest = patchBackups[patchBackups.length - 1]?.name ?? "";
+      patchBackupList.innerHTML = [...patchBackups]
+        .reverse()
+        .map((item) => {
+          const tag = item.name === newest ? `<span class="profile-manage-tag">最新</span>` : "";
+          const disabled = patchBusy || manageBusy ? " disabled" : "";
+          return `<div class="patch-backup-row"><span class="patch-backup-time">${stampLabel(item.stamp)}</span><span class="patch-backup-path">${escapeHtml(item.path)}</span>${tag}<button type="button" class="kv-action" data-patch-restore="${escapeHtml(item.name)}"${disabled}>还原这一份</button></div>`;
+        })
+        .join("");
+      for (const button of patchBackupList.querySelectorAll<HTMLButtonElement>("[data-patch-restore]")) {
+        button.addEventListener("click", () => {
+          // 第一下只展开确认行；真正改文件要再点一次「确定还原」。
+          patchPendingRestore = button.dataset.patchRestore ?? "";
+          setPatchError(null);
+          setPatchNote(null);
+          syncPatchModal();
+        });
+      }
+    }
+
+    /** 补丁层浮窗跟着当前管理的环境走；换环境才拉一次备份清单。 */
+    function syncPatchModal(): void {
+      const target = profileOf(prefs.profile);
+      patchTargetEl.textContent = target ? target.name : "—";
+      // 还原确认行：有待确认的目标才展开，并把「覆盖哪一份、能不能反悔」说清楚。
+      const pending = patchPendingRestore;
+      patchRestoreConfirm.classList.toggle("hidden", pending === null);
+      if (pending !== null) {
+        patchRestoreConfirmText.textContent = `确定把补丁层还原成「${pending}」？这会覆盖当前那份 cordis.patch.yml（现有内容会先另存一份备份，改坏了还能再退回来）。`;
+      }
+      if (!target) {
+        patchBackups = [];
+        patchLoadedFor = null;
+        renderPatchList();
+        return;
+      }
+      if (patchLoadedFor !== target.name) {
+        patchLoadedFor = target.name;
+        patchBackups = [];
+        renderPatchList();
+        void refreshPatchBackups(target.name);
+        return;
+      }
+      renderPatchList();
+    }
+
+    /** 读一次备份清单（读失败只提示，不打断其它动作）。 */
+    async function refreshPatchBackups(name: string): Promise<void> {
+      try {
+        const list = await invoke<PatchBackup[]>("patch_backups", { config: collectConfig(), name });
+        if (prefs.profile !== name) {
+          return; // 期间换了环境，丢弃这批结果
+        }
+        patchBackups = list;
+        renderPatchList();
+      } catch (err) {
+        if (prefs.profile === name) {
+          setPatchError(`读取补丁层备份失败：${String(err)}`);
+        }
+      }
+    }
+
+    /** 备份补丁层：成功与否都要落地一句原文（含路径），失败原因不吞。 */
+    async function backupPatchLayer(): Promise<void> {
+      const name = prefs.profile;
+      if (!name || patchBusy || manageBusy) {
+        return;
+      }
+      patchBusy = true;
+      setPatchError(null);
+      setPatchNote(null);
+      syncPatchModal();
+      try {
+        const outcome = await invoke<PatchOutcome>("patch_backup", { config: collectConfig(), name });
+        patchBackups = outcome.backups;
+        patchLoadedFor = name;
+        setPatchNote(outcome.message);
+        logAction(outcome.message);
+      } catch (err) {
+        setPatchError(String(err));
+        logAction(`备份补丁层失败：${String(err)}`);
+      } finally {
+        patchBusy = false;
+        syncPatchModal();
+      }
+    }
+
+    /**
+     * 还原到某一份备份。
+     *
+     * 会覆盖当前的补丁层文件，所以界面上先要一次确认：后端覆盖前会把当前版本另存一份
+     * 备份，因此这一步可反悔，但那不等于不用问。
+     */
+    async function restorePatchLayer(backup: string): Promise<void> {
+      const name = prefs.profile;
+      if (!name || !backup || patchBusy || manageBusy) {
+        return;
+      }
+      patchPendingRestore = null;
+      patchBusy = true;
+      setPatchError(null);
+      setPatchNote(null);
+      syncPatchModal();
+      try {
+        const outcome = await invoke<PatchOutcome>("patch_restore", {
+          config: collectConfig(),
+          name,
+          backup,
+        });
+        patchBackups = outcome.backups;
+        patchLoadedFor = name;
+        setPatchNote(outcome.message);
+        logAction(outcome.message);
+      } catch (err) {
+        setPatchError(String(err));
+        logAction(`还原补丁层失败：${String(err)}`);
+      } finally {
+        patchBusy = false;
+        syncPatchModal();
+      }
+    }
+
+    btnPatchBackup.addEventListener("click", () => {
+      void backupPatchLayer();
+    });
+
+    // 还原分两拍：第一下点备份行只展开确认行，这里才真的改文件。
+    btnPatchConfirmYes.addEventListener("click", () => {
+      const backup = patchPendingRestore;
+      if (!backup) {
+        return;
+      }
+      void restorePatchLayer(backup);
+    });
+
+    btnPatchConfirmNo.addEventListener("click", () => {
+      patchPendingRestore = null;
+      syncPatchModal();
+    });
+
+    // ---- 插件开关 --------------------------------------------------------------
     // 哪些插件、现在开没开、该往补丁层写什么，规则全在后端
     // （dsharbor_core::plugin_switch）。界面只负责：列出来、发开关命令、把后端
     // 那句中文说明与提醒原文贴出来。
@@ -3014,7 +3633,7 @@ async function main(): Promise<void> {
       items: PluginItem[];
     }
 
-    /** 当前选中环境实际加载的插件（后端顺序，与 package.json 里登记的顺序一致）。 */
+    /** 当前管理环境实际加载的插件（后端顺序，与 package.json 里登记的顺序一致）。 */
     let pluginItems: PluginItem[] = [];
     /** 插件清单是否已拉过（未拉到时不能把空数组当成「零插件」画空状态）。 */
     let pluginLoaded = false;
@@ -3022,134 +3641,6 @@ async function main(): Promise<void> {
     let pluginLoadedFor: string | null = null;
     /** 插件开关动作是否在跑（忙时所有开关置灰，防重复提交）。 */
     let pluginBusy = false;
-
-    /** 备份时间戳（unix 秒）→ 本地时间文本；文件名里就是它，用户能对着看。 */
-    function stampLabel(stamp: number): string {
-      const date = new Date(stamp * 1000);
-      const pad = (value: number): string => String(value).padStart(2, "0");
-      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-    }
-
-    /** 备份清单：最新的在最上面，每行能直接点「还原」；路径原文照抄，方便自己去翻。 */
-    function renderPatchList(): void {
-      if (patchBackups.length === 0) {
-        patchBackupList.innerHTML = `<p class="hint">这个环境还没有补丁层备份。改补丁层之前先点「备份补丁层」留个底。</p>`;
-        return;
-      }
-      const newest = patchBackups[patchBackups.length - 1]?.name ?? "";
-      patchBackupList.innerHTML = [...patchBackups]
-        .reverse()
-        .map((item) => {
-          const tag = item.name === newest ? `<span class="profile-manage-tag">最新</span>` : "";
-          const disabled = patchBusy || manageBusy ? " disabled" : "";
-          return `<div class="patch-backup-row"><span class="patch-backup-time">${stampLabel(item.stamp)}</span><span class="patch-backup-path">${escapeHtml(item.path)}</span>${tag}<button type="button" class="kv-action" data-patch-restore="${escapeHtml(item.name)}"${disabled}>还原这一份</button></div>`;
-        })
-        .join("");
-      for (const button of patchBackupList.querySelectorAll<HTMLButtonElement>("[data-patch-restore]")) {
-        button.addEventListener("click", () => {
-          // 第一下只展开确认行；真正改文件要再点一次「确定还原」。
-          patchPendingRestore = button.dataset.patchRestore ?? "";
-          setManageError(null);
-          setManageNote(null);
-          renderManageUI();
-        });
-      }
-    }
-
-    /** 选中环境变了才重新拉备份清单；同一个环境只拉一次。 */
-    function syncPatchPanel(): void {
-      const target = manageTarget;
-      profilePatchPanel.classList.toggle("hidden", target === null);
-      if (target === null) {
-        patchBackups = [];
-        patchLoadedFor = null;
-        renderPatchList();
-        return;
-      }
-      if (patchLoadedFor !== target) {
-        patchLoadedFor = target;
-        patchBackups = [];
-        renderPatchList();
-        // 换环境才拉一次：每次重渲染都打一趟后端没必要（这只是一个目录列举）。
-        void refreshPatchBackups(target);
-        return;
-      }
-      renderPatchList();
-    }
-
-    /** 读一次备份清单（读失败只提示，不打断其它面板动作）。 */
-    async function refreshPatchBackups(name: string): Promise<void> {
-      try {
-        const list = await invoke<PatchBackup[]>("patch_backups", { config: collectConfig(), name });
-        if (manageTarget !== name) {
-          return; // 期间换了环境，丢弃这批结果
-        }
-        patchBackups = list;
-        renderPatchList();
-      } catch (err) {
-        if (manageTarget === name) {
-          setManageError(`读取补丁层备份失败：${String(err)}`);
-        }
-      }
-    }
-
-    /** 备份补丁层：成功与否都要落地一句原文（含路径），失败原因不吞。 */
-    async function backupPatchLayer(): Promise<void> {
-      const name = manageTarget;
-      if (!name || patchBusy || manageBusy) {
-        return;
-      }
-      patchBusy = true;
-      setManageError(null);
-      setManageNote(null);
-      renderManageUI();
-      try {
-        const outcome = await invoke<PatchOutcome>("patch_backup", { config: collectConfig(), name });
-        patchBackups = outcome.backups;
-        patchLoadedFor = name;
-        logAction(outcome.message);
-      } catch (err) {
-        setManageError(String(err));
-        logAction(`备份补丁层失败：${String(err)}`);
-      } finally {
-        patchBusy = false;
-        renderManageUI();
-      }
-    }
-
-    /**
-     * 还原到某一份备份。
-     *
-     * 会覆盖当前的补丁层文件，所以界面上先要一次确认（与删除同一个写法）：
-     * 后端覆盖前会把当前版本另存一份备份，因此这一步可反悔，但那不等于不用问。
-     */
-    async function restorePatchLayer(backup: string): Promise<void> {
-      const name = manageTarget;
-      if (!name || !backup || patchBusy || manageBusy) {
-        return;
-      }
-      patchPendingRestore = null;
-      patchBusy = true;
-      setManageError(null);
-      setManageNote(null);
-      renderManageUI();
-      try {
-        const outcome = await invoke<PatchOutcome>("patch_restore", {
-          config: collectConfig(),
-          name,
-          backup,
-        });
-        patchBackups = outcome.backups;
-        patchLoadedFor = name;
-        logAction(outcome.message);
-      } catch (err) {
-        setManageError(String(err));
-        logAction(`还原补丁层失败：${String(err)}`);
-      } finally {
-        patchBusy = false;
-        renderManageUI();
-      }
-    }
 
     /**
      * 插件清单：一行一个插件，开/关一个复选框。
@@ -3185,9 +3676,9 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 插件面板跟着选中的环境走；换环境才拉一次清单。 */
+    /** 插件卡跟着当前管理的环境走；换环境才拉一次清单。 */
     function syncPluginPanel(): void {
-      const target = manageTarget;
+      const target = profileOf(prefs.profile);
       profilePluginPanel.classList.toggle("hidden", target === null);
       if (target === null) {
         pluginItems = [];
@@ -3198,32 +3689,32 @@ async function main(): Promise<void> {
         renderPluginList();
         return;
       }
-      if (pluginLoadedFor !== target) {
-        pluginLoadedFor = target;
+      if (pluginLoadedFor !== target.name) {
+        pluginLoadedFor = target.name;
         pluginItems = [];
         pluginLoaded = false;
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
-        void refreshPluginList(target);
+        void refreshPluginList(target.name);
         return;
       }
       renderPluginList();
     }
 
-    /** 读一次插件清单（读失败只提示，不打断其它面板动作）。 */
+    /** 读一次插件清单（读失败只提示，不打断其它动作）。 */
     async function refreshPluginList(name: string): Promise<void> {
       try {
         const list = await invoke<PluginItem[]>("plugin_list", { config: collectConfig(), name });
-        if (manageTarget !== name) {
+        if (prefs.profile !== name) {
           return; // 期间换了环境，丢弃这批结果
         }
         pluginItems = list;
         pluginLoaded = true;
         renderPluginList();
       } catch (err) {
-        if (manageTarget === name) {
-          setManageError(`读取插件清单失败：${String(err)}`);
+        if (prefs.profile === name) {
+          setPluginNote(`读取插件清单失败：${String(err)}`);
         }
       }
     }
@@ -3235,16 +3726,14 @@ async function main(): Promise<void> {
      * 关掉桥接插件时还会带一句「登录链接只能靠日志兜底」的提醒。
      */
     async function togglePlugin(name: string, enabled: boolean): Promise<void> {
-      const target = manageTarget;
+      const target = prefs.profile;
       if (!target || !name || pluginBusy || manageBusy || patchBusy) {
         return;
       }
       pluginBusy = true;
-      setManageError(null);
-      setManageNote(null);
       setPluginNote(null);
       setPluginWarning(null);
-      renderManageUI();
+      syncPluginPanel();
       try {
         const outcome = await invoke<ToggleOutcome>("plugin_toggle", {
           config: collectConfig(),
@@ -3264,17 +3753,18 @@ async function main(): Promise<void> {
         // 开关前刚自动备份过，备份清单跟着刷新一次，免得用户还要再点一下才能看到。
         patchLoadedFor = null;
       } catch (err) {
-        setManageError(String(err));
+        setPluginNote(`切换插件开关失败：${String(err)}`);
         logAction(`切换插件开关失败：${String(err)}`);
         // 失败时那个复选框已经跟着鼠标点过去了，重拉一次清单把它掰回真实状态。
         pluginLoadedFor = null;
       } finally {
         pluginBusy = false;
-        renderManageUI();
+        syncPluginPanel();
+        renderPluginSummary();
       }
     }
 
-    /** 开关后的那一句确认（含「重启才生效」）：面板上一眼能看到，不用展开输出块。 */
+    /** 开关后的那一句确认（含「重启才生效」）：卡上一眼能看到，不用展开日志。 */
     function setPluginNote(text: string | null): void {
       if (!text) {
         pluginNote.textContent = "";
@@ -3296,287 +3786,16 @@ async function main(): Promise<void> {
       pluginWarning.classList.remove("hidden");
     }
 
-    function setManageNote(text: string | null): void {
-      if (!text) {
-        profileManageNote.textContent = "";
-        profileManageNote.classList.add("hidden");
-        return;
-      }
-      profileManageNote.textContent = text;
-      profileManageNote.classList.remove("hidden");
-    }
-
-    function setManageError(text: string | null): void {
-      if (!text) {
-        profileManageError.textContent = "";
-        profileManageError.classList.add("hidden");
-        return;
-      }
-      profileManageError.textContent = text;
-      profileManageError.classList.remove("hidden");
-    }
-
-    /** 面板里那一行行环境：点一下就把名字填进输入框，后续按钮对它操作。 */
-    function renderManageList(): void {
-      if (profileList.length === 0) {
-        manageTarget = null;
-        profileManageList.innerHTML = `<p class="hint">没有可管理的环境。</p>`;
-        return;
-      }
-      if (!manageTarget || !profileOf(manageTarget)) {
-        manageTarget = profileList[0].name;
-      }
-      profileManageList.innerHTML = profileList
-        .map((item) => {
-          const marks: string[] = [];
-          if (item.name === prefs.profile) {
-            marks.push("当前启动用");
-          }
-          if (!item.depsInstalled) {
-            marks.push("依赖未安装");
-          }
-          if (!item.webCapable) {
-            marks.push("不能起网页");
-          }
-          const selected = item.name === manageTarget ? " is-selected" : "";
-          const tail = marks.length > 0 ? `<span class="profile-manage-tag">${marks.join(" · ")}</span>` : "";
-          return `<button class="profile-manage-item${selected}" data-profile="${item.name}"><span class="profile-manage-name-text">${item.name}</span><span class="profile-manage-meta">${item.plugins} 个插件</span>${tail}</button>`;
-        })
-        .join("");
-      for (const item of profileManageList.querySelectorAll<HTMLButtonElement>(".profile-manage-item")) {
-        item.addEventListener("click", () => {
-          manageTarget = item.dataset.profile ?? null;
-          managePendingDelete = null;
-          patchPendingRestore = null;
-          renderManageUI();
-        });
-      }
-    }
-
+    /** 环境清单变化后统一刷三处：环境按钮、补丁层浮窗、插件卡。 */
     function renderManageUI(): void {
-      renderManageList();
-      const target = manageTarget ? profileOf(manageTarget) : null;
-      const hasTarget = target !== null;
-      profileManageNameLabel.textContent = hasTarget ? `新名字（当前「${target.name}」）` : "环境名";
-      profileManageName.placeholder = hasTarget ? `把「${target.name}」改成…` : "例如 lab";
-      for (const btn of [btnProfileCopy, btnProfileRename, btnProfileDelete]) {
-        btn.disabled = manageBusy || !hasTarget;
-      }
-      for (const btn of [btnProfileCreate]) {
-        btn.disabled = manageBusy;
-      }
-      // 「重装依赖」不随依赖是否已装而隐藏：新建/复制出来缺依赖时要装，装过之后
-      // 依赖坏了、装歪了也要能重来（票据要求的三个手动动作之一），所以一直露着。
-      btnProfileDeps.classList.toggle("hidden", !hasTarget);
-      btnProfileDeps.disabled = manageBusy || patchBusy;
-      btnProfileDeps.textContent = manageBusy ? "安装中…" : "重装依赖";
-      // 删除要一次确认：第一次点「删除」只展开确认行，再点一次才真的删。
-      const confirming = managePendingDelete !== null;
-      profileManageConfirm.classList.toggle("hidden", !confirming);
-      if (confirming) {
-        profileManageConfirmText.textContent = `确定删除环境「${managePendingDelete}」？目录与里面的插件配置会被一起删掉，这个操作没法撤销。`;
-      }
-      btnProfileConfirmYes.disabled = manageBusy;
-      btnProfileConfirmNo.disabled = manageBusy;
-      // 补丁层还原也要一次确认：跟删除用同一个写法（第一次展开确认行，第二次才真改）。
-      const restoring = patchPendingRestore !== null;
-      patchRestoreConfirm.classList.toggle("hidden", !restoring);
-      if (restoring) {
-        patchRestoreConfirmText.textContent = `确定把补丁层还原成「${patchPendingRestore}」？这会覆盖当前那份 cordis.patch.yml（现有内容会先另存一份备份，改坏了还能再退回来）。`;
-      }
-      btnPatchConfirmYes.disabled = patchBusy || manageBusy;
-      btnPatchConfirmNo.disabled = patchBusy || manageBusy;
-      // 补丁层面板跟着选中的环境走：没选中就没有可备份的东西。
-      btnPatchBackup.disabled = !hasTarget || patchBusy || manageBusy || pluginBusy;
-      btnPatchBackup.textContent = patchBusy ? "处理中…" : "备份补丁层";
-      syncPatchPanel();
-      // 插件开关同样跟着选中的环境走（两者会互相影响：开关一次就多一份备份）。
+      renderProfilesUI();
+      syncPatchModal();
       syncPluginPanel();
     }
 
-    /**
-     * 跑一个生命周期动作：清提示 → 置忙 → 调后端 → 转述结果 → 重读列表。
-     *
-     * `reloadPrefs` 用于重命名：后端可能已经把配置里的环境名改掉了，界面必须重读，
-     * 否则下一次保存配置会把旧名字写回去。
-     */
-    async function runManage(
-      action: () => Promise<ProfileOutcome>,
-      options: { reloadPrefs?: boolean; output?: boolean } = {},
-    ): Promise<void> {
-      if (manageBusy) {
-        return;
-      }
-      manageBusy = true;
-      setManageError(null);
-      setManageNote(null);
-      managePendingDelete = null;
-      renderManageUI();
-      try {
-        const outcome = await action();
-        manageTarget = outcome.summary ? outcome.name : null;
-        if (options.output) {
-          // 重装依赖的说明里有命令原文、退出码与输出尾部，整段贴进输出块；
-          // 面板上只留一句结论，否则一行 hint 会被几百行输出撞长。
-          logAction(outcome.message);
-          if (outcome.ok) {
-            setManageNote(`环境「${outcome.name}」的依赖已就绪。`);
-          } else {
-            setManageError(
-              `重装依赖没有完成（环境「${outcome.name}」）：命令原文、退出码与输出尾部都在日志浮层里。`,
-            );
-          }
-        } else {
-          setManageNote(outcome.message);
-        }
-        // 新建/复制/重命名都会改变清单，删掉的更得重读：一律重读一次。
-        // 重装依赖同样可能让插件数从零变成若干，插件清单也得重新拉。
-        pluginLoadedFor = null;
-        await loadProfiles();
-        if (options.reloadPrefs) {
-          await reloadPrefsFromDisk();
-        }
-      } catch (err) {
-        setManageError(String(err));
-      } finally {
-        manageBusy = false;
-        renderManageUI();
-      }
-    }
-
-    /** 配置里的环境名可能被后端改过（重命名/删除当前环境），重读一遍再回写界面。 */
-    async function reloadPrefsFromDisk(): Promise<void> {
-      try {
-        const saved = await invoke<ShellConfig>("load_shell_config");
-        prefs = normalizePrefs(saved);
-        fillProfilePicker();
-        renderProfilesUI();
-        renderCacheAutoToggle();
-      } catch (err) {
-        setManageError(`重读配置失败：${err}`);
-      }
-    }
-
-    async function createSelected(): Promise<ProfileOutcome> {
-      const name = profileManageName.value.trim();
-      const outcome = await invoke<ProfileOutcome>("create_profile", { config: collectConfig(), name });
-      profileManageName.value = "";
-      return outcome;
-    }
-
-    async function copySelected(): Promise<ProfileOutcome> {
-      const source = manageTarget ?? "";
-      const name = profileManageName.value.trim();
-      const outcome = await invoke<ProfileOutcome>("copy_profile", { config: collectConfig(), source, name });
-      profileManageName.value = "";
-      return outcome;
-    }
-
-    async function renameSelected(): Promise<ProfileOutcome> {
-      const oldName = manageTarget ?? "";
-      const name = profileManageName.value.trim();
-      const outcome = await invoke<ProfileOutcome>("rename_profile", {
-        config: collectConfig(),
-        oldName,
-        name,
-      });
-      profileManageName.value = "";
-      return outcome;
-    }
-
-    // 名字要由调用方传进来：runManage 一开始就把确认行清掉，读 managePendingDelete 会拿到空串。
-    async function deleteSelected(name: string): Promise<ProfileOutcome> {
-      return invoke<ProfileOutcome>("delete_profile", { config: collectConfig(), name });
-    }
-
-    async function installDepsSelected(): Promise<ProfileOutcome> {
-      const name = manageTarget ?? "";
-      setManageNote(`正在给「${name}」重装依赖，可能要几分钟…（期间请不要关窗口）`);
-      return invoke<ProfileOutcome>("install_profile_deps", { config: collectConfig(), name });
-    }
-
-    btnProfileManage.addEventListener("click", () => {
-      const open = profileManagePanel.classList.toggle("hidden");
-      btnProfileManage.textContent = open ? "管理环境" : "收起管理";
-      if (!open) {
-        managePendingDelete = null;
-        patchPendingRestore = null;
-        renderManageUI();
-      }
-    });
-
-    btnProfileCreate.addEventListener("click", () => {
-      void runManage(createSelected);
-    });
-
-    btnProfileCopy.addEventListener("click", () => {
-      void runManage(copySelected);
-    });
-
-    btnProfileRename.addEventListener("click", () => {
-      void runManage(renameSelected, { reloadPrefs: true });
-    });
-
-    // 删除分两拍：第一次只展开确认行，第二次才真删（票要求「一次确认」）。
-    btnProfileDelete.addEventListener("click", () => {
-      if (manageBusy || !manageTarget) {
-        return;
-      }
-      managePendingDelete = manageTarget;
-      setManageError(null);
-      setManageNote(null);
-      renderManageUI();
-    });
-
-    btnProfileConfirmYes.addEventListener("click", () => {
-      const name = managePendingDelete;
-      if (!name) {
-        return;
-      }
-      void runManage(() => deleteSelected(name));
-    });
-
-    btnProfileConfirmNo.addEventListener("click", () => {
-      managePendingDelete = null;
-      renderManageUI();
-    });
-
-    btnProfileDeps.addEventListener("click", () => {
-      void runManage(installDepsSelected, { output: true });
-    });
-
     // 零插件空状态里的「去安装依赖」：跟着走同一个动作，而不是另写一份。
     btnPluginDeps.addEventListener("click", () => {
-      void runManage(installDepsSelected, { output: true });
-    });
-
-    // 补丁层：备份一颗按钮，还原在备份列表的每一行上（用户选定哪一份就退到哪一份）。
-    btnPatchBackup.addEventListener("click", () => {
-      void backupPatchLayer();
-    });
-
-    // 还原分两拍：第一下点备份行只展开确认行，这里才真的改文件。
-    btnPatchConfirmYes.addEventListener("click", () => {
-      const backup = patchPendingRestore;
-      if (!backup) {
-        return;
-      }
-      void restorePatchLayer(backup);
-    });
-
-    btnPatchConfirmNo.addEventListener("click", () => {
-      patchPendingRestore = null;
-      renderManageUI();
-    });
-
-    // 环境名输入框回车 = 按当前选中的动作提交不了，只做一件事：
-    // 把默认动作告诉用户（新建），避免回车没反应看起来像坏了。
-    profileManageName.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter") {
-        return;
-      }
-      event.preventDefault();
-      btnProfileCreate.click();
+      void runEnvAction(() => installDeps(prefs.profile), { output: true });
     });
 
     // ---- 集成面板：命令行集成（用户级 PATH + dsh 垫片） ------------------------

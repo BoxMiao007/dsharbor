@@ -945,15 +945,31 @@ fn webview_base_color(theme: Option<settings::UiTheme>) -> tauri::window::Color 
 }
 
 /// 在系统文件管理器里打开壳配置目录 / DSH 日志目录 / 桥接插件备份目录。
-/// 备份目录入口在「环境」面板的桥接插件小节（安装/卸载的备份都落在那里）。
+/// 备份目录入口在「环境/插件」面板的桥接插件浮窗（安装/卸载的备份都落在那里）。
+/// `kind = "profile"` 打开某个环境自己的目录（名称由 `profile` 参数传入，缺省为管理目标）。
 #[tauri::command]
-fn open_shell_dir(app: tauri::AppHandle, kind: String) -> Result<String, String> {
+fn open_shell_dir(
+    app: tauri::AppHandle,
+    kind: String,
+    profile: Option<String>,
+) -> Result<String, String> {
     let dir = match kind.as_str() {
         "config" => app_data_root(&app)?,
         "logs" => std::path::PathBuf::from(plugin::host_dsh_home()?).join("logs"),
         "backups" => plugin::backups_root(&app)?,
         // 命令行集成的垫片目录（与版本目录解耦，PATH 里那条永远指这里）。
         "bin" => shellpath::bin_dir(&app)?,
+        // 环境目录：前端算不出宿主 / WSL 下的 ~/.dsh/profiles/<名字>，所以由后端拼。
+        "profile" => {
+            let name = match profile {
+                Some(name) => name,
+                None => settings::load(&app).prefs.profile,
+            };
+            std::path::PathBuf::from(plugin::profile_dir(
+                &plugin::Target::of(&settings::load(&app).launch),
+                &name,
+            )?)
+        }
         other => return Err(format!("不认识的目录：{other}")),
     };
     // 目录可能还不存在（重装后首次启动、DSH 还没写过日志）：先建出来，否则资源管理器报错。
@@ -1007,15 +1023,16 @@ fn ensure_session_stopped(
 }
 
 /// 安装桥接插件（备份 → 官方 plugin add → 校验 bundles 登记）。
+/// 桥接恒装在启动用的 web 环境：它是 DSH 注入头的必需项，
+/// 而其它环境只是「为了管理插件才被选中」，装不装桥接不影响任何事。
 #[tauri::command]
 fn bridge_install(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
-    let profile = settings::load(&app).prefs.profile;
-    plugin::install(&app, &config, &profile)
+    ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
+    plugin::install(&app, &config, launch::PROFILE_NAME)
 }
 
 /// 卸载桥接插件（备份 → 官方 plugin remove → 校验 bundles 摘除）。
@@ -1025,12 +1042,11 @@ fn bridge_uninstall(
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
-    let profile = settings::load(&app).prefs.profile;
-    plugin::uninstall(&app, &config, &profile)
+    ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
+    plugin::uninstall(&app, &config, launch::PROFILE_NAME)
 }
 
-/// 从备份恢复 profile 文件（回滚）。
+/// 从备份恢复 web 环境的 profile 文件（回滚）。
 #[tauri::command]
 fn bridge_restore(
     app: tauri::AppHandle,
@@ -1038,12 +1054,11 @@ fn bridge_restore(
     config: LaunchConfig,
     backup_dir: String,
 ) -> Result<String, String> {
-    ensure_session_stopped(&state, "操作桥接插件", &settings::load(&app).prefs.profile)?;
-    let profile = settings::load(&app).prefs.profile;
-    plugin::restore(&app, &config, &profile, &backup_dir)
+    ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
+    plugin::restore(&app, &config, launch::PROFILE_NAME, &backup_dir)
 }
 
-/// 查询桥接插件在当前目标环境中的状态。
+/// 查询桥接插件在启动用 web 环境中的状态（顶部那颗徽章看的就它）。
 ///
 /// async 命令：WSL 目标下要经 wsl.exe 读发行版里的文件（秒级），同步命令会让
 /// 换启动方式时整个窗口发僵（同 profile_port_hint）。
@@ -1053,8 +1068,7 @@ async fn bridge_state(
     config: LaunchConfig,
 ) -> Result<plugin::BridgeState, String> {
     let bridge = tauri::async_runtime::spawn_blocking(move || {
-        let profile = settings::load(&app).prefs.profile;
-        plugin::state(&app, &config, &profile)
+        plugin::state(&app, &config, launch::PROFILE_NAME)
     })
     .await
     .map_err(|err| format!("后台读取桥接状态失败：{err}"))??;
@@ -1343,7 +1357,7 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                     .ok()
                     .and_then(|slot| slot.clone())
                     .unwrap_or_else(|| settings::load(app).launch);
-                let profile = settings::load(app).prefs.profile;
+                let profile = launch::PROFILE_NAME.to_string();
                 let launcher_args =
                     profile::port_overlay_args(app, &config, &profile).unwrap_or_default();
                 if let Err(err) = spawn_session(app, &state, &config, &profile, &launcher_args) {
@@ -1596,7 +1610,7 @@ pub fn run() {
                 match serde_json::from_str::<LaunchConfig>(&raw) {
                     Ok(config) => {
                         let state = app.state::<AppState>();
-                        let profile = settings::load(app.handle()).prefs.profile;
+                        let profile = launch::PROFILE_NAME.to_string();
                         let launcher_args =
                             profile::port_overlay_args(app.handle(), &config, &profile)
                                 .unwrap_or_default();

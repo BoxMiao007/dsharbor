@@ -211,7 +211,10 @@ pub fn guard_rename(old: &str, new: &str, new_exists: bool) -> Result<(), String
     guard_create(new, new_exists)
 }
 
-/// 删除环境的守卫：当前启动用的环境、官方桌面端目录都不许删，并说清原因。
+/// 删除环境的守卫：正在启动用的 web 环境、官方桌面端目录都不许删，并说清原因。
+///
+/// 壳启动时恒用 `web`（见 launch.rs 的 PROFILE_NAME），所以真正不能删的是 `web`，
+/// 而不是界面里刚好选中的那个管理目标——选中的不是 web 时可以随便删掉。
 pub fn guard_delete(name: &str, current: &str) -> Result<(), String> {
     validate_name(name)?;
     if name == DESKTOP_PROFILE {
@@ -219,9 +222,14 @@ pub fn guard_delete(name: &str, current: &str) -> Result<(), String> {
             "「{DESKTOP_PROFILE}」属于官方桌面端，不是 DSHarbor 管的环境，不能删除。"
         ));
     }
+    if name == crate::launch::PROFILE_NAME {
+        return Err(format!(
+            "「{name}」是启动 DSH 用的环境，删了整个壳就没法启动了。"
+        ));
+    }
     if name == current {
         return Err(format!(
-            "「{name}」是当前启动用的环境，先在「启动用环境」里切到别的环境再删除。"
+            "「{name}」是当前选中、正在管理中的环境，先在上方选一个别的环境再删除。"
         ));
     }
     Ok(())
@@ -408,11 +416,16 @@ mod tests {
     }
 
     #[test]
-    fn the_environment_in_use_cannot_be_deleted() {
+    fn the_web_environment_and_the_one_in_use_cannot_be_deleted() {
+        // 启动恒用 web：删掉它等于把壳的启动能力删了。
         let err = guard_delete("web", "web").unwrap_err();
-        assert!(err.contains("当前启动用"), "{err}");
+        assert!(err.contains("启动 DSH"), "{err}");
         assert!(err.contains("web"), "{err}");
-        assert!(guard_delete("web", "lab").is_ok());
+        assert!(guard_delete("web", "lab").is_err());
+        // 其它环境只要不是当前管理目标就可以删。
+        assert!(guard_delete("lab", "web").is_ok());
+        let err = guard_delete("lab", "lab").unwrap_err();
+        assert!(err.contains("管理中"), "{err}");
     }
 
     #[test]
