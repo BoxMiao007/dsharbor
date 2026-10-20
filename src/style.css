@@ -316,6 +316,53 @@ body {
   background: var(--accent);
 }
 
+/* 左栏「日志」条目上的未读数字：只在有未读时出现——没有未读时容器内容是空的，
+   由下面的 :empty 收成不渲染，不需要界面再挂一个隐藏类。
+   尺寸对齐工具条徽章（字号 13px、圆角 999px、等宽数字），但矮一档取 20px：
+   它挤在 44px 高的导航条目里，与 24px 的独立徽章同高会顶掉条目的上下留白。
+   margin-left: auto 把它推到条目最右，flex: none 让它挨着最小窗口宽度也不被压窄。 */
+.ico-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ico-count:empty {
+  display: none;
+}
+
+/* 数字每变一拍弹一下（1 → 1.25 → 1）：节奏由 main.ts 的上拍队列控制，这里只给形状。 */
+@keyframes ico-count-bump {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.25);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.ico-count.ico-count-bump {
+  animation: ico-count-bump 220ms ease-out;
+}
+
 /* 底部三个纯图标入口（官网 / 仓库 / 浅深切换）：草图里是左栏底部居中三颗圆圈。 */
 .sidebar-links {
   flex: none;
@@ -1212,10 +1259,15 @@ button.primary:hover:not(:disabled) {
   }
 }
 
-/* 减少动态效果：关掉抖动、过渡压到最短（沿用原效果的降级）。 */
+/* 减少动态效果：关掉抖动与未读数字的弹动、过渡压到最短（沿用原效果的降级）。 */
 @media (prefers-reduced-motion: reduce) {
   #btn-toggle.swap:hover,
   #btn-toggle.swap:focus-visible {
+    animation: none;
+  }
+
+  /* 未读数字照常变化，只是不弹——上拍列表本身仍按 90ms 一拍走。 */
+  .ico-count.ico-count-bump {
     animation: none;
   }
 

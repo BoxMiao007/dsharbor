@@ -29,6 +29,14 @@ const PANELS: ReadonlyArray<{ key: PanelKey; label: string; icon: string }> = [
   { key: "about", label: "关于", icon: ICON_ABOUT },
 ];
 
+/**
+ * 左栏「日志」条目上的未读数字。
+ *
+ * 只有「日志」这一项带它：别的分区没有持续冒出来的新内容。默认空着——空内容由 CSS 的
+ * `:empty` 收成不渲染，不需要额外的隐藏类；数字总是走 `textContent` 写入，不做 HTML 拼接。
+ */
+const UNREAD_BADGE_HTML = `<span id="log-unread" class="ico-count"></span>`;
+
 /** 三只窗口按钮的图标：10px 见方的细线 SVG，形状统一收在 9px 见方内、
     描边 1.2px（见 .win-btn svg），描边色跟 currentColor——改用矢量后
     不再依赖字体里的 – □ ✕ 字形（那三个字形粗细大小都不一致）。
@@ -912,7 +920,7 @@ function buildHtml(info: AppInfo): string {
       <nav class="rail" id="nav" aria-label="设置分区">
         ${PANELS.map(
           (item) =>
-            `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span></button>`,
+            `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span>${item.key === "log" ? UNREAD_BADGE_HTML : ""}</button>`,
         ).join("\n        ")}
       </nav>
       <div class="sidebar-links">
@@ -1236,7 +1244,7 @@ function buildHtml(info: AppInfo): string {
 
   // 「日志」卡：日志正文就在主卡里自己滚，不再有窄条、浮层、遮罩与点外面收起——
   // 它是左栏里的一个分区，与其他分区平等的进进出出。启动 / 重启 / 桥接 / 环境 / 缓存
-  // 这些动作产生的输出会自动跳回这一页并拉到底（见 expandLog）。
+  // 这些动作产生的输出不再把界面切到这里，只在左栏「日志」上挂未读数字提示多了几行。
   const logBody = `
     ${colHead("日志", `<div class="log-tools">
       <button id="btn-clear-log" class="log-action" type="button">清空日志</button>
@@ -1982,10 +1990,10 @@ async function main(): Promise<void> {
       button.addEventListener("click", () => {
         const key = button.dataset.panelBtn as PanelKey;
         selectPanel(key, true);
-        // 点进日志就是来看最新的：直接拉到底，不用再手动滚。
+        // 点进日志就是来看最新的：直接拉到底，不用再手动滚；未读数同时归零。
         if (key === "log") {
-          logFollow = true;
-          scrollLogToEnd();
+          followLogTail();
+          resetLogUnread();
         }
       });
     }
@@ -2003,14 +2011,11 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 主动操作（启动 / 重启 / 桥接 / 环境动作 / 缓存清理）产生的输出：跳到日志分区并拉到底。
+     * 把视野交还给最新内容：之后再来新行就自动跟到底，并且立刻拉一次。
      *
-     * 不跳的话，在那个分区里点了按钮而输出写到看不见的地方，界面看起来像没反应。
+     * 只做「跟到底」，不切分区——主动操作产生的输出不再抢画面（见下面的未读数字）。
      */
-    const expandLog = (): void => {
-      if (currentPanel !== "log") {
-        selectPanel("log", true);
-      }
+    const followLogTail = (): void => {
       logFollow = true;
       scrollLogToEnd();
     };
@@ -2020,7 +2025,82 @@ async function main(): Promise<void> {
       logFollow = distance < 24;
     });
 
-    /** 日志分区右上角的「清空日志」：只清界面这一份（后端的环形缓冲不动）。 */
+    // ---- 左栏「日志」的未读数字 ------------------------------------------------------
+    // 主动操作的输出不再把界面拽到日志页，改在左栏「日志」上挂一个数字：按行累加、逐个上拍、
+    // 点进日志即归零。纯界面状态——不落盘、不进后端命令，壳重启归 0（见票12）。
+
+    /** 未读数字的上拍节奏：每 90ms 一拍，积压再多也最多 12 拍（约 1.1 秒）走到终值。 */
+    const LOG_UNREAD_TICK_MS = 90;
+    const LOG_UNREAD_MAX_TICKS = 12;
+    /** 数字每变一拍的弹动类名（形状在 style.css 的 .ico-count-bump，节奏由这里的定时器给）。 */
+    const LOG_UNREAD_BUMP_CLASS = "ico-count-bump";
+
+    const logUnreadEl = $<HTMLElement>("log-unread");
+    /** 已经画在界面上的数字。 */
+    let logUnreadShown = 0;
+    /** 队列的终值：日志每新写一批行就往上涨。 */
+    let logUnreadTarget = 0;
+    /** 这一轮上拍的步长：队列起手时按积压定死，之后不再重算（途中新到的行只把队列拉长）。 */
+    let logUnreadStep = 1;
+    /** 上拍定时器的 id；0 表示队列已经走完（没在跑）。 */
+    let logUnreadTimer = 0;
+
+    /** 把当前「已显示值」画成文案：0 时空着（CSS 的 :empty 收成不渲染），过百显示 99+。 */
+    function renderLogUnread(): void {
+      logUnreadEl.textContent = logUnreadShown === 0 ? "" : logUnreadShown > 99 ? "99+" : String(logUnreadShown);
+    }
+
+    /** 弹一下：先摘掉动画类、强制回流，再加回去——不然连着两拍之间类名没真正离开过，动画不会重播。 */
+    function bumpLogUnread(): void {
+      logUnreadEl.classList.remove(LOG_UNREAD_BUMP_CLASS);
+      void logUnreadEl.offsetWidth;
+      logUnreadEl.classList.add(LOG_UNREAD_BUMP_CLASS);
+    }
+
+    function stopLogUnreadTick(): void {
+      if (logUnreadTimer !== 0) {
+        window.clearInterval(logUnreadTimer);
+        logUnreadTimer = 0;
+      }
+    }
+
+    /** 一拍：往终值推一步。追上了就停表，等下一批行重新起手。 */
+    function advanceLogUnread(): void {
+      if (logUnreadShown >= logUnreadTarget) {
+        stopLogUnreadTick();
+        return;
+      }
+      logUnreadShown = Math.min(logUnreadTarget, logUnreadShown + logUnreadStep);
+      renderLogUnread();
+      bumpLogUnread();
+    }
+
+    /**
+     * 记未读：`count` 是这一批新写进日志的行数（`--- 时间 ---` 分段线不算行，所以传原始行数即可）。
+     *
+     * 停在日志分区时不计：用户眼前就是最新内容，没必要再提示一次。
+     */
+    function addLogUnread(count: number): void {
+      if (count <= 0 || currentPanel === "log") return;
+      logUnreadTarget += count;
+      // 队列已经停着才定步长：积压超过 12 行就多步合并，保证 12 拍内走到终值；
+      // 队列还在跑时新行只把终值往上抬，队列随之延长，不做重置、也不许跳到终值。
+      if (logUnreadTimer === 0) {
+        logUnreadStep = Math.max(1, Math.ceil((logUnreadTarget - logUnreadShown) / LOG_UNREAD_MAX_TICKS));
+        logUnreadTimer = window.setInterval(advanceLogUnread, LOG_UNREAD_TICK_MS);
+      }
+    }
+
+    /** 点进日志分区：直接归零并隐藏，不等队列一拍拍走完。 */
+    function resetLogUnread(): void {
+      stopLogUnreadTick();
+      logUnreadTarget = 0;
+      logUnreadShown = 0;
+      logUnreadStep = 1;
+      renderLogUnread();
+    }
+
+    /** 日志分区右上角的「清空日志」：只清界面这一份（后端的环形缓冲不动），未读数不受影响。 */
     btnClearLog.addEventListener("click", () => clearLog());
 
     /** 写剪贴板：先试剪贴板 API，不可用时退回「选中 + execCommand」。返回是否成功。 */
@@ -2365,8 +2445,10 @@ async function main(): Promise<void> {
       return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
     }
 
-    /** 往日志末尾追加一批行；`stamp` 为真时先插一条 `--- 时间 ---` 分段线。 */
-    function appendLog(lines: string[], stamp: boolean): void {
+    /** 往日志末尾追加一批行；`stamp` 为真时先插一条 `--- 时间 ---` 分段线。
+     *  写进去的行数记进左栏「日志」的未读数字（分段线不算一行，`lines` 里本来也不含它）。
+     *  `countUnread` 为假时只写不算——用于整段历史尾巴这种「本来就在那儿」的内容。 */
+    function appendLog(lines: string[], stamp: boolean, countUnread = true): void {
       const body = lines.join("\n").replace(/\s+$/, "");
       if (body === "") return;
       const needStamp = stamp || lastLogAt === 0 || Date.now() - lastLogAt > LOG_GAP_MS;
@@ -2377,20 +2459,25 @@ async function main(): Promise<void> {
       lastLogAt = Date.now();
       setOutputText(logEl, logText);
       if (logFollow) scrollLogToEnd();
+      if (countUnread) addLogUnread(body.split("\n").length);
     }
 
-    /** 主动操作的结果（桥接 / 环境 / 缓存）：写进统一日志，并拉起浮层（用户手动收过就只写不拉）。 */
+    /** 主动操作的结果（桥接 / 环境 / 缓存）：写进统一日志。不再把界面拽到日志页——
+     *  没在看日志的人才需要知道「那边多了几行」，那由左栏的未读数字提示。 */
     function logAction(text: string): void {
-      expandLog();
       appendLog([text], true);
     }
 
-    /** 后端日志尾部：算出新增的那几行（上一轮的尾巴可能已被环形缓冲挤掉前半段，所以两头都试）。 */
+    /** 后端日志尾部：算出新增的那几行（上一轮的尾巴可能已被环形缓冲挤掉前半段，所以两头都试）。
+     *  `previous === null` 是首段历史尾巴：整段都算已读，不产生未读。 */
     function syncLogFromTail(tail: string[]): void {
       const previous = lastLogTail;
       lastLogTail = [...tail];
       if (previous === null) {
-        appendLog(tail, false);
+        // 首段整段历史尾巴不冒未读：这些行是「本来就在那儿」的，不是刚新写进来的。
+        // 也顺手覆盖了「清空日志后的第一次同步」——重新落回去的是用户刚看过的内容，
+        // 清空本身不动计数，跟着回来的这几行也不该抬计数。
+        appendLog(tail, false, false);
         return;
       }
       if (tail.length === 0) return;
@@ -2522,8 +2609,9 @@ async function main(): Promise<void> {
         await refresh();
         return;
       }
-      // 启动/重启 DSH 都会产生终端输出：自动展开日志浮层（维护者要求）。
-      expandLog();
+      // 启动/重启 DSH 都会产生终端输出，但不再把界面拽到日志页：没在看日志的人由左栏的
+      // 未读数字告知，正在看日志的人继续跟到底。
+      followLogTail();
       try {
         await invoke(command, { config: collectConfig() });
       } catch (err) {
@@ -2554,7 +2642,7 @@ async function main(): Promise<void> {
 
     async function stopDsh(): Promise<void> {
       localError = null;
-      expandLog();
+      followLogTail();
       try {
         await invoke("stop_dsh");
       } catch (err) {
@@ -3188,7 +3276,7 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 环境动作的一句话结果：写进日志（浮层已关时静默追加，不硬拉起来）。 */
+    /** 环境动作的一句话结果：静默写进日志，不切分区（新的几行由左栏未读数字提示）。 */
     function appendSystemNote(text: string): void {
       appendLog([text], true);
     }
