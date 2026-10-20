@@ -863,6 +863,13 @@ async fn open_dsh_in_browser(app: tauri::AppHandle) -> Result<(), String> {
     open_dsh_in_browser_inner(&app)
 }
 
+/// 「复制登录链接」：把当前登录链接返回给界面，由界面写进剪贴板。
+/// 不在这里直接操作剪贴板（也不用额外插件）：前端已有 copying 的兼底实现。
+#[tauri::command]
+async fn dsh_login_url(app: tauri::AppHandle) -> Result<String, String> {
+    current_login_url(&app)
+}
+
 /// 「浏览器打开」内核（供托盘回退逻辑复用）。
 fn open_dsh_in_browser_inner(app: &tauri::AppHandle) -> Result<(), String> {
     let url = current_login_url(app)?;
@@ -1458,17 +1465,16 @@ fn show_or_create_main(app: &tauri::AppHandle) {
 /// 建窗参数只在这里一处（tauri.conf.json 已不声明窗口）——setup 首开与
 /// create_main_window 托盘重建共用；装饰的「已知陷阱」见下方：
 /// 漏写 `decorations(false)` 不会有编译错误，只会让重建出来的窗口套回系统标题栏，
-/// 而页面里的 .titlebar 依旧照画，于是「关窗后从托盘重开界面」变成上下两个标题栏
-/// （真机实测：客户区高度之外的标题栏从 8px 变成 38px）。
-/// 窗口尺寸要容得下「上行窄卡 + 下行主卡（左导航 168px + 右面板）」：
-/// 1080 是 #app 的宽度上限，内宽给到它就不用在常见屏宽上压缩内容。
+/// 于是「关窗后从托盘重开界面」变成系统标题栏 + 页面里自己画的三只窗口按钮。
+/// 窗口尺寸要容得下「左栏卡片 + 右栏（工具条 / 日志窄条 / 主卡里并排的小卡）」：
+/// 1240 的内宽让主卡里还能并排两张小卡（如「附加参数│端口」），900 是最小可用宽。
 /// 必须在主线程调用（背景见 create_main_window 注释）。
 fn build_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, tauri::Error> {
     let theme = settings::load(app).ui_theme;
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("DSHarbor")
-        .inner_size(1120.0, 760.0)
-        .min_inner_size(820.0, 560.0)
+        .inner_size(1240.0, 800.0)
+        .min_inner_size(900.0, 620.0)
         .center()
         .decorations(false)
         .background_color(webview_base_color(theme))
@@ -1621,6 +1627,7 @@ pub fn run() {
             query_dsh_versions,
             open_dsh_window,
             open_dsh_in_browser,
+            dsh_login_url,
             bridge_install,
             bridge_uninstall,
             bridge_restore,

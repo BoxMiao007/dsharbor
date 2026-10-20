@@ -188,7 +188,12 @@ window.__mockUnimplemented = [];
       loginUrl: running ? "https://example.invalid/dsh?token=mock" : null,
       loginReady: running && !S.loginPending,
       loginError: null,
-      logTail: S.session === "stopped" ? [] : ["第 " + S.counter + " 行 mock 输出"],
+      // 真后端的 logTail 是最后 300 行（见 launcher.rs 的 LOG_TAIL_LINES）：预览也照这个形状给
+      // 一段持续增长的尾巴，才能看出界面「只追加新增的那几行」的效果。
+      logTail:
+        S.session === "stopped"
+          ? []
+          : Array.from({ length: Math.min(20, S.counter + 1) }, (_, i) => "第 " + (S.counter - Math.min(20, S.counter + 1) + 1 + i) + " 行 mock 输出"),
       dshVersion: S.dshVersion,
     };
   };

@@ -10,6 +10,9 @@
   --btn-sweep-ms: 500ms; /* 悬停漫过：图标板展开 + 文字推出的时长，也是闪动/旋转一轮的时长 */
   --btn-lead-ms: 200ms; /* 图标到中心前的提前起势量（延迟 = 漫过时长 − 提前量 = 300ms） */
   --btn-hl-ms: 200ms; /* 悬停提亮与按下图标缩放的过渡 */
+  /* 卡片圆角与轻阴影：悬浮卡片骨架里左栏、工具条、主卡、次卡共用。 */
+  --radius-card: 14px;
+  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.18);
   /* 转圈节拍：「启动中」徽章的加载圈与「重启 DSH」点击后的持续转动共用，要求两者转速一致。
      src/main.ts 的 RESTART_SPIN_MIN_MS 用同一个 700 数值但职责不同（那边=收场前
      最短反馈时长，这里=一圈时长），改转速时两处一起检查。 */
@@ -31,6 +34,8 @@ html[data-mode="dark"] {
   --bg-2: #131a22;
   --card: #171d25;
   --card-2: #1d242d;
+  /* 主卡里的小卡（卡中卡）：比主卡再亮一档，靠明度差而不是描边把层次立起来。 */
+  --cell: #222c38;
   --elev: #212933;
   --line: rgba(255, 255, 255, 0.075);
   --line-strong: rgba(255, 255, 255, 0.14);
@@ -42,7 +47,14 @@ html[data-mode="dark"] {
   --ok: #57c98b;
   --warn: #e8c85c;
   --danger: #ef5f6b;
+  /* 日志条与日志浮层：全站唯一用红色系的地方，把「这是控制台输出」和别的卡片区分开。
+     solid = 折叠态窄条与展开后的浮层底；fill = 浮层里的正文底；fg = 红底上的文字。
+     两套外观共用同一组红（控制台语义色，不跟着浅深切换）。 */
+  --log-solid: #fe0000;
+  --log-fill: #820000;
+  --log-fg: #ffffff;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --shadow-soft: 0 3px 14px rgba(0, 0, 0, 0.34);
   --tip-bg: #0b1219;
 }
 
@@ -52,6 +64,8 @@ html[data-mode="light"] {
   --bg-2: #dde5ef;
   --card: #ffffff;
   --card-2: #f4f7fb;
+  /* 浅色反过来：小卡在主卡上沉下去一档（主卡已是最亮，没法再亮）。 */
+  --cell: #eef2f7;
   --elev: #ffffff;
   --line: rgba(15, 26, 40, 0.09);
   --line-strong: rgba(15, 26, 40, 0.16);
@@ -63,73 +77,55 @@ html[data-mode="light"] {
   --ok: #1e9e5f;
   --warn: #b8860b;
   --danger: #d33a4a;
+  /* 日志红与深色外观共用同一组值（见 html[data-mode="dark"] 上的注释）。 */
+  --log-solid: #fe0000;
+  --log-fill: #820000;
+  --log-fg: #ffffff;
   --shadow: 0 18px 48px rgba(21, 38, 60, 0.16);
+  --shadow-soft: 0 2px 10px rgba(21, 38, 60, 0.1);
   --tip-bg: #ffffff;
 }
 
 body {
-  /* 定高而不是最小高：让 #app 占满窗口，主卡才好用 flex:1 吃掉剩余高度，
-     面板内部自己滚，整个页面不会因为内容多而出现外层滚动条。 */
+  /* 定高而不是最小高：让 #app 占满窗口，右栏内容区才好用 flex:1 吃掉剩余高度，
+     内容区内部自己滚，整个页面不会因为内容多而出现外层滚动条。 */
   height: 100vh;
   display: flex;
   justify-content: center;
-  /* 标题栏是窗口内容的一部分（不再固定压在内容上），这里只留窗口四周的呼吸位。 */
-  padding: 0 16px 16px;
-  /* 兜底：任何悬浮元素都不允许把页面顶出横向滚动条。用 clip 而不是 hidden：
-     clip 不会把 body 变成滚动容器，视口滚动与自绘滚动条的计量都不受影响。 */
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% -10%, var(--bg-2) 0%, var(--bg) 62%);
+  background: var(--bg);
   color: var(--fg);
 }
 
 #app {
-  width: min(1080px, 100%);
-  /* 撑满 body 的高度：主卡靠这条拿到「窗口 − 标题栏 − 上行窄卡」的剩余高度。 */
+  /* 左栏 + 右栏两列：宽度上限只用来防超宽屏上一行字被拉成横幅。 */
+  width: 100%;
+  max-width: 1600px;
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
-/* ---- 自绘标题栏（tauri.conf.json: decorations: false） ----
-   跟着页面一起排、不固定，整条可拖拽（data-tauri-drag-region）。 */
-.titlebar {
-  height: 40px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-left: 2px;
-  user-select: none;
-}
+/* ---- 悬浮卡片骨架（维护者草图：浅色是页面背景，色块是浮在上面的卡片） ----
+   左栏一张通高卡片；右栏自上而下是工具条卡片、日志窄条、主卡（里面每个条目
+   各装一张小卡）、两张并排次卡。块与块之间留缝露出页面背景，卡片靠圆角 + 描边 + 阴影立起来。 */
 
-.titlebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--fg-dim);
-}
-
-/* 图标源与托盘/安装包同一个（assets/logo.png）：小尺寸下让指针穿透，
-   否则点在图上不会触发标题栏拖拽，还可能拖出一个图片残影。 */
-.titlebar-logo {
-  display: block;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  pointer-events: none;
-  -webkit-user-drag: none;
-}
-
-.titlebar-buttons {
+/* 三只窗口按钮浮在窗口最右上角，压在所有卡片之上（tauri.conf.json: decorations: false）。
+   整条区域可拖动，按钮本身不吃拖拽事件。 */
+.win-controls {
+  position: fixed;
+  top: 8px;
+  right: 10px;
+  z-index: 80;
   display: flex;
   align-items: center;
   gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(8px);
 }
 
-/* 浅/深切换与三个窗口按钮同一组：圆角方格，悬停给一层强调底色。 */
-.mode-btn,
 .win-btn {
   display: grid;
   place-items: center;
@@ -146,7 +142,6 @@ body {
 }
 
 /* 图标是内联 SVG：描边跟着按钮的 color 走，悬停换底色时不用再动图标。 */
-.mode-btn svg,
 .win-btn svg {
   width: 15px;
   height: 15px;
@@ -157,13 +152,6 @@ body {
   stroke-linejoin: round;
 }
 
-.mode-btn {
-  width: 34px;
-  margin-right: 4px;
-  border-radius: 999px;
-}
-
-.mode-btn:hover,
 .win-btn:hover {
   background: var(--accent-soft);
   color: var(--fg);
@@ -174,66 +162,201 @@ body {
   color: #ffffff;
 }
 
-/* ---- 两张卡片：上行窄卡（品牌、状态、登录提示、四个主操作），
-       下行主卡（左侧分区导航 + 右侧面板 + 底部一句说明）。 ---- */
-.card {
+/* ---- 左右分栏：左栏一张卡片，右栏吃掉余量 ---- */
+/* 顶部留出一条：三只窗口按钮浮在这条空白里（草图里它们也在所有块之上、块之外）。 */
+.shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  padding: 46px 12px 12px;
+}
+
+/* 左栏：一张通高卡片。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。 */
+.sidebar {
+  /* 宽度与内边距按草图比例：卡片 238 宽、导航胶囊 200 宽（左右各让 19）。 */
+  width: 236px;
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-height: 0;
-  padding: 20px 22px;
-  border-radius: 16px;
+  padding: 16px 18px 12px;
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--card) 0%, var(--card-2) 100%);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
 }
 
-.top-card {
+.sidebar-brand {
   flex: none;
-  padding: 14px 18px;
-  gap: 10px;
+  /* 分隔线横贯卡片整宽（草图上那根线从卡片左边一直到右边），所以用负外边距抵消
+     卡片内边距。 */
+  margin: 0 -18px;
+  padding: 0 18px 14px;
+  border-bottom: 1px solid var(--line);
 }
 
-.main-card {
-  flex: 1;
-  /* min-height: 0 是关键：不加的话 flex 项的最小高度是内容高度，主卡会被面板内容顶高，
-     剩下的高度交给 .panel 自己滚（窗口很小时也只滚面板，不滚整个页面）。 */
-  min-height: 0;
-  padding: 12px 18px 10px;
-}
-
-/* 品牌 + 状态徽章一行。窄窗时徽章行整体折到下一行（flex-wrap），不挤压品牌。 */
-.head-line {
+.sidebar-brand-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 12px;
-  min-width: 0;
+  gap: 9px;
 }
 
-.head-logo {
+/* 图标源与托盘/安装包同一个（assets/logo.png）：小尺寸下让指针穿透，
+   否则点在图上不会触发卡片拖拽，还可能拖出一个图片残影。 */
+.sidebar-logo {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.sidebar-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+.sidebar-sub {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--fg-mute);
+}
+
+/* 分区导航：每一项自己是一枚浮在左栏卡片上的胶囊（草图里左栏 5 个浅色胶囊）。 */
+.rail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
+  overflow-y: auto;
+}
+
+.ico-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 44px;
+  flex: none;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--card-2);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 140ms,
+    background 140ms;
+}
+
+.ico-item svg {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ico-item .txt {
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+.ico-item:hover {
+  background: var(--elev);
+  color: var(--fg);
+}
+
+.ico-item[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 选中标记：胶囊内左侧一根 3px 竖条。画在胶囊内侧而不是栏外，免得贴到卡片边。 */
+.ico-item[aria-current="true"]::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* 底部三个纯图标入口（官网 / 仓库 / 浅深切换）：草图里是左栏底部居中三颗圆圈。 */
+.sidebar-links {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 27px;
+  /* 下方留白让三颗圆点离卡片下沿还有一段距离（草图里它们不贴着边），
+     圆点群上方不画分隔线。 */
+  padding: 12px 0 34px;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
   width: 34px;
   height: 34px;
-  flex: none;
-  border-radius: 9px;
-  border: 1px solid var(--line);
-}
-
-.head-text {
-  flex: none;
-  min-width: 0;
-}
-
-.head-text h1 {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1.3;
-}
-
-.tagline {
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--card-2);
   color: var(--fg-dim);
-  font-size: 11.5px;
-  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms,
+    color 140ms;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-btn:hover {
+  background: var(--elev);
+  color: var(--fg);
+}
+/* ---- 右栏：工具条卡片 / 日志开关条 / 内容区 ---- */
+.content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 工具条：一张独立卡片，左边徽章群、右边主操作。整块可拖动（顶部留出拖动带）。 */
+/* 选择器带 .block 前缀：.block 在下面定义了纵向 flex，同特指度时后面的规则会赢。 */
+.block.toolbar-block {
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
 }
 
 .status-row {
@@ -241,23 +364,30 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 12px;
-  margin-left: auto;
   min-width: 0;
 }
 
-/* 主操作行：左侧一句登录提示，右侧四颗按钮。 */
-.tool-row {
+/* 拖动带：工具条里徽章与按钮之间的空白，按住这里可以拖窗口。 */
+.toolbar-drag {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 24px;
+}
+
+.toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
+  gap: 8px;
+  flex: none;
 }
 
 .badge {
   /* 高度、内边距、字号统一走 :root 里的 --badge-* 变量。
      固定 height + line-height: 1：徽章里有的带 SVG 图标、有的带旋转圈、有的纯文字，
-     按内容定高时高度会差 2~4px，统一钉死后完全一致。 */
+     按内容定高时高度会差 2~4px，统一钉死后完全一致。
+     flex: none：工具条挤的时候让整颗徽章换到下一行，而不是被压窄、文字冲出胶囊。 */
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 6px;
   height: var(--badge-height);
@@ -278,26 +408,38 @@ body {
   color: var(--ok);
 }
 
-/* 「启动中」：进程已起、登录链接还没就绪（npx 首次下载也会停在这一步） */
 .badge-starting {
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-/* 面板头里的状态徽章：靠右，跟着标题一行。 */
+/* 并排两列时的小标题（托盘设置 / 网络与代理）：两列都有一行，左列用空占位对齐。 */
+.col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--badge-height);
+}
+
+.col-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  letter-spacing: 0.2px;
+}
+
+/* 徽章按内容取宽，不被 flex 压扁（压扁会让文字冲出胶囊）。 */
 .panel-badge {
-  margin-left: auto;
   flex: none;
 }
 
 .spinner {
   width: 12px;
   height: 12px;
-  flex: none;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-top-color: var(--accent);
   animation: dsh-spin var(--spin-ms) linear infinite;
 }
 
@@ -307,42 +449,114 @@ body {
   }
 }
 
-/* ---- 左侧分区导航 ---- */
-.rail {
-  width: 168px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px 10px 0 0;
-  border-right: 1px solid var(--line);
-  overflow: hidden;
+.status-meta {
+  font-size: 12.5px;
+  color: var(--fg-mute);
+  white-space: nowrap;
 }
 
-.ico-item {
+.status-meta b {
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+/* 登录提示：出错时占满工具条下方一行，平时隐藏。 */
+.login-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0 14px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 「打开方式」两段式：主按钮 + 右侧小三角，点小三角展开菜单 ---- */
+.open-split {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 11px;
+}
+
+.open-split #btn-open {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+#btn-open-more {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background: var(--elev);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+#btn-open-more svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#btn-open-more:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+#btn-open-more[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 展开的菜单：绝对定位在主按钮下方，点击外面收起（见 main.ts）。 */
+.open-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.open-menu.hidden {
+  display: none;
+}
+
+.open-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   width: 100%;
-  height: 36px;
-  padding: 0 10px;
+  padding: 7px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
-  transition:
-    color 140ms,
-    background 140ms;
 }
 
-.ico-item svg {
-  width: 19px;
-  height: 19px;
+.open-menu button svg {
+  width: 17px;
+  height: 17px;
   flex: none;
   fill: none;
   stroke: currentColor;
@@ -351,108 +565,303 @@ body {
   stroke-linejoin: round;
 }
 
-.ico-item .txt {
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.ico-item:hover {
-  background: var(--elev);
-  color: var(--fg);
-}
-
-.ico-item[aria-current="true"] {
+.open-menu button:hover {
   background: var(--accent-soft);
   color: var(--fg);
 }
 
-/* 选中标记：胶囊内左侧一根 3px 竖条。画在胶囊内侧而不是栏外，免得贴到窗口边。 */
-.ico-item[aria-current="true"]::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--accent);
+.open-menu button[aria-checked="true"] {
+  color: var(--accent);
 }
 
-/* ---- 右侧面板 ---- */
-.card-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.panels {
-  /* 承载面板与自绘滚动条（.scroll-track 绝对定位在这里，见下方），要当定位上下文。 */
+/* ---- 日志：折叠时只是工具条下方一条窄条；展开时从窄条往下盖住内容区 ---- */
+.content-main {
+  /* 承载内容区与自绘滚动条（.scroll-track 绝对定位在这里，见下方），要当定位上下文。 */
   position: relative;
   flex: 1;
-  min-width: 0;
   min-height: 0;
   display: flex;
+  flex-direction: column;
 }
 
-.panel {
+/* 折叠态的日志条：内容区顶端一条居中的窄横条（草图里那根窄红条），点它展开日志。
+   红色是全站唯一一处：日志是控制台输出，用颜色跟别的卡片区分开。 */
+.log-bar {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  height: 12px;
+}
+
+.log-toggle {
+  display: grid;
+  place-items: center;
+  width: min(82%, 820px);
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 10px 10px;
+  background: var(--log-solid);
+  color: #ffffff;
+  cursor: pointer;
+  transition: filter 140ms;
+}
+
+.log-toggle svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 160ms;
+}
+
+.log-toggle.is-open svg {
+  transform: rotate(180deg);
+}
+
+.log-toggle:hover {
+  filter: brightness(1.12);
+}
+
+/* 遮罩：只负责「点外面收起」，不染色（草图里浮层直接压在内容上，没有整片淡化）。 */
+.log-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+
+.log-scrim.hidden {
+  display: none;
+}
+
+/* 日志浮层：宽度与折叠态那根窄条一致、从同一条顶边往下垂，高度约内容区一半，
+   盖在主卡上半部分；点外面或底部的收起箭头关掉。红系、不是白卡。 */
+.log-panel {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 0;
+  z-index: 41;
+  width: min(82%, 820px);
+  height: 56%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 14px 0;
+  border-radius: 0 0 16px 16px;
+  background: var(--log-solid);
+  box-shadow: var(--shadow);
+}
+
+.log-panel.hidden {
+  display: none;
+}
+
+.log-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 浮层头顶那一行：右上两颗白胶囊（草图里就是白底黑字的两颗按钮，左边不写字）。 */
+.log-action {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1c1114;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: filter 140ms;
+}
+
+.log-action:hover {
+  filter: brightness(1.12);
+}
+
+.log-head .log-action:nth-of-type(1) {
+  margin-left: auto;
+}
+
+/* 浮层底部那条收起箭头：贴在浮层底边居中，只有一颗 ▲。 */
+.log-foot {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  height: 18px;
+}
+
+.log-foot .log-toggle {
+  width: 64px;
+  height: 18px;
+  border: 0;
+  border-radius: 0 0 12px 12px;
+  background: transparent;
+  color: var(--log-fg);
+  opacity: 0.85;
+}
+
+.log-foot .log-toggle:hover {
+  filter: none;
+  opacity: 1;
+}
+
+/* 浮层里的箭头恒为「向上 = 收起」，不跟着折叠态那颗一起翻转。 */
+.log-foot .log-toggle svg {
+  transform: none;
+  width: 13px;
+  height: 13px;
+}
+
+/* 日志正文：浮层里再套一层圆角底（卡中卡），与主卡里的小卡同一套层次。 */
+.log-body {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--log-fill);
+  overflow: auto;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--log-fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* 内容区：卡片之间的间隙由这里给，整页不滚（只有主卡内部滚）。 */
+.page {
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 4px 2px 0 18px;
-  overflow-y: auto;
+  padding: 8px 0 0;
+}
+
+/* 分区：主卡 + 次卡行，撑满内容区高度（主卡吃掉余量）。 */
+.panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .panel.hidden {
   display: none;
 }
 
-.panel-head {
+/* 分区正文不额外包一层间距：主卡与次卡行自己带 gap。 */
+.panel-body {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 9px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 主卡里并排的两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。 */
+.cell-row {
+  display: grid;
+  gap: 28px;
   flex: none;
 }
 
-.panel-head h2 {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0;
-  margin: 0;
+.cell-row[data-ratio="1-1"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-.panel-body {
+.cell-row[data-ratio="2-1"] {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.cell-row[data-ratio="1-2"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+/* 卡片：淡底 + 细边框 + 圆角 + 轻阴影，浮在页面背景上。
+   块头左边标题、右边徽章或说明。 */
+.block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-bottom: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
 }
 
-/* 面板里的输入框 / 下拉框撑满可用宽度（定稿稿里控件与标签同一行、控件吃掉余量；
-   真实界面保持标签在上一行的结构，只把控件拉宽）。给一台上限，免得超宽屏上
-   下拉框长得像一条横幅。 */
-.panel .picker,
-.panel input[type="text"] {
+/* 主卡：内容区里那张大卡片，吃掉余量，内部自己滚。里面的每个条目各装一张小卡
+   （.cell），卡与卡之间露缝、不画分隔线。 */
+.block.main-card {
+  flex: 1;
+  min-height: 0;
+  gap: 20px;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+/* 主卡里的小卡：靠明度与主卡拉开一档（深色再亮、浅色再沉），圆角比主卡收窄两圈，
+   靠主卡的内边距与 gap 露出主卡底色——露缝而不是细线。 */
+.cell {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-radius: calc(var(--radius-card) - 2px);
+  background: var(--cell);
+}
+
+/* 主卡里再并排两个子块已在 .cell-row 里处理，这里不再单独定义。 */
+
+/* 块内的输入框 / 下拉框吃掉可用宽度，给一台上限免得超宽屏上像横幅。 */
+.block .picker,
+.block input[type="text"] {
   width: 100%;
   max-width: 760px;
 }
 
-/* 并排两个控件（渠道下拉 + 版本徽章 / 端口 + 还原）时控件按比例分宽。 */
-.panel .control-line > .picker,
-.panel .port-row > input[type="text"] {
+/* 并排两个控件（渠道下拉 + 版本徽章 / 端口 + 还原）时按比例分宽。 */
+.block .control-line > .picker,
+.block .port-row > input[type="text"] {
   flex: 1 1 auto;
   width: auto;
 }
 
-/* 两列并排的字段组（附加参数 / 端口）：定稿稿里是同一行两个宽控件，
-   窄窗自动收成一列（见下方 .grid-2 与它的 @media）。 */
-.panel .grid-2 {
+/* 两列并排的字段组（附加参数 / 端口） */
+.block .grid-2 {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-/* 面板里的小节标题：文字 + 紧跟的徽章 + 一条填满余量的细线。 */
+/* 命令预览：等宽、淡底、可选中复制。 */
+.command-preview {
+  display: block;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--elev);
+  color: var(--fg-dim);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* 块内的小节标题：文字 + 紧跟的徽章 + 一条填满余量的细线。 */
 .sec {
   display: flex;
   align-items: center;
@@ -461,37 +870,6 @@ body {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--fg-dim);
-}
-
-.sec > span:first-child {
-  flex: none;
-}
-
-.sec::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-
-/* 内凹的信息块：面板里成组的内容（补丁层、插件、桥接插件操作等）装在这里。 */
-.sub-block {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--card-2);
-}
-
-/* 面板底部那句说明。 */
-.foot {
-  margin-top: auto;
-  flex: none;
-  padding-top: 6px;
-  font-size: 11.5px;
-  color: var(--fg-mute);
 }
 
 /* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
@@ -554,14 +932,14 @@ body {
   letter-spacing: 0;
   text-align: left;
   white-space: normal;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
+  /* 默认 display:none 而不是 opacity:0：气泡最宽 300px，留在布局里会把
+     内容区的 scrollWidth 撑大、逼出横向滚动条（它本来就看不见）。 */
+  display: none;
 }
 
 .info-dot:hover::after,
 .info-dot:focus-visible::after {
-  opacity: 1;
+  display: block;
 }
 
 .info-dot:focus-visible {
@@ -616,32 +994,7 @@ body {
   gap: 8px;
 }
 
-/* 按钮行：主组（启动 DSH，或运行后的 停止 + 重启 DSH）撑满左侧余量、组内两颗平分；
-   打开组（应用内打开 / 浏览器打开）按内容宽度靠右，由 render() 只在运行后移除 .hidden。
-   窗口窄到放不下两组时打开组整体换行到下一行，仍靠右，不挤压按钮。 */
-.actions-row {
-  display: flex;
-  align-items: stretch;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-  /* 主操作贴着窗口右侧排：左侧留给登录提示（出错时才有）。 */
-  margin-left: auto;
-}
-
-/* 按钮按内容取宽（不再拉满一行）：「启动 DSH」一颗时只占自己的宽，
-   运行后 停止 / 重启 / 应用内打开 / 浏览器打开 四颗依次排在右侧。 */
-.actions-row > .actions-primary {
-  flex: none;
-}
-
-.actions-row > .actions-primary > button {
-  flex: none;
-}
-
-.actions-row > .actions-open {
-  flex: none;
-}
+/* 按钮都按内容取宽，不拉满一行：工具条右侧的主操作一排排开。 */
 
 /* 登录说明只在出错时出现；正常状态改挂在登录徽章的感叹号气泡里。
    独立成段（不再和按钮同排），出现或消失都不会挤动上面的按钮行。 */
@@ -697,8 +1050,8 @@ button.primary:hover:not(:disabled) {
    同时文字沿左被推出按钮外（overflow:hidden 裁掉，是位移不是淡出）；移开各自归位。
    悬停除动效外还会提亮底色（停止 #ff3636 / 重启 brightness，见下方红黄块），图标段本身仍不着色。
    图标段是正方形（边长 --btn-ico-size = 按钮高度，主题 2/3 的矮按钮在 native-dark.css 收小）。
-   只作用于 .actions-row 里带图标的四颗按钮，「启动 DSH」形态（.swap 逐字切换）没有图标段，不受影响。 */
-.actions-row button {
+   只作用于工具条里带图标的按钮，「启动 DSH」形态（.swap 逐字切换）没有图标段，不受影响。 */
+.toolbar-actions button {
   position: relative;
   overflow: hidden;
   /* 悬停提亮的过渡（时长 --btn-hl-ms）：停止换 background、重启换 filter，
@@ -707,21 +1060,21 @@ button.primary:hover:not(:disabled) {
   --btn-ico-size: 38px;
 }
 
-.actions-row button .btn-text {
+.toolbar-actions button .btn-text {
   display: inline-block;
   transition: transform var(--btn-sweep-ms) ease;
 }
 
 /* 图标段占右端一个方格（38px）：给带图标的按钮把右侧内边距让出来（10px 间隙 + 方格），
    保证居中的文字不会被图标分段压住；「启动 DSH」形态没有图标段，不受影响。 */
-.actions-row button:has(.btn-ico) {
+.toolbar-actions button:has(.btn-ico) {
   /* 内宽 = 图标段边长 + 原来两侧对称的内边距，文字在剩下的空间里真正居中；
      否则按钮被加宽后文字会偏左。 */
   padding-left: calc(16px + var(--btn-ico-size));
   padding-right: calc(10px + var(--btn-ico-size));
 }
 
-.actions-row button .btn-ico {
+.toolbar-actions button .btn-ico {
   position: absolute;
   top: 0;
   right: 0;
@@ -734,7 +1087,7 @@ button.primary:hover:not(:disabled) {
   transition: width var(--btn-sweep-ms) ease, border-color var(--btn-sweep-ms) ease;
 }
 
-.actions-row button .btn-ico svg {
+.toolbar-actions button .btn-ico svg {
   width: 18px;
   height: 18px;
   fill: none;
@@ -750,16 +1103,16 @@ button.primary:hover:not(:disabled) {
    图标随板居中，时长 --btn-sweep-ms），文字沿左推出按钮外、被 overflow 裁掉（位移不是淡出）。
    推出量 = 文字自身宽度 + 64px：文字起点在按钮中央，这段距离足够连最宽的
    「浏览器打开」（170px 按钮里约偏右 50px 起）也完全滑出左缘。 */
-.actions-row button:is(:hover:not(:disabled), .is-restarting) .btn-ico {
+.toolbar-actions button:is(:hover:not(:disabled), .is-restarting) .btn-ico {
   width: 100%;
   border-left-color: transparent;
 }
 
-.actions-row button:is(:hover:not(:disabled), .is-restarting) .btn-text {
+.toolbar-actions button:is(:hover:not(:disabled), .is-restarting) .btn-text {
   transform: translateX(calc(-100% - 64px));
 }
 
-.actions-row button:active:not(:disabled) .btn-ico svg {
+.toolbar-actions button:active:not(:disabled) .btn-ico svg {
   transform: scale(0.8);
 }
 
@@ -981,20 +1334,6 @@ button.primary:hover:not(:disabled) {
   word-break: break-all;
 }
 
-.hidden {
-  display: none;
-}
-
-.log-box {
-  margin-top: 14px;
-  font-size: 13px;
-  color: var(--fg-dim);
-}
-
-.log-box summary {
-  cursor: pointer;
-  user-select: none;
-}
 
 .log-box pre {
   margin-top: 10px;
@@ -1018,39 +1357,33 @@ button.primary:hover:not(:disabled) {
   cursor: text;
 }
 
-/* 「最近输出 / 操作输出」右上角的复制按钮：悬浮在输出区内部（.log-area）。
-   平时半透明（能看清底下的文字，不全透明），鼠标进入日志区或键盘聚焦时才完全不透明。
-   平时 pointer-events: none：在输出框里拖选文字经过它时不会误触，也就能一直保持半透明。
-   打开时给按钮留出的空间不用额外占位：按钮只压在右上角一两行上，且半透明可透视。 */
+/* 折叠块里的输出区（缓存明细 / 垫片内容 / 垫片文本）：承载右上角的复制按钮。 */
 .log-area {
   position: relative;
 }
 
+/* 输出区右上角的复制按钮：平时半透明、不可点，指到输出区或键盘聚焦时才浮出来，
+   免得压住最后几行文字。 */
 .log-copy {
   position: absolute;
   top: 8px;
-  right: 9px;
-  height: var(--badge-height);
-  padding: 0 var(--badge-padding-x);
-  border: 0;
+  right: 10px;
+  padding: 3px 10px;
   border-radius: 999px;
-  background: none;
-  font-size: var(--badge-font-size);
-  line-height: 1;
-  color: var(--fg-dim);
+  font-size: 12px;
   opacity: 0.45;
   pointer-events: none;
-  transition: opacity 0.12s ease;
+  transition: opacity 140ms ease;
 }
 
-.log-box:hover .log-copy,
-.log-box:focus-within .log-copy {
+.log-area:hover .log-copy,
+.log-area:focus-within .log-copy {
   opacity: 1;
   pointer-events: auto;
 }
 
-.log-copy:hover:not(:disabled) {
-  color: var(--fg);
+.log-copy:hover {
+  background: var(--accent-soft);
 }
 
 /* 端口「还原」按钮（原来是显示当前状态的徽章）：点一下清空端口输入框 = 回到
@@ -1249,7 +1582,7 @@ input[type="text"] {
 
 .picker {
   position: relative;
-  /* 自绘下拉框默认 260px；面板里由 .panel .picker 拉宽到整行（见 .panel-body 前的适配段）。
+  /* 自绘下拉框默认 260px；功能块里由 .block .picker 拉宽到整行（见 .block 的适配段）。
      弹层跟这个宽度（.picker-list 用 left/right: 0）。 */
   width: 260px;
 }
@@ -1413,16 +1746,20 @@ html::-webkit-scrollbar {
   height: 0;
 }
 
-/* 指示条挂在 .panels 上（面板外层）：面板是滚动容器，绝对定位的子元素会跟着内容滚走。
-   贴面板右缘、与面板等高。 */
+/* 指示条挂在 .content-main 上（内容区外层）：#page 自己是滚动容器，绝对定位的子元素
+   会跟着内容滚走。贴内容区右缘、与内容区等高。 */
 .scroll-track {
   position: absolute;
   top: 0;
   right: 0;
-  bottom: 0;
   width: 5px;
   pointer-events: auto;
   z-index: 5;
+}
+
+/* 日志浮层打开时指示条让位：浮层与遮罩压在内容区上面，胶囊不该浮在它们之上。 */
+.content-main:has(.log-panel:not(.hidden)) .scroll-track {
+  display: none;
 }
 
 .scroll-thumb {
@@ -1445,7 +1782,7 @@ html::-webkit-scrollbar {
   opacity: 1;
 }
 
-/* 内部滚动条（日志框、操作输出框）：细窄半透明。平时几乎看不见（轨道全透 + 极低透明度的
+/* 内部滚动条（日志浮层、缓存明细等滚动块）：细窄半透明。平时几乎看不见（轨道全透 + 极低透明度的
    滑块），指上去或拖拽的时候才浮出来。不用 scrollbar-width / scrollbar-color——
    Chromium 一旦认了那两个标准属性就会整段忽略 ::-webkit-scrollbar，
    也没法做「悬停才明显」这层反馈。 */
@@ -1479,7 +1816,7 @@ html::-webkit-scrollbar {
   background: transparent;
 }
 
-/* 展开开关（最近输出 / 操作输出）：整行可点、带旋转箭头指示 */
+/* 展开开关（缓存明细 / 垫片内容这类折叠块）：整行可点、带旋转箭头指示 */
 .log-box {
   padding: 10px 14px;
   border: 1px solid var(--line);
@@ -1495,6 +1832,8 @@ html::-webkit-scrollbar {
   color: var(--fg-dim);
   font-size: 13px;
   list-style: none;
+  cursor: pointer;
+  user-select: none;
 }
 
 .log-box summary::-webkit-details-marker {
@@ -1524,18 +1863,25 @@ html::-webkit-scrollbar {
   margin-top: 0;
 }
 
-/* 通用设置分组（附加参数 / 端口） */
+/* 卡片里的子分组（补丁层 / 插件）：小卡（.cell）已经是「卡中卡」那一层，
+   再往下就只花一条细线分区，不叠第三个边框。 */
 .subcard {
-  margin-top: 12px;
-  padding: 14px 16px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--card-2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* 子分组的第一层不再需要那条分隔线（它就在小卡正文最上面）。 */
+.cell > .subcard:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .subcard-title {
-  margin-bottom: 10px;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--fg-dim);
   letter-spacing: 0.4px;
 }
@@ -1796,10 +2142,11 @@ button.danger:hover:not(:disabled) {
 }
 
 /* 键值行（桥接插件卡片） */
+/* 键值表：小卡里成组的信息（桥接状态、缓存占用、版本与目录、命令行集成路径）。
+   条目之间靠小卡的 gap 分区，这里不再自己加外边距。 */
 .kv {
   display: flex;
   flex-direction: column;
-  margin: 14px 0 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
@@ -1899,4 +2246,11 @@ button.danger:hover:not(:disabled) {
 /* 状态说明与下方错误之间不必再挤：说明行就在 .kv 下面。 */
 #cli-message {
   margin-top: 10px;
+}
+
+/* ---- 收尾：.hidden 放在最末 ----------------------------------------------
+   文件里不少组件自带 display（.subcard、.cell-row、.fields…），与 .hidden 同特指度时
+   靠源码顺序定胜负。放在最末才能保证「加了 .hidden 就真的不显示」，不用逐个补 .xxx.hidden。 */
+.hidden {
+  display: none;
 }

@@ -29,10 +29,10 @@ use dsharbor_core::launch::{
 use dsharbor_core::logparse::{parse_announcement, Announcement};
 use serde::Serialize;
 
-/// 环形日志容量（行）。
-const LOG_CAPACITY: usize = 400;
-/// 状态查询返回给界面的日志行数。
-const LOG_TAIL_LINES: usize = 40;
+/// 环形日志容量（行）。界面只有一个统一日志浮层，分批查找历史要留够余量。
+const LOG_CAPACITY: usize = 1200;
+/// 状态查询返回给界面的日志行数（界面拿到后跟上一轮做尾部比对，只贴新增的那几行）。
+const LOG_TAIL_LINES: usize = 300;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

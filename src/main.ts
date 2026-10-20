@@ -4,14 +4,14 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import logoUrl from "./assets/logo.png";
 import "./style.css";
 
-/** 左侧导航的五个分区图标：统一 24 单位视框、描边 1.55，与标题栏的浅/深图标同源。 */
+/** 左侧导航的五个分区图标：统一 24 单位视框、描边 1.55，与左栏底部的浅/深图标同源。 */
 const ICON_LAUNCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5 3 21l4.5-1.5" /><path d="M14 4c3.5-1 6 1.5 5 5-1.2 4.2-5.6 7.6-8.4 9.1L8 15.4C9.5 12.6 11.3 5.2 14 4Z" /><circle cx="14.6" cy="9.4" r="1.6" /></svg>`;
 const ICON_ENV = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5" /><path d="M12 12v9" /></svg>`;
 const ICON_INTEG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2.5" /><path d="m6.5 10 2.5 2.5L6.5 15" /><path d="M12 15.5h5" /></svg>`;
 const ICON_TRAYNET = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="10" r="6.5" /><path d="M5.5 10h13" /><path d="M12 3.5a10.5 10.5 0 0 1 2.6 6.5 10.5 10.5 0 0 1-2.6 6.5 10.5 10.5 0 0 1-2.6-6.5A10.5 10.5 0 0 1 12 3.5z" /><path d="M4 19.5h4l1.2 2h5.6l1.2-2h4" /></svg>`;
 const ICON_ABOUT = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" /></svg>`;
 
-/** 标题栏那颗浅/深切换图标：显示的是「点下去会变成什么」，不是当前状态。 */
+/** 左栏底部那颗浅/深切换图标：显示的是「点下去会变成什么」，不是当前状态。 */
 const ICON_SUN = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" /></svg>`;
 const ICON_MOON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>`;
 
@@ -24,7 +24,7 @@ const PANELS: ReadonlyArray<{ key: PanelKey; label: string; icon: string }> = [
   { key: "about", label: "关于", icon: ICON_ABOUT },
 ];
 
-/** 标题栏三个窗口图标：10px 见方的细线 SVG，形状统一收在 9px 见方内、
+/** 三只窗口按钮的图标：10px 见方的细线 SVG，形状统一收在 9px 见方内、
     描边 1.2px（见 .win-btn svg），描边色跟 currentColor——改用矢量后
     不再依赖字体里的 – □ ✕ 字形（那三个字形粗细大小都不一致）。
     最大化与还原是两个图标，按窗口状态切换。 */
@@ -41,6 +41,12 @@ const ICON_STOP = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4"
 const ICON_RESTART = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" /><path d="M21 3v5h-5" /></svg>`;
 const ICON_OPEN_APP = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="2" /><path d="M2.5 9h19" /><path d="M6.5 4.5V9" /><path d="M10.5 4.5V9" /></svg>`;
 const ICON_OPEN_BROWSER = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5" /><path d="M2.5 12h19" /><path d="M12 2.5a14.7 14.7 0 0 1 3.8 9.5 14.7 14.7 0 0 1-3.8 9.5 14.7 14.7 0 0 1-3.8-9.5A14.7 14.7 0 0 1 12 2.5z" /></svg>`;
+/** 左栏底部的「GitHub 仓库」入口与打开方式里的「复制登录链接」共用这颗代码括号图标。 */
+const ICON_CODE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 7.5-5 4.5 5 4.5" /><path d="m15.5 7.5 5 4.5-5 4.5" /><path d="M13.5 4.5 10.5 19.5" /></svg>`;
+/** 打开方式的两段式按钮右侧那颗小三角，以及日志条的展开/收起箭头。 */
+const ICON_CHEVRON_DOWN = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" /></svg>`;
+const ICON_CHEVRON_UP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14.5 6-6 6 6" /></svg>`;
+const ICON_COPY = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.2" /><path d="M15 6.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15" /></svg>`;
 
 /** 与 Rust 侧 `app_info` 命令的返回结构一一对应。 */
 interface AppInfo {
@@ -819,47 +825,85 @@ function applyMode(mode: ThemeId): void {
   document.documentElement.dataset.mode = mode;
 }
 
-/** 面板头：左侧导航切到哪个分区，右侧面板就显示哪一块。 */
-function panelHead(title: string, summary = ""): string {
-  return `<div class="panel-head">
-    <h2>${title}</h2>${summary}
-  </div>`;
-}
-
 /** 面板外壳：`<section class="panel" data-panel="…">`，未选中时由 CSS 隐藏。 */
-function panelSection(key: PanelKey, head: string, body: string): string {
+function panelSection(key: PanelKey, body: string): string {
   return `<section class="panel" data-panel="${key}">
-  ${head}
   <div class="panel-body">${body}</div>
 </section>`;
 }
 
-/** 界面骨架：标题栏 + 上方一张窄卡片（品牌与状态、四个主操作）+ 下方一张主卡片
-    （左侧分区导航 + 右侧面板）。所有可交互元素的 id 不变，绑定代码共用。 */
+/**
+ * 小卡：主卡里每个条目各装一张小卡（卡中卡）。圆角比主卡收窄两圈，
+ * 靠主卡的内边距与 gap 露出主卡底色——露缝，不画分隔线。
+ */
+function cell(body: string): string {
+  return `<section class="cell">${body}</section>`;
+}
+
+/**
+ * 主卡：内容区里那张大卡片，里面按顺序摆若干小卡；条目撑高时由主卡自己滚。
+ */
+function mainCard(items: string[]): string {
+  return `<section class="block main-card">${items.join("")}</section>`;
+}
+
+/** 主卡里并排两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。 */
+function cellRow(ratio: string, left: string, right: string): string {
+  return `<div class="cell-row" data-ratio="${ratio}">${cell(left)}${cell(right)}</div>`;
+}
+
+/** 并排两列时的小标题：左列「托盘设置」、右列「网络与代理」，保证两列从同一行起。 */
+function colHead(title: string, extra = ""): string {
+  return `<div class="col-head"><span class="col-title">${title}</span>${extra}</div>`;
+}
+
+/** 卡片里的一行状态徽章：放在小标题右侧，一眼看到当前状态（启动方式 / 桥接 / 缓存占用）。 */
+function badgeLine(key: string, text: string): string {
+  return `<span id="${key}" class="badge badge-stopped panel-badge">${text}</span>`;
+}
+
+/** 界面骨架：一张通高的左栏悬浮块 + 右栏（工具条悬浮块 / 主卡 / 两张并排次卡）+ 统一日志浮层。
+    三只窗口按钮不在任何块里，浮在窗口右上角；块与块之间留缝，露出页面背景。
+    所有可交互元素的 id 不变，绑定代码共用。 */
 function buildHtml(info: AppInfo): string {
-  const titlebar = `
-    <!-- 自绘标题栏（tauri.conf.json 里 decorations: false）：整条可拖动，
-         按钮只发窗口命令，关闭走的还是原生关闭那条路（Rust 侧转轻量模式）。 -->
-    <div class="titlebar" data-tauri-drag-region>
-      <span class="titlebar-brand" data-tauri-drag-region>
-        <img class="titlebar-logo" src="${logoUrl}" alt="" draggable="false" />DSHarbor
-      </span>
-      <div class="titlebar-buttons">
-        <button id="mode-btn" class="mode-btn" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}</button>
-        <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">${ICON_MINIMIZE}</button>
-        <button id="win-max" class="win-btn" type="button" title="最大化" aria-label="最大化">${ICON_MAXIMIZE}</button>
-        <button id="win-close" class="win-btn win-close" type="button" title="关闭窗口（DSH 继续运行）" aria-label="关闭">${ICON_CLOSE}</button>
-      </div>
+  // 窗口按钮：浮在窗口最右上角，压在所有块之上（tauri.conf.json 里 decorations: false）。
+  const winControls = `
+    <div class="win-controls">
+      <button id="win-min" class="win-btn" type="button" title="最小化" aria-label="最小化">${ICON_MINIMIZE}</button>
+      <button id="win-max" class="win-btn" type="button" title="最大化" aria-label="最大化">${ICON_MAXIMIZE}</button>
+      <button id="win-close" class="win-btn win-close" type="button" title="关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻" aria-label="关闭">${ICON_CLOSE}</button>
     </div>
   `;
-  const tagline = `<p class="tagline">DSH Web 的桌面壳</p>`;
-  const headLine = `
-    <div class="head-line">
-      <img class="head-logo" src="${logoUrl}" alt="" draggable="false" />
-      <div class="head-text">
-        <h1>${info.name}</h1>
-        ${tagline}
+
+  // 左栏：一张通高的悬浮块。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。
+  const sidebar = `
+    <aside class="sidebar" data-tauri-drag-region>
+      <div class="sidebar-brand" data-tauri-drag-region>
+        <div class="sidebar-brand-row">
+          <img class="sidebar-logo" src="${logoUrl}" alt="" draggable="false" />
+          <span class="sidebar-name">${info.name}</span>
+        </div>
+        <p class="sidebar-sub">DSH Web 的桌面壳</p>
       </div>
+      <nav class="rail" id="nav" aria-label="设置分区">
+        ${PANELS.map(
+          (item) =>
+            `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span></button>`,
+        ).join("\n        ")}
+      </nav>
+      <div class="sidebar-links">
+        <button id="link-site" class="icon-btn" type="button" title="打开 DSH 官网" aria-label="打开 DSH 官网">${ICON_OPEN_BROWSER}</button>
+        <button id="link-repo" class="icon-btn" type="button" title="打开 GitHub 仓库" aria-label="打开 GitHub 仓库">${ICON_CODE}</button>
+        <button id="mode-btn" class="icon-btn" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}</button>
+      </div>
+    </aside>
+  `;
+
+  // 工具条：一张独立的悬浮块。左边徽章群，右边主操作。启动前只有「启动」可点（打开方式可以先选好），
+  // 运行后「停止 / 重启」出现。打开方式是「主按钮 + 右侧小三角」的两段式：
+  // 点三角选方式，选完文字与图标回填到主按钮，再点主按钮才执行。
+  const toolbar = `
+    <section class="block toolbar-block">
       <div class="status-row">
         <span id="login-badge" class="badge badge-stopped"><span id="login-text">登录等待中</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="登录链接说明" data-tip="登录链接就绪后即可打开 DSH 界面">!</span></span>
         <span id="status-badge" class="badge badge-stopped"><span id="status-spinner" class="spinner hidden"></span><span id="status-text">已停止</span></span>
@@ -867,69 +911,51 @@ function buildHtml(info: AppInfo): string {
         <span class="status-meta">PID <b id="status-pid">—</b></span>
         <span class="status-meta">监听 <b id="status-port">—</b></span>
       </div>
-    </div>
+      <!-- 拖动带：徽章之间到右侧按钮之间的空白交给系统拖窗口（按钮本身不参与）。 -->
+      <div class="toolbar-drag" data-tauri-drag-region></div>
+      <div class="toolbar-actions">
+        <div class="actions actions-primary">
+          <!-- 初始即停止态的逐字切换形态：首帧就用正确样式，等 render 前不会闪红底大字。 -->
+          <button id="btn-toggle" class="primary swap" aria-label="${TOGGLE_TEXT_REST}">${toggleSwapHtml()}</button>
+          <button id="btn-restart" class="hidden"><span class="btn-text">重启 DSH</span><span class="btn-ico" aria-hidden="true">${ICON_RESTART}</span></button>
+        </div>
+        <div class="open-split">
+          <button id="btn-open" class="btn-open" type="button" disabled>
+            <span class="btn-ico" id="open-ico" aria-hidden="true">${ICON_OPEN_APP}</span>
+            <span class="btn-text" id="open-text">应用内打开</span>
+          </button>
+          <button id="btn-open-more" class="btn-open-more" type="button" title="更换打开方式" aria-label="更换打开方式" aria-expanded="false" aria-controls="open-menu">${ICON_CHEVRON_DOWN}</button>
+          <div id="open-menu" class="open-menu hidden" role="menu" aria-label="打开方式">
+            <button class="open-item" type="button" role="menuitem" data-open-mode="app">${ICON_OPEN_APP}<span>应用内打开</span></button>
+            <button class="open-item" type="button" role="menuitem" data-open-mode="browser">${ICON_OPEN_BROWSER}<span>浏览器打开</span></button>
+            <button class="open-item" type="button" role="menuitem" data-open-mode="copy">${ICON_CODE}<span>复制登录链接</span></button>
+          </div>
+        </div>
+      </div>
+    </section>
   `;
-  // 会话区共用件：三个主题同一份标记，id 不变，绑定代码共用。
+
+  // 状态错误与登录失败的两行提示：工具条下方整行显示，不塞进任何块。
   const statusErrorBlock = `<p id="status-error" class="error hidden"></p>`;
   const loginNoteBlock = `<p id="login-note" class="hint login-note hidden"></p>`;
-  // 按钮行（维护者要求，三个主题统一）：排在状态徽章行下面、占满一整行。
-  // 启动前整行只有「启动 DSH」；运行后「停止 / 重启 DSH」撑满左侧余量，
-  // 「应用内打开 / 浏览器打开」靠右。两组的显隐由 render() 按状态切换，
-  // 拉伸与靠右在 style.css 的 .actions-row 里。
-  const sessionActionsRow = `
-    <div class="actions-row">
-      <div class="actions actions-primary">
-        <!-- 初始即停止态的逐字切换形态：首帧就用正确样式，等 render 前不会闪红底大字。 -->
-        <button id="btn-toggle" class="primary swap" aria-label="${TOGGLE_TEXT_REST}">${toggleSwapHtml()}</button>
-        <button id="btn-restart" class="hidden"><span class="btn-text">重启 DSH</span><span class="btn-ico" aria-hidden="true">${ICON_RESTART}</span></button>
-      </div>
-      <div class="actions actions-open hidden" id="actions-open">
-        <button id="btn-open-app" disabled><span class="btn-text">应用内打开</span><span class="btn-ico" aria-hidden="true">${ICON_OPEN_APP}</span></button>
-        <button id="btn-open-browser" disabled><span class="btn-text">浏览器打开</span><span class="btn-ico" aria-hidden="true">${ICON_OPEN_BROWSER}</span></button>
-      </div>
-    </div>
-  `;
-  const logBlock = `
-    <details class="log-box">
-      <summary><span class="chev">▸</span>最近输出</summary>
-      <div class="log-area">
-        <pre id="log">（暂无输出）</pre>
-        <button type="button" class="log-copy" id="btn-copy-log">复制</button>
-      </div>
-    </details>
-  `;
-  // 两条托盘设置（单击打开 / 释放界面内存）留在「托盘与网络」面板里，说明直接写在控件下方。
+
+  // 两条托盘设置（单击打开 / 释放界面内存）在「托盘设置」块里，说明直接写在控件下方。
   const trayFields = `
-    <div class="fields tray-fields">
+    ${colHead("托盘设置")}
+    <div class="fields">
       <label>托盘单击打开</label>
       <div class="picker" id="tray-picker"></div>
       <p class="hint">单击系统托盘图标时打开哪一个；右键菜单「浏览器打开 / 应用内打开 / 打开启动界面」随时可用。</p>
     </div>
-    <div class="fields tray-fields">
+    <div class="fields">
       <label>关闭窗口后释放界面内存</label>
       <div class="picker" id="light-delay-picker"></div>
       <p class="hint">关闭后先留在内存里，这段时间内从托盘回来是秒开；到点后释放界面内存。</p>
     </div>
   `;
-  // 「环境」卡：选当前启动用哪一份 DSH 环境（profile）。
-  // 下拉只列能起网页界面的环境（官方桌面端专用目录整份隐藏，见核心库 profiles.rs）。
-  // 切换只写配置、不自动重启：正在跑的会话不能因为点一下下拉就断。
-  const profilesBody = `
-    <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
-    <div id="profiles-content" class="profiles-content">
-    <div class="fields profiles-fields">
-      <span class="field-label">启动用环境 <span class="info-dot" role="img" tabindex="0" aria-label="环境说明" data-tip="环境是 ~/.dsh/profiles 下的一份独立 DSH 安装，各自有自己的插件与配置。只有登记了网页应用的环境才能起界面；切换后需要重启 DSH 才生效。">!</span></span>
-      <div class="picker" id="profile-picker"></div>
-      <p class="hint" id="profile-hint"></p>
-    </div>
-    <div id="profile-restart-row" class="actions hidden">
-      <button id="btn-profile-restart" class="primary">重启 DSH 使切换生效</button>
-    </div>
-    <p id="profile-note" class="hint hidden"></p>
-    <p id="profile-error" class="error hidden"></p>
-    <div class="actions">
-      <button id="btn-profile-manage" class="ghost">管理环境</button>
-    </div>
+
+  // 分区里的次要内容（补丁层与插件）：平时隐藏在「管理环境」展开区里，展开后才出现。
+  const manageBlockBody = `
     <div id="profile-manage" class="subcard hidden">
       <span class="subcard-title">管理环境</span>
       <div id="profile-manage-list" class="profile-manage-list"></div>
@@ -982,26 +1008,44 @@ function buildHtml(info: AppInfo): string {
       </div>
       <p id="profile-manage-note" class="hint hidden"></p>
       <p id="profile-manage-error" class="error hidden"></p>
-      <details class="log-box" id="manage-output-box">
-        <summary><span class="chev">▸</span>操作输出</summary>
-        <div class="log-area">
-          <pre id="manage-output">（暂无操作）</pre>
-          <button type="button" class="log-copy" id="btn-copy-manage-output">复制</button>
-        </div>
-      </details>
-    </div>
     </div>
   `;
-  // 「网络」卡：下载源与代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
-  const networkBody = `
+
+  // 「环境」块：选当前启动用哪一份 DSH 环境（profile）。下拉只列能起网页界面的环境
+  // （官方桌面端专用目录整份隐藏，见核心库 profiles.rs）。切换只写配置、不自动重启。
+  // `${manageBlockBody}` 是「管理环境」的展开区（补丁层与插件），默认隐藏。
+  const profilesBody = `
+    ${colHead("当前环境", badgeLine("profiles-summary", "读取中…"))}
+    <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
+    <div id="profiles-content" class="profiles-content">
+    <div class="fields profiles-fields">
+      <span class="field-label">启动用环境 <span class="info-dot" role="img" tabindex="0" aria-label="环境说明" data-tip="环境是 ~/.dsh/profiles 下的一份独立 DSH 安装，各自有自己的插件与配置。只有登记了网页应用的环境才能起界面；切换后需要重启 DSH 才生效。">!</span></span>
+      <div class="picker" id="profile-picker"></div>
+      <p class="hint" id="profile-hint"></p>
+    </div>
+    <div id="profile-restart-row" class="actions hidden">
+      <button id="btn-profile-restart" class="primary">重启 DSH 使切换生效</button>
+    </div>
+    <p id="profile-note" class="hint hidden"></p>
+    <p id="profile-error" class="error hidden"></p>
+    <div class="actions">
+      <button id="btn-profile-manage" class="ghost">管理环境</button>
+    </div>
+    ${manageBlockBody}
+    </div>
+  `;
+
+  // 「网络与代理」块：下载源 + 代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
+  const networkFieldsBody = `
     <p id="network-windows-only" class="hint network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
     <div id="network-content" class="network-content">
-    <div class="fields network-fields">
+    ${colHead("网络与代理", `<span id="network-summary" class="badge badge-stopped panel-badge">沿用 npm 全局配置 · 跟随系统</span>`)}
+    <div class="fields">
       <span class="field-label">下载源</span>
       <div class="picker" id="download-source-picker"></div>
       <p class="hint" id="download-source-hint"></p>
     </div>
-    <div class="fields network-fields">
+    <div class="fields">
       <span class="field-label">代理</span>
       <div class="picker" id="proxy-mode-picker"></div>
       <div id="proxy-manual" class="proxy-manual hidden">
@@ -1009,82 +1053,88 @@ function buildHtml(info: AppInfo): string {
       </div>
       <p class="hint" id="proxy-hint"></p>
     </div>
-    <div class="fields network-fields">
-      <span class="field-label">自检</span>
+    </div>
+  `;
+
+  // 「网络自检」块：真正起一次 npm，看直连和走代理各自通不通。
+  const selfCheckBody = `
+    <div class="fields">
       <div class="actions">
         <button type="button" id="btn-self-check">测试连接</button>
       </div>
       <p class="hint" id="self-check-status"></p>
       <p class="hint hidden" id="self-check-detail"></p>
     </div>
-    </div>
   `;
-  // 「集成」面板：命令行集成（PATH 与 dsh 垫片）+ npx 缓存盘面。内容全部由后端算好
-  // （目录、垫片内容、手动命令、占用字节与状态说明），界面只负责显示，避免两边各算一套口径。
-  // 非 Windows 宿主把「自动接入」与缓存那两段整段藏起来，只留手动命令。
-  const integrationsBody = `
-    <div class="subcard">
-      <div class="subcard-title">命令行集成</div>
-      <div class="cli-windows-only">
-        <label class="switch-line">
-          <input type="checkbox" id="cli-toggle" />
-          <span>把 <code>dsh</code> 命令接进终端：在固定目录写一份 <code>dsh.cmd</code>，再把这个目录加到当前用户的 PATH 末尾</span>
-        </label>
-        <p class="hint">只改当前用户的 PATH，不动系统 PATH，其它条目原样保留（百分号变量也不会被展开）；写入是原值回写，再长也不会截断。改完不影响已经开着的终端，<b>新开一个终端</b>才生效。</p>
-        <div class="kv">
-          <div class="kv-row"><span class="kv-key">垫片目录</span><span class="kv-value" id="cli-bin-dir">—</span></div>
-          <div class="kv-row kv-row-action"><span class="kv-key">垫片文件</span><span class="kv-value" id="cli-shim-path">—</span><button id="btn-cli-dir" class="kv-action">打开目录</button></div>
-        </div>
-      </div>
+
+  // 「命令行集成」块：内容全部由后端算好（目录、垫片内容、手动命令、状态说明），
+  // 界面只负责显示，避免两边各算一套口径。非 Windows 宿主只留手动命令。
+  const cliBlockBody = `
+    ${colHead("命令行集成", badgeLine("integrations-summary", "读取中…"))}
+    <div class="cli-windows-only">
+      <label class="switch-line">
+        <input type="checkbox" id="cli-toggle" />
+        <span>把 <code>dsh</code> 命令接进终端：在固定目录写一份 <code>dsh.cmd</code>，再把这个目录加到当前用户的 PATH 末尾</span>
+      </label>
+      <p class="hint">只改当前用户的 PATH，不动系统 PATH，其它条目原样保留（百分号变量也不会被展开）；写入是原值回写，再长也不会截断。改完不影响已经开着的终端，<b>新开一个终端</b>才生效。</p>
       <div class="kv">
-        <div class="kv-row kv-row-action"><span class="kv-key">手动命令</span><span class="kv-value cli-command" id="cli-manual">—</span><button id="btn-cli-copy" class="kv-action">复制</button></div>
-      </div>
-      <p class="hint">不想打开上面的开关时，把这条命令粘进 <b>命令提示符（cmd）</b> 或 <b>PowerShell</b> 回车执行，也就是自己把它追加到当前用户的 PATH 末尾；开新终端后生效。注意 <code>setx</code> 会把 <code>%VAR%</code> 展开成当前值、超过 1024 个字符会被截断，所以它只适合手动救场，日常用上面那个开关（那边是原值回写，不会被展开也不会截断）。</p>
-      <p id="cli-message" class="hint">读取中…</p>
-      <p id="cli-error" class="error hidden"></p>
-      <div class="cli-windows-only">
-        <details class="log-box">
-          <summary><span class="chev">▸</span>垫片内容（跟随当前启动方式）</summary>
-          <div class="log-area">
-            <pre id="cli-shim-text">（读取中）</pre>
-            <button type="button" class="log-copy" id="btn-cli-copy-shim">复制</button>
-          </div>
-        </details>
+        <div class="kv-row"><span class="kv-key">垫片目录</span><span class="kv-value" id="cli-bin-dir">—</span></div>
+        <div class="kv-row kv-row-action"><span class="kv-key">垫片文件</span><span class="kv-value" id="cli-shim-path">—</span><button id="btn-cli-dir" class="kv-action">打开目录</button></div>
       </div>
     </div>
-    <div class="subcard cache-windows-only">
-      <div class="subcard-title">npx 缓存</div>
-      <p class="hint">只统计明确记录着本包的缓存目录，别的包既不计入也不删。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。</p>
-      <label class="switch-line">
-        <input type="checkbox" id="cache-auto-toggle" />
-        <span>真的拉起一个 DSH 进程之后自动清理一次：保留当前启动配置对应的那份与最近用过的几份，其余删掉</span>
-      </label>
-      <p class="hint">默认关闭。打开后，只在这一回真的拉起了一个 DSH 进程之后修剪一次（壳外已经有一份在跑时什么也不拉起，所以什么也不删）；进程起来了但随后又崩了也照样清理，这里不等它健康退出。清掉了哪些、释放了多少会显示在下面。</p>
-      <div class="kv">
-        <div class="kv-row"><span class="kv-key">本包占用</span><span class="kv-value" id="cache-own">—</span></div>
-        <div class="kv-row"><span class="kv-key">可回收</span><span class="kv-value" id="cache-reclaimable">—</span></div>
-        <div class="kv-row kv-row-action"><span class="kv-key">缓存目录</span><span class="kv-value" id="cache-root">—</span><button id="btn-cache-clean" class="kv-action">立即清理</button></div>
-      </div>
-      <p id="cache-message" class="hint">读取中…</p>
-      <p id="cache-warning" class="hint hidden"></p>
-      <p id="cache-error" class="error hidden"></p>
-      <div id="cache-results" class="hidden">
-        <div class="kv" id="cache-results-body"></div>
-      </div>
+    <div class="kv">
+      <div class="kv-row kv-row-action"><span class="kv-key">手动命令</span><span class="kv-value cli-command" id="cli-manual">—</span><button id="btn-cli-copy" class="kv-action">复制</button></div>
+    </div>
+    <p class="hint">不想打开上面的开关时，把这条命令粘进 <b>命令提示符（cmd）</b> 或 <b>PowerShell</b> 回车执行，也就是自己把它追加到当前用户的 PATH 末尾；开新终端后生效。注意 <code>setx</code> 会把 <code>%VAR%</code> 展开成当前值、超过 1024 个字符会被截断，所以它只适合手动救场，日常用上面那个开关（那边是原值回写，不会被展开也不会截断）。</p>
+    <p id="cli-message" class="hint">读取中…</p>
+    <p id="cli-error" class="error hidden"></p>
+    <div class="cli-windows-only">
       <details class="log-box">
-        <summary><span class="chev">▸</span>缓存明细（保留的与可回收的）</summary>
+        <summary><span class="chev">▸</span>垫片内容（跟随当前启动方式）</summary>
         <div class="log-area">
-          <pre id="cache-dirs">（读取中）</pre>
+          <pre id="cli-shim-text">（读取中）</pre>
+          <button type="button" class="log-copy" id="btn-cli-copy-shim">复制</button>
         </div>
       </details>
     </div>
   `;
+
+  // 「npx 缓存」块：占用字节、可回收字节、目录明细、每次删除的结果都在后端算好。
+  const cacheBlockBody = `
+    ${colHead("npx 缓存")}
+    <p class="hint">只统计明确记录着本包的缓存目录，别的包既不计入也不删。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。</p>
+    <label class="switch-line">
+      <input type="checkbox" id="cache-auto-toggle" />
+      <span>真的拉起一个 DSH 进程之后自动清理一次：保留当前启动配置对应的那份与最近用过的几份，其余删掉</span>
+    </label>
+    <p class="hint">默认关闭。打开后，只在这一回真的拉起了一个 DSH 进程之后修剪一次（壳外已经有一份在跑时什么也不拉起，所以什么也不删）；进程起来了但随后又崩了也照样清理，这里不等它健康退出。清掉了哪些、释放了多少会显示在下面。</p>
+    <div class="kv">
+      <div class="kv-row"><span class="kv-key">本包占用</span><span class="kv-value" id="cache-own">—</span></div>
+      <div class="kv-row"><span class="kv-key">可回收</span><span class="kv-value" id="cache-reclaimable">—</span></div>
+      <div class="kv-row kv-row-action"><span class="kv-key">缓存目录</span><span class="kv-value" id="cache-root">—</span><button id="btn-cache-clean" class="kv-action">立即清理</button></div>
+    </div>
+    <p id="cache-message" class="hint">读取中…</p>
+    <p id="cache-warning" class="hint hidden"></p>
+    <p id="cache-error" class="error hidden"></p>
+    <div id="cache-results" class="hidden">
+      <div class="kv" id="cache-results-body"></div>
+    </div>
+    <details class="log-box">
+      <summary><span class="chev">▸</span>缓存明细（保留的与可回收的）</summary>
+      <div class="log-area">
+        <pre id="cache-dirs">（读取中）</pre>
+      </div>
+    </details>
+  `;
+
+  // 「启动方式」块：四选一 + 各自参数。实际执行的命令与附加参数放在下面并排的两块里。
   const modesBody = `
+    ${colHead("启动方式", badgeLine("modes-summary", "官方 npx 命令"))}
     <label class="mode">
       <input type="radio" name="mode" value="npx" checked />
       <span>
         <b>${MODE_LABELS.npx}</b>
-        <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）<br />执行 <code id="npx-command-preview">${npxCommandOf("latest", null)}</code></small>
+        <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）；实际执行的命令见下方「命令预览」。</small>
       </span>
     </label>
     <div id="npx-fields" class="fields hidden">
@@ -1133,24 +1183,24 @@ function buildHtml(info: AppInfo): string {
       <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」面板里的其它环境时不会改写这条命令——自己写进去才算数。</p>
     </div>
   `;
+
   const portControl = `<input id="port" type="text" inputmode="numeric" placeholder="例如 3099" />`;
-  // 通用设置（附加参数与端口）：放在「启动方式」面板的最后，两个字段并排成两列。
-  // 两处说明都进 ⓘ 气泡（维护者要求），端口那条由 renderPortHint() 动态改写 data-tip。
-  const commonBody = `
-    <div class="subcard">
-      <div class="grid-2">
-        <div class="fields">
-          <label for="extra-args">附加参数 <span class="info-dot" role="img" tabindex="0" aria-label="附加参数说明" data-tip="追加到该启动方式的命令末尾（运行环境选 WSL 时追加到发行版内的命令后面）。仅允许字母数字与 - _ . / : = @ + 和空格；壳始终自动追加 --no-open（不自动弹浏览器），需要时用上面的「浏览器打开」。">!</span></label>
-          <input id="extra-args" type="text" placeholder="例如 --port 3081 --no-open" />
-        </div>
-        <div class="fields">
-          <label for="port">端口 <span id="port-info" class="info-dot" role="img" tabindex="0" aria-label="端口说明" data-tip="正在读取 DSH 配置…">!</span></label>
-          <div class="port-row">${portControl}<button type="button" id="port-reset" class="port-reset" title="把端口还原为默认（留空 = 跟随 DSH 配置）">还原</button></div>
-        </div>
-      </div>
-    </div>
-  `;
+  // 命令预览：跟着渠道 / 版本 / 运行环境实时刷新的那条真实命令，单独一张小卡接在启动方式下面。
+  const commandPreviewBody = `<code id="npx-command-preview" class="command-preview">${npxCommandOf("latest", null)}</code>`;
+  // 与启动方式同在主卡内、并排的两张小卡：「附加参数」与「端口」。
+  const extraArgsBody = `<div class="fields">
+      <label for="extra-args">附加参数 <span class="info-dot" role="img" tabindex="0" aria-label="附加参数说明" data-tip="追加到该启动方式的命令末尾（运行环境选 WSL 时追加到发行版内的命令后面）。仅允许字母数字与 - _ . / : = @ + 和空格；壳始终自动追加 --no-open（不自动弹浏览器），需要时用工具栏的「打开方式」。">!</span></label>
+      <input id="extra-args" type="text" placeholder="例如 --port 3081 --no-open" />
+    </div>`;
+  const portBody = `<div class="fields">
+      <label for="port">监听端口 <span id="port-info" class="info-dot" role="img" tabindex="0" aria-label="端口说明" data-tip="正在读取 DSH 配置…">!</span></label>
+      <div class="port-row">${portControl}<button type="button" id="port-reset" class="port-reset" title="把端口还原为默认（留空 = 跟随 DSH 配置）">还原</button></div>
+      <p class="hint" id="port-hint">留空即跟随 DSH 自身的配置。</p>
+    </div>`;
+
+  // 「桥接插件」块：登录链接的可靠通道，挂在「环境」里与它所属的环境挨着。
   const bridgeBody = `
+    ${colHead("桥接插件", badgeLine("bridge-summary", "读取中…"))}
     <p class="hint">安装后壳经 DSH 内部插件接口直接取带 token 的登录链接，不依赖日志格式；未安装时自动降级为日志解析（可用但较脆）。安装/卸载前请先停止 DSH。每次安装或卸载都会自动备份 profile 文件，只保留最近 5 份，超出后删掉最旧的。</p>
     <div class="kv">
       <div class="kv-row"><span class="kv-key">目标环境</span><span class="kv-value" id="bridge-target">—</span></div>
@@ -1165,76 +1215,76 @@ function buildHtml(info: AppInfo): string {
     </div>
     <p id="bridge-note" class="hint hidden"></p>
     <p id="bridge-error" class="error hidden"></p>
-    <details class="log-box">
-      <summary><span class="chev">▸</span>操作输出</summary>
-      <div class="log-area">
-        <pre id="bridge-output">（暂无操作）</pre>
-        <button type="button" class="log-copy" id="btn-copy-bridge-output">复制</button>
-      </div>
-    </details>
   `;
+
+  // 「关于」：只留版本与两个目录（仓库 / 官网的入口挪到了左栏底部的图标）。
   const aboutKv = `
     <div class="kv">
       <div class="kv-row"><span class="kv-key">壳版本</span><span class="kv-value" id="about-shell">${info.name} ${info.version}（核心库 ${info.core_version}）</span></div>
       <div class="kv-row"><span class="kv-key">DSH 版本</span><span class="kv-value" id="about-dsh">未知</span></div>
       <div class="kv-row"><span class="kv-key">开源许可证</span><span class="kv-value" id="about-license">${info.license}</span></div>
-      <div class="kv-row kv-row-action"><span class="kv-key">项目仓库</span><span class="kv-value" id="about-repo">${info.repository}</span><button id="btn-about-repo" class="kv-action">打开 GitHub 仓库</button></div>
-      <div class="kv-row kv-row-action"><span class="kv-key">DSH 官网</span><span class="kv-value" id="about-site">${info.site_url}</span><button id="btn-about-site" class="kv-action">打开 DSH 官网</button></div>
-      <div class="kv-row kv-row-action"><span class="kv-key">配置目录</span><span class="kv-value" id="about-config-dir">${info.config_dir}</span><button id="btn-about-config" class="kv-action">打开配置目录</button></div>
-      <div class="kv-row kv-row-action"><span class="kv-key">日志目录</span><span class="kv-value" id="about-logs-dir">${info.logs_dir}</span><button id="btn-about-logs" class="kv-action">打开日志目录</button></div>
+      <div class="kv-row kv-row-action"><span class="kv-key">配置目录</span><span class="kv-value" id="about-config-dir">${info.config_dir}</span><button id="btn-about-config" class="kv-action">打开</button></div>
+      <div class="kv-row kv-row-action"><span class="kv-key">日志目录</span><span class="kv-value" id="about-logs-dir">${info.logs_dir}</span><button id="btn-about-logs" class="kv-action">打开</button></div>
     </div>
   `;
   const aboutTail = `
     <p id="about-note" class="hint hidden"></p>
     <p class="hint">DSH 版本在每次成功启动后自动读取；配置目录放壳设置与桥接备份，日志目录放 DSH 的启动日志（运行环境选 WSL 时日志在发行版内的 <code>~/.dsh/logs</code>）。</p>
   `;
-  const badgeLine = (key: string, text: string) =>
-    `<span id="${key}" class="badge badge-stopped panel-badge">${text}</span>`;
 
-  // 桥接插件不再是独立分区：挂在「环境」面板末尾，与它所属的环境挨着。
-  const bridgeBlock = `
-    <div class="sec"><span>桥接插件</span>${badgeLine("bridge-summary", "读取中…")}</div>
-    <div class="sub-block">${bridgeBody}</div>
-  `;
+  // 「关于」卡：一行小标题 + 版本与目录表。
+  const aboutBody = `${colHead("版本与目录")}${aboutKv}${aboutTail}`;
 
-  // 五个面板的标题与内容一一对应左侧导航；未选中的由 CSS 隐藏。
+  // 五个分区共用同一套骨架：内容区就是一张主卡，里面每个条目各装一张小卡（卡中卡），
+  // 超过高度时由主卡自己滚。并排的两项用 cellRow 包成两张小卡，留在主卡内部。
   const panels = [
     panelSection(
       "launch",
-      panelHead("启动方式", badgeLine("modes-summary", "官方 npx 命令")),
-      `${modesBody}${commonBody}<div class="sec"><span>最近输出</span></div>${logBlock}`,
+      mainCard([cell(modesBody), cell(commandPreviewBody), cellRow("1-1", extraArgsBody, portBody)]),
     ),
-    panelSection("env", panelHead("环境", badgeLine("profiles-summary", "读取中…")), `${profilesBody}${bridgeBlock}`),
-    panelSection("integ", panelHead("集成", badgeLine("integrations-summary", "读取中…")), integrationsBody),
-    panelSection("traynet", panelHead("托盘与网络", badgeLine("network-summary", "沿用 npm 全局配置 · 跟随系统")), `${networkBody}${trayFields}`),
-    panelSection("about", panelHead("关于"), `${aboutKv}<div class="about-tail">${aboutTail}</div>`),
+    panelSection("env", mainCard([cell(profilesBody), cell(bridgeBody)])),
+    panelSection("integ", mainCard([cell(cliBlockBody), cell(cacheBlockBody)])),
+    panelSection(
+      "traynet",
+      mainCard([cellRow("1-2", trayFields, networkFieldsBody), cell(selfCheckBody)]),
+    ),
+    panelSection("about", mainCard([cell(aboutBody)])),
   ].join("\n");
 
-  const nav = `
-    <nav class="rail" id="nav" aria-label="设置分区">
-      ${PANELS.map(
-        (item) =>
-          `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span></button>`,
-      ).join("\n      ")}
-    </nav>
+  // 日志：折叠时只是工具条下方的一条窄箭头；展开时是从工具条往下盖住内容的浮层。
+  const logBar = `
+    <div class="log-bar">
+      <button id="log-toggle" class="log-toggle" type="button" aria-expanded="false" aria-controls="log-panel" title="展开日志" aria-label="展开日志">${ICON_CHEVRON_DOWN}</button>
+    </div>
+  `;
+  const logOverlay = `
+    <div id="log-scrim" class="log-scrim hidden"></div>
+    <section id="log-panel" class="log-panel hidden" aria-hidden="true" aria-label="日志">
+      <header class="log-head">
+        <button id="btn-clear-log" class="log-action" type="button">清空日志</button>
+        <button id="btn-copy-log" class="log-action" type="button">复制日志</button>
+      </header>
+      <pre id="log" class="log-body">（暂无输出）</pre>
+      <div class="log-foot">
+        <button id="log-collapse" class="log-toggle" type="button" title="收起日志" aria-label="收起日志">${ICON_CHEVRON_UP}</button>
+      </div>
+    </section>
   `;
 
-  return `${titlebar}
-  <section class="card top-card">
-    ${headLine}
-    ${statusErrorBlock}
-    <div class="tool-row">
+  return `${winControls}
+  <div class="shell">
+    ${sidebar}
+    <main class="content">
+      ${toolbar}
+      ${statusErrorBlock}
       ${loginNoteBlock}
-      ${sessionActionsRow}
-    </div>
-  </section>
-  <section class="card main-card">
-    <div class="card-body">
-      ${nav}
-      <div class="panels">${panels}</div>
-    </div>
-    <p class="foot">关闭窗口 = 轻量模式：界面内存释放，DSH 与托盘常驻。</p>
-  </section>`;
+      <div class="content-main">
+        ${logBar}
+        <div class="page" id="page">${panels}</div>
+        ${logOverlay}
+      </div>
+    </main>
+  </div>`;
 }
 
 async function main(): Promise<void> {
@@ -1312,9 +1362,20 @@ async function main(): Promise<void> {
     const loginText = $<HTMLElement>("login-text");
     const loginInfo = $<HTMLElement>("login-info");
     const loginNote = $<HTMLParagraphElement>("login-note");
-    const btnOpenApp = $<HTMLButtonElement>("btn-open-app");
-    const btnOpenBrowser = $<HTMLButtonElement>("btn-open-browser");
-    const actionsOpen = $<HTMLElement>("actions-open");
+    // 日志浮层：一条窄箭头开关 + 一个盖住内容的浮层（右上角清空 / 复制，右下角收起）。
+    const logBarToggle = $<HTMLButtonElement>("log-toggle");
+    const logPanel = $<HTMLElement>("log-panel");
+    const logScrim = $<HTMLElement>("log-scrim");
+    const logCollapse = $<HTMLButtonElement>("log-collapse");
+    const btnClearLog = $<HTMLButtonElement>("btn-clear-log");
+    // 打开方式：主按钮 + 右侧小三角的两段式（选完回填，再点主按钮才执行）。
+    const btnOpen = $<HTMLButtonElement>("btn-open");
+    const btnOpenMore = $<HTMLButtonElement>("btn-open-more");
+    const openMenu = $<HTMLElement>("open-menu");
+    const openIco = $<HTMLElement>("open-ico");
+    const openText = $<HTMLElement>("open-text");
+    const linkSite = $<HTMLButtonElement>("link-site");
+    const linkRepo = $<HTMLButtonElement>("link-repo");
     const trayPicker = new Picker("tray-picker", () => void persistConfigQuiet());
     trayPicker.setChoices([
       { value: "launcher", label: "启动界面（默认）" },
@@ -1541,7 +1602,7 @@ async function main(): Promise<void> {
         void loadRegistry();
       }
     });
-    // 标题栏那颗浅/深切换：图标画的是「点下去会变成什么」，切换只改 <html data-mode>，
+    // 左栏底部那颗浅/深切换：图标画的是「点下去会变成什么」，切换只改 <html data-mode>，
     // 界面不重建，正在填的字段与滚动位置都保住。
     const modeBtn = $<HTMLButtonElement>("mode-btn");
     const renderModeButton = (): void => {
@@ -1791,26 +1852,22 @@ async function main(): Promise<void> {
     const modesSummary = $<HTMLSpanElement>("modes-summary");
     const bridgeSummary = $<HTMLSpanElement>("bridge-summary");
     const btnCopyLog = $<HTMLButtonElement>("btn-copy-log");
-    const btnCopyBridgeOutput = $<HTMLButtonElement>("btn-copy-bridge-output");
     const bridgeTarget = $<HTMLElement>("bridge-target");
     const bridgeStatus = $<HTMLElement>("bridge-status");
     const bridgeBackup = $<HTMLElement>("bridge-backup");
     const bridgeError = $<HTMLParagraphElement>("bridge-error");
     const bridgeNote = $<HTMLParagraphElement>("bridge-note");
-    const bridgeOutput = $<HTMLPreElement>("bridge-output");
     const btnBridgeInstall = $<HTMLButtonElement>("btn-bridge-install");
     const btnBridgeUninstall = $<HTMLButtonElement>("btn-bridge-uninstall");
     const btnBridgeRestore = $<HTMLButtonElement>("btn-bridge-restore");
     const btnBridgeBackups = $<HTMLButtonElement>("btn-bridge-backups");
     const aboutDsh = $<HTMLElement>("about-dsh");
     const aboutNote = $<HTMLParagraphElement>("about-note");
-    // 自绘标题栏的三颗窗口按钮。窗口一律无边框，这里理论上必然存在；
+    // 浮在窗口右上角的三颗窗口按钮。窗口一律无边框，这里理论上必然存在；
     // 仍用可空取法，是因为这段代码在普通浏览器预览里也要能跑通。
     const btnWinMin = root.querySelector<HTMLButtonElement>("#win-min");
     const btnWinMax = root.querySelector<HTMLButtonElement>("#win-max");
     const btnWinClose = root.querySelector<HTMLButtonElement>("#win-close");
-    const btnAboutRepo = $<HTMLButtonElement>("btn-about-repo");
-    const btnAboutSite = $<HTMLButtonElement>("btn-about-site");
     const btnAboutConfig = $<HTMLButtonElement>("btn-about-config");
     const btnAboutLogs = $<HTMLButtonElement>("btn-about-logs");
 
@@ -1851,6 +1908,7 @@ async function main(): Promise<void> {
     const PANEL_KEY = "dsharbor.ui.panel";
     const navButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-panel-btn]"));
     const panelSections = Array.from(root.querySelectorAll<HTMLElement>("[data-panel]"));
+    /** 内容区整体滚动（工具栏与左栏固定），滚动指示条挂在它的外层。 */
 
     function readStoredPanel(): PanelKey {
       try {
@@ -1866,17 +1924,20 @@ async function main(): Promise<void> {
 
     let currentPanel: PanelKey = readStoredPanel();
 
-    /** 切换右侧面板：同步 aria-current 与可见性，并把面板滚回顶部（换内容时留着旧滚动位置很莫名）。 */
+    /** 切换分区：同步 aria-current 与可见性，并把主卡滚回顶部（换内容时留着旧滚动位置很莫名）。
+        滚动容器是当前分区那张主卡（`.block.main-card`），不是 #page。 */
     const selectPanel = (key: PanelKey, persist: boolean): void => {
       currentPanel = key;
       for (const button of navButtons) {
         button.setAttribute("aria-current", button.dataset.panelBtn === key ? "true" : "false");
       }
       for (const panel of panelSections) {
-        const hidden = panel.dataset.panel !== key;
-        panel.classList.toggle("hidden", hidden);
-        // 切回来的面板从头看起，别停在上一轮的位置（指示条也随之重算）。
-        if (!hidden) panel.scrollTop = 0;
+        const showing = panel.dataset.panel === key;
+        panel.classList.toggle("hidden", !showing);
+        // 换内容时留着旧滚动位置很莫名：主卡（唯一的滚动容器）回到顶部。
+        if (showing) {
+          for (const host of panel.querySelectorAll<HTMLElement>(".block.main-card")) host.scrollTop = 0;
+        }
       }
       updateScrollThumbHook();
       if (persist) {
@@ -1895,56 +1956,127 @@ async function main(): Promise<void> {
     }
     selectPanel(currentPanel, false);
 
-    // 「最近输出」「操作输出」折叠块：对应操作产生终端输出时自动展开（维护者要求）。
-    const logDetails = $<HTMLElement>("log").closest("details");
-    const bridgeOutputDetails = $<HTMLElement>("bridge-output").closest("details");
+    // ---- 日志：一条窄箭头开关 + 盖住内容的浮层 ---------------------------------
+    // 折叠状态与「用户本次会话里手动收过」都记在 localStorage：主动操作触发的自动展开
+    // 不能抢过用户的收缩动作（收过一次就不再抢开）。
+    const LOG_OPEN_KEY = "dsharbor.ui.logOpen";
+
+    function readLogOpen(): boolean {
+      try {
+        return window.localStorage.getItem(LOG_OPEN_KEY) === "1";
+      } catch {
+        return false;
+      }
+    }
+
+    let logOpen = readLogOpen();
+    /** 用户手动收过一次：本次会话里不再被主动操作拉起来。 */
+    let logSuppressed = false;
+    /** 浮层打开、内容刷新后要不要把滚动条拉到底（用户往上翻时不抢）。 */
+    let logFollow = true;
+
+    function paintLogOpen(): void {
+      logBarToggle.classList.toggle("is-open", logOpen);
+      logBarToggle.setAttribute("aria-expanded", logOpen ? "true" : "false");
+      const title = logOpen ? "收起日志" : "展开日志";
+      logBarToggle.title = title;
+      logBarToggle.setAttribute("aria-label", title);
+      logPanel.classList.toggle("hidden", !logOpen);
+      logScrim.classList.toggle("hidden", !logOpen);
+      logPanel.setAttribute("aria-hidden", logOpen ? "false" : "true");
+      if (logOpen) {
+        logFollow = true;
+        scrollLogToEnd();
+      }
+    }
+
+    function setLogOpen(open: boolean): void {
+      logOpen = open;
+      logSuppressed = !open;
+      paintLogOpen();
+      try {
+        window.localStorage.setItem(LOG_OPEN_KEY, open ? "1" : "0");
+      } catch {
+        // 存储被禁用时只影响下次启动的初始状态
+      }
+    }
+
+    /** 主动操作（启动 / 重启 / 桥接 / 环境 / 缓存）产生的输出：自动展开浮层，除非用户手动收过。 */
     const expandLog = (): void => {
-      if (logDetails) {
-        logDetails.open = true;
+      if (logSuppressed) return;
+      if (!logOpen) {
+        logOpen = true;
+        paintLogOpen();
       }
-    };
-    const expandBridgeOutput = (): void => {
-      if (bridgeOutputDetails) {
-        bridgeOutputDetails.open = true;
-      }
+      logFollow = true;
+      scrollLogToEnd();
     };
 
-    /** 日志块右侧的「复制」：先走剪贴板 API，不可用时退回「选中 + execCommand」。
-        命令行集成的「手动命令」「垫片内容」共用这一套。 */
+    function scrollLogToEnd(): void {
+      if (!logOpen) return;
+      window.requestAnimationFrame(() => {
+        logEl.scrollTop = logEl.scrollHeight;
+      });
+    }
+
+    logEl.addEventListener("scroll", () => {
+      const distance = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
+      logFollow = distance < 24;
+    });
+
+    logBarToggle.addEventListener("click", () => setLogOpen(!logOpen));
+    logCollapse.addEventListener("click", () => setLogOpen(false));
+    logScrim.addEventListener("click", () => setLogOpen(false));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && logOpen) setLogOpen(false);
+    });
+    paintLogOpen();
+
+    /** 日志浮层右上角的「清空日志」：只清界面这一份（后端的环形缓冲不动）。 */
+    btnClearLog.addEventListener("click", () => clearLog());
+
+    /** 写剪贴板：先试剪贴板 API，不可用时退回「选中 + execCommand」。返回是否成功。 */
+    async function writeText(text: string): Promise<boolean> {
+      try {
+        if (!navigator.clipboard?.writeText) {
+          throw new Error("剪贴板 API 不可用");
+        }
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // 兜底：临时建一个不可见的 textarea 选中复制（WebView2 支持 execCommand）。
+        const holder = document.createElement("textarea");
+        holder.value = text;
+        holder.setAttribute("readonly", "");
+        holder.style.position = "fixed";
+        holder.style.opacity = "0";
+        document.body.appendChild(holder);
+        holder.select();
+        let ok = false;
+        try {
+          ok = document.execCommand("copy");
+        } catch {
+          ok = false;
+        }
+        holder.remove();
+        return ok;
+      }
+    }
+
+    /** 按钮上的「复制」：复制某个元素里的文本，并在按钮上短暂回显结果。
+        日志面板的「复制日志」与命令行集成的「手动命令」「垫片内容」共用这一套。 */
     function copyLog(source: HTMLElement, button: HTMLButtonElement): void {
       void (async () => {
-        const text = source.textContent ?? "";
-        const flash = (label: string): void => {
-          button.textContent = label;
-          window.setTimeout(() => {
-            button.textContent = "复制";
-          }, 1500);
-        };
-        try {
-          if (!navigator.clipboard?.writeText) {
-            throw new Error("剪贴板 API 不可用");
-          }
-          await navigator.clipboard.writeText(text);
-          flash("已复制");
-          return;
-        } catch {
-          // 兜底：临时选中文本交给浏览器复制（WebView2 支持 execCommand）。
-          const selection = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(source);
-          selection?.removeAllRanges();
-          selection?.addRange(range);
-          const ok = document.execCommand("copy");
-          selection?.removeAllRanges();
-          flash(ok ? "已复制" : "复制失败");
-        }
+        const ok = await writeText(source.textContent ?? "");
+        button.textContent = ok ? "已复制" : "复制失败";
+        window.setTimeout(() => {
+          button.textContent = "复制";
+        }, 1500);
       })();
     }
 
-    // 复制按钮悬浮在日志区右上角（不在 <summary> 里），点它不会折叠日志块。
+    btnCopyLog.addEventListener("click", () => copyLog(logEl, btnCopyLog));
     for (const [button, source] of [
-      [btnCopyLog, logEl],
-      [btnCopyBridgeOutput, bridgeOutput],
       [btnCliCopy, cliManual],
       [btnCliCopyShim, cliShimText],
     ] as const) {
@@ -2057,7 +2189,7 @@ async function main(): Promise<void> {
           trayClick: trayPicker.value as TrayClick,
           lightDelaySecs: Number(lightDelayPicker.value),
           // 主题镜像一致即可；写进 save_shell_config 会被整份串行化，若不一致也顺手对齐
-          // （正常路径由标题栏的浅/深切换单独走 save_ui_theme）。
+          // （正常路径由左栏底部的浅/深切换单独走 save_ui_theme）。
           uiTheme: theme,
           // 三张新卡的六个字段本版没有界面控件，但必须原样带上：整份回写会把漏掉的键
           // 抹回默认值。值来自后端读回（缺字段时为 normalizePrefs 补的默认）。
@@ -2083,7 +2215,7 @@ async function main(): Promise<void> {
       $("npx-fields").classList.toggle("hidden", currentMode() !== "npx");
       $("binary-fields").classList.toggle("hidden", currentMode() !== "binary");
       $("custom-fields").classList.toggle("hidden", currentMode() !== "custom");
-      // 面板标题旁的徽章显示当前启动方式。
+      // 「启动方式」卡片顶部的徽章显示当前启动方式。
       const mode = currentMode();
       modesSummary.textContent = MODE_LABELS[mode] ?? "启动方式";
       // 桥接插件与端口提示都跟随运行环境（Windows 宿主 / WSL 发行版），换模式就刷新。
@@ -2208,7 +2340,7 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 输出块（「最近输出」「操作输出」）的文本更新。
+     * 日志面板的文本更新。
      *
      * 状态每秒轮询一次，每次都把同一个字符串重新赋给 `textContent`；换掉文本节点本身就会清掉选区，
      * 表现就是「拖选几段、一松手就没了」。所以：文本没变就不动 DOM，用户正在这块里框选（选区未折叠）
@@ -2230,16 +2362,84 @@ async function main(): Promise<void> {
       return [selection.anchorNode, selection.focusNode].some((node) => node !== null && el.contains(node));
     }
 
-    /**
-     * 操作输出的结果文案（安装 / 卸载 / 回滚 / 打开备份目录的反馈）必须落地，不能被选区挡住，
-     * 所以写之前先放下用户在这块里的选区；每秒轮询的「最近输出」走 setOutputText，不动选区。
-     */
-    function setBridgeOutput(text: string): void {
-      const selection = window.getSelection();
-      if (selection && hasSelectionWithin(bridgeOutput)) {
-        selection.removeAllRanges();
+    // ---- 统一日志 ------------------------------------------------------------------
+    // 界面里只留一个日志：后端 DSH 进程的输出尾部 + 桥接 / 环境 / 缓存这些主动操作的结果都写进
+    // 这一份，不随切分区丢、不自动清，只有点「清空日志」或完全退出程序才清。
+    // 后端的环形缓冲留 1200 行、状态查询每次给最后 300 行（见 launcher.rs），这里只负责
+    // 算出「这一轮新长出来的那几行」，不然每秒轮询会把同一段尾巴反复追加一遍。
+    let logText = "";
+    /** 上一轮拿到的日志尾部：用来做增量比对，只追加新增的那几行。 */
+    let lastLogTail: string[] | null = null;
+    /** 上一次往日志里写东西的时间：间隔太长就补一条 `--- 时间 ---` 分段线。 */
+    let lastLogAt = 0;
+    const LOG_GAP_MS = 10 * 60 * 1000;
+
+    function logStamp(): string {
+      const now = new Date();
+      const pad = (value: number): string => String(value).padStart(2, "0");
+      return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    }
+
+    /** 往日志末尾追加一批行；`stamp` 为真时先插一条 `--- 时间 ---` 分段线。 */
+    function appendLog(lines: string[], stamp: boolean): void {
+      const body = lines.join("\n").replace(/\s+$/, "");
+      if (body === "") return;
+      const needStamp = stamp || lastLogAt === 0 || Date.now() - lastLogAt > LOG_GAP_MS;
+      const chunk = needStamp ? `--- ${logStamp()} ---\n${body}` : body;
+      // 同一批次的连续追加只用单换行接上；换批次（带分段线）时前面空一行。
+      const separator = logText === "" ? "" : needStamp ? "\n\n" : "\n";
+      logText = `${logText.replace(/\s+$/, "")}${separator}${chunk}`;
+      lastLogAt = Date.now();
+      setOutputText(logEl, logText);
+      if (logFollow) scrollLogToEnd();
+    }
+
+    /** 主动操作的结果（桥接 / 环境 / 缓存）：写进统一日志，并拉起浮层（用户手动收过就只写不拉）。 */
+    function logAction(text: string): void {
+      expandLog();
+      appendLog([text], true);
+    }
+
+    /** 后端日志尾部：算出新增的那几行（上一轮的尾巴可能已被环形缓冲挤掉前半段，所以两头都试）。 */
+    function syncLogFromTail(tail: string[]): void {
+      const previous = lastLogTail;
+      lastLogTail = [...tail];
+      if (previous === null) {
+        appendLog(tail, false);
+        return;
       }
-      bridgeOutput.textContent = text;
+      if (tail.length === 0) return;
+      // 正常情况：上一轮尾巴是这一轮的前缀，新的就是尾部多出来的那几行。
+      const sameHead = previous.length <= tail.length && previous.every((line, index) => line === tail[index]);
+      if (sameHead) {
+        if (tail.length > previous.length) appendLog(tail.slice(previous.length), false);
+        return;
+      }
+      // 缓冲已满、上一轮的尾巴被挤掉前半段：找最长的重叠部分拼上去。
+      const limit = Math.min(previous.length, tail.length);
+      for (let overlap = limit; overlap > 0; overlap -= 1) {
+        const tailStart = tail.length - overlap;
+        let same = true;
+        for (let i = 0; i < overlap; i += 1) {
+          if (previous[previous.length - overlap + i] !== tail[tailStart + i]) {
+            same = false;
+            break;
+          }
+        }
+        if (same) {
+          if (overlap < tail.length) appendLog(tail.slice(overlap), false);
+          return;
+        }
+      }
+      // 完全接不上（DSH 重启、换了环境）：整段当成新的一批。
+      appendLog(tail, true);
+    }
+
+    function clearLog(): void {
+      logText = "";
+      lastLogTail = null;
+      lastLogAt = 0;
+      logEl.textContent = "（暂无输出）";
     }
 
     /** 最近一次渲染的状态：「启动 / 停止」合并成一个按钮，靠它决定该发哪条命令。 */
@@ -2289,7 +2489,7 @@ async function main(): Promise<void> {
         errorEl.textContent = "";
         errorEl.classList.add("hidden");
       }
-      setOutputText(logEl, status.logTail.length > 0 ? status.logTail.join("\n") : "（暂无输出）");
+      syncLogFromTail(status.logTail);
       const running = status.state === "running";
       // 「启动 DSH」与「停止」是同一个按钮（维护者要求）：按状态换文案与语义。
       // 后端只在子进程还活着时给 Running，Failed 必然是进程已退出，所以按 running 二分就够。
@@ -2298,8 +2498,9 @@ async function main(): Promise<void> {
       // 「重启 DSH」只在运行中出现（维护者要求）：启动前整个界面只有一个「启动 DSH」，
       // 起来之后才同时给出「停止 / 重启 DSH」。
       btnRestart.classList.toggle("hidden", !running);
-      // 「应用内打开 / 浏览器打开」整组也只在运行后出现（维护者要求）：启动前按钮行整行就是「启动 DSH」。
-      actionsOpen.classList.toggle("hidden", !running);
+      // 「打开方式」：启动前后都在，只在登录链接就绪后可点（没链接时点开也没用）。
+      btnOpen.disabled = !status.loginReady;
+      btnOpenMore.disabled = !status.loginReady;
 
       // 登录链接徽章：桥接就绪 > 日志兜底就绪 > 等待中 > 获取失败。
       // 正常状态的细节说明放在徽章的感叹号气泡里（维护者要求），失败信息仍留在行内便于直接排查。
@@ -2325,8 +2526,6 @@ async function main(): Promise<void> {
         setLoginTip("登录链接就绪后即可打开 DSH 界面。");
         loginNote.classList.add("hidden");
       }
-      btnOpenApp.disabled = !status.loginReady;
-      btnOpenBrowser.disabled = !status.loginReady;
       // 「重启 DSH」的持续转动：拿这次状态过一遍收场条件（每秒轮询都会走到这里）。
       updateRestartSpin(status, starting);
       // 日志会不断长个儿，顺带把滚动指示条的几何刷新一下（这里只算不显示）。
@@ -2356,7 +2555,7 @@ async function main(): Promise<void> {
         await refresh();
         return;
       }
-      // 启动/重启 DSH 都会产生终端输出：自动展开「最近输出」（维护者要求）。
+      // 启动/重启 DSH 都会产生终端输出：自动展开日志浮层（维护者要求）。
       expandLog();
       try {
         await invoke(command, { config: collectConfig() });
@@ -2399,12 +2598,90 @@ async function main(): Promise<void> {
       await refresh();
     }
 
-    // 「应用内打开」：每次点击都重新取当前登录链接（token 是一次性铸造的）。
-    btnOpenApp.addEventListener("click", () => {
+    // ---- 打开方式：主按钮 + 右侧小三角的两段式 ----------------------------------
+    // 点小三角展开菜单 → 选一种方式 → 文字与图标回填到主按钮 → 再点主按钮才执行。
+    // 选择记在 localStorage：下次启动沿用上次的方式（默认应用内打开）。
+    const OPEN_MODE_KEY = "dsharbor.ui.openMode";
+    type OpenMode = "app" | "browser" | "copy";
+    const OPEN_MODES: ReadonlyArray<{ key: OpenMode; label: string; icon: string }> = [
+      { key: "app", label: "应用内打开", icon: ICON_OPEN_APP },
+      { key: "browser", label: "浏览器打开", icon: ICON_OPEN_BROWSER },
+      { key: "copy", label: "复制登录链接", icon: ICON_COPY },
+    ];
+
+    function readOpenMode(): OpenMode {
+      try {
+        const raw = window.localStorage.getItem(OPEN_MODE_KEY);
+        return raw === "browser" || raw === "copy" ? raw : "app";
+      } catch {
+        return "app";
+      }
+    }
+
+    let openMode: OpenMode = readOpenMode();
+
+    /** 主按钮回填当前方式；菜单里的勾选也跟着走。 */
+    function paintOpenMode(): void {
+      const mode = OPEN_MODES.find((item) => item.key === openMode) ?? OPEN_MODES[0];
+      openIco.innerHTML = mode.icon;
+      openText.textContent = mode.label;
+      for (const item of Array.from(openMenu.querySelectorAll<HTMLButtonElement>("[data-open-mode]"))) {
+        item.setAttribute("aria-checked", item.dataset.openMode === openMode ? "true" : "false");
+      }
+    }
+
+    function setOpenMenuOpen(open: boolean): void {
+      openMenu.classList.toggle("hidden", !open);
+      btnOpenMore.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    btnOpenMore.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setOpenMenuOpen(openMenu.classList.contains("hidden"));
+    });
+    document.addEventListener("click", () => setOpenMenuOpen(false));
+    openMenu.addEventListener("click", (event) => event.stopPropagation());
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setOpenMenuOpen(false);
+    });
+
+    for (const item of Array.from(openMenu.querySelectorAll<HTMLButtonElement>("[data-open-mode]"))) {
+      item.addEventListener("click", () => {
+        openMode = item.dataset.openMode as OpenMode;
+        try {
+          window.localStorage.setItem(OPEN_MODE_KEY, openMode);
+        } catch {
+          // 存储被禁用时只在本次会话生效
+        }
+        paintOpenMode();
+        setOpenMenuOpen(false);
+      });
+    }
+
+    /** 复制登录链接：链接每次都重新取（token 是一次性铸造的），成功后按钮上短暂回显。 */
+    async function copyLoginUrl(): Promise<void> {
+      const url = await invoke<string>("dsh_login_url");
+      const ok = await writeText(url);
+      if (!ok) throw new Error("复制失败：剪贴板不可用");
+      const label = openText.textContent;
+      openText.textContent = "已复制链接";
+      window.setTimeout(() => {
+        if (openText.textContent === "已复制链接") openText.textContent = label;
+      }, 1500);
+    }
+
+    // 主按钮：按当前方式真的去打开（应用内 / 浏览器 / 复制）。
+    btnOpen.addEventListener("click", () => {
       void (async () => {
         localError = null;
         try {
-          await invoke("open_dsh_window");
+          if (openMode === "app") {
+            await invoke("open_dsh_window");
+          } else if (openMode === "browser") {
+            await invoke("open_dsh_in_browser");
+          } else {
+            await copyLoginUrl();
+          }
         } catch (err) {
           localError = String(err);
           await refresh();
@@ -2412,18 +2689,11 @@ async function main(): Promise<void> {
       })();
     });
 
-    // 「浏览器打开」：显式把登录链接交给系统默认浏览器（壳的默认流程不弹浏览器）。
-    btnOpenBrowser.addEventListener("click", () => {
-      void (async () => {
-        localError = null;
-        try {
-          await invoke("open_dsh_in_browser");
-        } catch (err) {
-          localError = String(err);
-          await refresh();
-        }
-      })();
-    });
+    paintOpenMode();
+
+    // 左栏底部的官网 / 仓库链接（「关于」里不再重复这两项）。
+    linkSite.addEventListener("click", () => void openExternal("site"));
+    linkRepo.addEventListener("click", () => void openExternal("repo"));
 
     function updateBridgeButtons(): void {
       btnBridgeInstall.disabled = bridgeBusy;
@@ -2437,7 +2707,7 @@ async function main(): Promise<void> {
         lastBridgeState = state;
         bridgeTarget.textContent = state.target;
         bridgeStatus.textContent = state.installed ? "已安装（优先走桥接通道）" : "未安装（走日志兜底）";
-        // 桥接小节标题旁的徽章显示安装状态。
+        // 「桥接插件」卡片顶部的徽章显示安装状态。
         bridgeSummary.className = `badge ${state.installed ? "badge-running" : "badge-stopped"} panel-badge`;
         bridgeSummary.textContent = state.installed ? "已安装" : "未安装";
         bridgeBackup.textContent = state.latestBackup
@@ -2455,13 +2725,12 @@ async function main(): Promise<void> {
         bridgeBusy = true;
         updateBridgeButtons();
         bridgeError.classList.add("hidden");
-        // 桥接操作会产生 pnpm/命令的终端输出：自动切到「环境」面板并展开「最近输出」（维护者要求）。
+        // 桥接操作会产生 pnpm/命令的终端输出：自动切到「环境」面板并拉起日志浮层（维护者要求）。
         selectPanel("env", true);
-        expandBridgeOutput();
-        setBridgeOutput("执行中…（首次可能较慢，pnpm 需要解析依赖）");
+        logAction("桥接插件：执行中…（首次可能较慢，pnpm 需要解析依赖）");
         try {
           const outcome = await invoke<BridgeOutcome>(name, { config: collectConfig() });
-          setBridgeOutput(outcome.message);
+          logAction(outcome.message);
           if (!outcome.ok) {
             bridgeError.textContent = "命令返回非成功状态，请看下方输出与备份目录。";
             bridgeError.classList.remove("hidden");
@@ -2490,14 +2759,13 @@ async function main(): Promise<void> {
         bridgeBusy = true;
         updateBridgeButtons();
         try {
-          // 恢复同样产生终端输出：自动切到「环境」面板并展开「最近输出」。
+          // 恢复同样产生终端输出：自动切到「环境」面板并拉起日志浮层。
           selectPanel("env", true);
-          expandBridgeOutput();
           const message = await invoke<string>("bridge_restore", {
             config: collectConfig(),
             backupDir: backup,
           });
-          setBridgeOutput(message);
+          logAction(message);
           bridgeError.classList.add("hidden");
         } catch (err) {
           bridgeError.textContent = String(err);
@@ -2688,14 +2956,11 @@ async function main(): Promise<void> {
     // 界面只负责：对选中的那个环境发命令、把备份列表列出来、把说明原文贴出来。
     const profilePatchPanel = $<HTMLElement>("profile-patch");
     const patchBackupList = $<HTMLElement>("patch-backup-list");
-    const manageOutput = $<HTMLPreElement>("manage-output");
-    const manageOutputBox = $<HTMLDetailsElement>("manage-output-box");
     const btnPatchBackup = $<HTMLButtonElement>("btn-patch-backup");
     const patchRestoreConfirm = $<HTMLElement>("patch-restore-confirm");
     const patchRestoreConfirmText = $<HTMLParagraphElement>("patch-restore-confirm-text");
     const btnPatchConfirmYes = $<HTMLButtonElement>("btn-patch-confirm-yes");
     const btnPatchConfirmNo = $<HTMLButtonElement>("btn-patch-confirm-no");
-    const btnCopyManageOutput = $<HTMLButtonElement>("btn-copy-manage-output");
 
     /** 与 Rust 侧 `patch_layer::PatchBackup` 对应（最旧在前）。 */
     interface PatchBackup {
@@ -2763,15 +3028,6 @@ async function main(): Promise<void> {
       const date = new Date(stamp * 1000);
       const pad = (value: number): string => String(value).padStart(2, "0");
       return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-    }
-
-    /** 写管理面板的输出（带路径的说明原文，含重装依赖的输出尾部），并展开输出块——
-     *  失败原因必须一眼看到，不能埋在折叠块里。 */
-    function setManageOutput(text: string, open: boolean): void {
-      manageOutput.textContent = text;
-      if (open) {
-        manageOutputBox.open = true;
-      }
     }
 
     /** 备份清单：最新的在最上面，每行能直接点「还原」；路径原文照抄，方便自己去翻。 */
@@ -2851,10 +3107,10 @@ async function main(): Promise<void> {
         const outcome = await invoke<PatchOutcome>("patch_backup", { config: collectConfig(), name });
         patchBackups = outcome.backups;
         patchLoadedFor = name;
-        setManageOutput(outcome.message, true);
+        logAction(outcome.message);
       } catch (err) {
         setManageError(String(err));
-        setManageOutput(`备份补丁层失败：${String(err)}`, true);
+        logAction(`备份补丁层失败：${String(err)}`);
       } finally {
         patchBusy = false;
         renderManageUI();
@@ -2885,10 +3141,10 @@ async function main(): Promise<void> {
         });
         patchBackups = outcome.backups;
         patchLoadedFor = name;
-        setManageOutput(outcome.message, true);
+        logAction(outcome.message);
       } catch (err) {
         setManageError(String(err));
-        setManageOutput(`还原补丁层失败：${String(err)}`, true);
+        logAction(`还原补丁层失败：${String(err)}`);
       } finally {
         patchBusy = false;
         renderManageUI();
@@ -3004,12 +3260,12 @@ async function main(): Promise<void> {
             ? `已打开「${name}」，重启 DSH 后生效。`
             : `已关闭「${name}」，重启 DSH 后生效；重新打开不需要重新下载。`,
         );
-        setManageOutput(outcome.message, true);
+        logAction(outcome.message);
         // 开关前刚自动备份过，备份清单跟着刷新一次，免得用户还要再点一下才能看到。
         patchLoadedFor = null;
       } catch (err) {
         setManageError(String(err));
-        setManageOutput(`切换插件开关失败：${String(err)}`, true);
+        logAction(`切换插件开关失败：${String(err)}`);
         // 失败时那个复选框已经跟着鼠标点过去了，重拉一次清单把它掰回真实状态。
         pluginLoadedFor = null;
       } finally {
@@ -3162,12 +3418,12 @@ async function main(): Promise<void> {
         if (options.output) {
           // 重装依赖的说明里有命令原文、退出码与输出尾部，整段贴进输出块；
           // 面板上只留一句结论，否则一行 hint 会被几百行输出撞长。
-          setManageOutput(outcome.message, true);
+          logAction(outcome.message);
           if (outcome.ok) {
             setManageNote(`环境「${outcome.name}」的依赖已就绪。`);
           } else {
             setManageError(
-              `重装依赖没有完成（环境「${outcome.name}」）：命令原文、退出码与输出尾部都在下面的「操作输出」里。`,
+              `重装依赖没有完成（环境「${outcome.name}」）：命令原文、退出码与输出尾部都在日志浮层里。`,
             );
           }
         } else {
@@ -3311,12 +3567,6 @@ async function main(): Promise<void> {
     btnPatchConfirmNo.addEventListener("click", () => {
       patchPendingRestore = null;
       renderManageUI();
-    });
-
-    btnCopyManageOutput.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      copyLog(manageOutput, btnCopyManageOutput);
     });
 
     // 环境名输入框回车 = 按当前选中的动作提交不了，只做一件事：
@@ -3656,13 +3906,11 @@ async function main(): Promise<void> {
       })();
     }
 
-    btnAboutRepo.addEventListener("click", () => openExternal("repo"));
-    btnAboutSite.addEventListener("click", () => openExternal("site"));
     btnAboutConfig.addEventListener("click", () => openShellDir("config"));
     btnAboutLogs.addEventListener("click", () => openShellDir("logs"));
 
 
-    // 自绘标题栏的窗口按钮。拖拽与双击最大化由 data-tauri-drag-region 交给系统处理，这里只发最小化 /
+    // 窗口右上角那三颗按钮。拖拽与双击最大化由 data-tauri-drag-region 交给系统处理，这里只发最小化 /
     // 最大化切换 / 关闭；关窗命令和原生关闭按钮走同一条路径，最终由 Rust 侧的
     // CloseRequested 拦下来转成轻量模式。
     if (btnWinMin && btnWinMax && btnWinClose) {
@@ -3783,50 +4031,60 @@ async function main(): Promise<void> {
     });
   }
 
-  // 自绘滚动指示条：内容区（.panel）的原生滚动条已在 style.css 里藏起来，滚动时它右边缘
-  // 浮出一条细胶囊，停手约 1 秒后淡出。只做视觉，不拦内容事件（轨道 5px 窄、只在身上收指针），
-  // 滚轮 / 键盘 / 触控板照旧。
+  // 自绘滚动指示条：主卡（`.block.main-card`）的原生滚动条已在 style.css 里藏起来，滚动时它
+  // 右边缘浮出一条细胶囊，停手约 1 秒后淡出。只做视觉，不拦内容事件（轨道 5px 窄、
+  // 只在身上收指针），滚轮 / 键盘 / 触控板照旧。
   //
-  // 挂的是「当前可见的那个 .panel」而不是视口：界面改版后整页定高、只有面板内部滚
-  // （见 style.css 的 body / #app / .main-card 注释），视口永远不可滚，绑在视口上就等于没有。
+  // 挂的是「当前分区的主卡」而不是视口：界面定高，只有主卡内部滚、下方小卡固定可见，
+  // 视口永远不可滚，绑在视口上就等于没有。
   const scrollTrack = document.createElement("div");
   scrollTrack.className = "scroll-track";
   const scrollThumb = document.createElement("div");
   scrollThumb.className = "scroll-thumb";
   scrollTrack.appendChild(scrollThumb);
 
-  /** 当前可见的面板：五个面板里只有一个不带 .hidden。 */
+  /**
+   * 滚动容器是当前分区那张主卡（`.block.main-card`）：只有它内部滚，下方并排的小卡
+   * 固定可见（2026-10-21 维护者定稿）。没有小卡的分区主卡同样吃掉整个高度。
+   */
   function activePanel(): HTMLElement | null {
-    return root.querySelector<HTMLElement>(".panel:not(.hidden)");
+    return root.querySelector<HTMLElement>(".panel:not(.hidden) .block.main-card");
   }
 
   let scrollHost: HTMLElement | null = null;
   /**
-   * 把指示条挂到面板外层（`.panels`）而不是面板本身：面板是滚动容器，
-   * 绝对定位的子元素会跟着内容一起滚走，挂在外层才定得住。
+   * 指示条挂在 `.content-main` 上：主卡自己是滚动容器，绝对定位的子元素会跟着
+   * 内容一起滚走，挂在外层才定得住（要贴住主卡右侧，见 style.css 的 .scroll-track）。
    */
   function mountScrollTrack(): void {
-    const holder = root.querySelector<HTMLElement>(".panels");
+    const holder = root.querySelector<HTMLElement>(".content-main");
     if (holder && scrollTrack.parentElement !== holder) holder.appendChild(scrollTrack);
   }
 
   function syncScrollHost(): void {
     mountScrollTrack();
-    const panel = activePanel();
-    if (!panel || panel === scrollHost) return;
-    scrollHost = panel;
+    scrollHost = activePanel();
     updateScrollThumb();
   }
 
   const updateScrollThumb = (): void => {
     mountScrollTrack();
-    // 记着的面板可能刚被切走（已加 .hidden）：这时改跟当前可见的那个。
-    const host = scrollHost && !scrollHost.classList.contains("hidden") ? scrollHost : activePanel();
+    // 以当前可见分区的主卡为准：切分区时记着的旧主卡已经随分区隐藏了。
+    const host = activePanel() ?? scrollHost;
     if (!host) {
       scrollThumb.style.height = "0px";
       return;
     }
     scrollHost = host;
+    // 轨道贴住主卡的上下边界（内容区里除了主卡还有小卡与日志条，轨道理应只覆盖主卡）。
+    const holder = scrollTrack.parentElement;
+    if (holder) {
+      const hostRect = host.getBoundingClientRect();
+      const holderRect = holder.getBoundingClientRect();
+      scrollTrack.style.top = `${Math.round(hostRect.top - holderRect.top)}px`;
+      scrollTrack.style.bottom = "auto";
+      scrollTrack.style.height = `${Math.round(hostRect.height)}px`;
+    }
     const viewport = host.clientHeight;
     const total = host.scrollHeight;
     const trackHeight = scrollTrack.clientHeight;
@@ -3853,7 +4111,8 @@ async function main(): Promise<void> {
     "scroll",
     (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement) || !target.classList.contains("panel")) return;
+      if (!(target instanceof HTMLElement) || !target.classList.contains("block")) return;
+      if (!target.classList.contains("split")) return;
       if (target !== scrollHost) syncScrollHost();
       updateScrollThumb();
       // 拖动期间不跑这个计时器，否则按住不动 0.9 秒胶囊会在手里淡掉
