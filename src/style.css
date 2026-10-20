@@ -128,12 +128,12 @@ body {
 .titlebar-brand {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
 .titlebar-name {
-  font-size: 15px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--fg);
@@ -150,8 +150,8 @@ body {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
+  gap: 5px;
+  padding: 5px;
   border-radius: 9px;
 }
 
@@ -172,8 +172,8 @@ body {
 
 /* 图标是内联 SVG：描边跟着按钮的 color 走，悬停换底色时不用再动图标。 */
 .win-btn svg {
-  width: 15px;
-  height: 15px;
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.5;
@@ -198,19 +198,19 @@ body {
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 16px;
-  padding: 4px 20px 20px;
+  gap: 20px;
+  padding: 20px 35px 32px;
 }
 
 /* 左栏：一张通高卡片。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。 */
 .sidebar {
   /* 宽度与内边距按草图比例：卡片 238 宽、导航胶囊 200 宽（左右各让 19）。 */
-  width: 236px;
+  width: 220px;
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 16px 18px 12px;
+  padding: 16px 18px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
   background: var(--card);
@@ -248,7 +248,7 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   padding-top: 4px;
   overflow-y: auto;
 }
@@ -635,7 +635,6 @@ body {
   display: flex;
   justify-content: center;
   height: 12px;
-  margin-bottom: 10px;
 }
 
 .log-toggle {
@@ -691,7 +690,7 @@ body {
   top: 0;
   z-index: 41;
   width: min(82%, 820px);
-  height: 56%;
+  height: 60%;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -740,7 +739,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: flex-end;
-  height: 18px;
+  height: 12px;
 }
 
 .log-foot .log-toggle {
