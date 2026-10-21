@@ -1,0 +1,284 @@
+/* ---- 交互细节（维护者要求：下拉框与滚动条美化、展开开关更明显） ---- */
+
+/* ---- 自绘下拉框（维护者要求：选择弹层也要圆角，原生弹层由系统绘制、无法加圆角） ---- */
+
+.picker {
+  position: relative;
+  /* 自绘下拉框默认 260px；功能块里由 .block .picker 拉宽到整行（见 .block 的适配段）。
+     弹层跟这个宽度（.picker-list 用 left/right: 0）。 */
+  width: 260px;
+}
+
+.picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  /* 按钮撑满 .picker 那 260px，点击热区与弹层宽度都跟着它。 */
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-btn:hover {
+  border-color: var(--accent);
+}
+
+.picker-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+
+.picker-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 渠道圆点：用 CSS 画而不是 emoji（渲染成彩色 emoji 在 WebView2 里会变成黑白方块）。 */
+.picker-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.picker-dot-latest {
+  background: #6ccb5f;
+}
+
+.picker-dot-next {
+  background: #f2c94c;
+}
+
+.picker-dot-rc {
+  background: #4cc2ff;
+}
+
+.picker-dot-alpha {
+  background: #f2994a;
+}
+
+.picker-chev {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+  transition: transform 0.15s ease;
+}
+
+.picker-btn[aria-expanded="true"] .picker-chev {
+  transform: rotate(180deg);
+}
+
+.picker-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: 12px;
+  /* 弹层用卡片底色：面板本身是卡片，弹层再深/再浅一档就容易和背后的控件糊在一起。
+     旧的半透明毛玻璃已经去掉——它会把底下的文字透上来，长列表看着脏。 */
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+/* 占位提示项（「正在读取…」「未检测到 WSL 发行版」）：看得见但点不动。 */
+.picker-option.disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* 蓝底表示「正要选中的这一项」。静止（指针不在列表里）时蓝底先落在当前值那一行，
+   指针一进列表或键盘一按上下键，蓝底就只跟光标走，当前值那一行让出底色、只留行首 ✓
+   （维护者要求：不指向时已选中行就是蓝底，指向时跟鼠标走、不固定在已选中行上）。 */
+/* 弹层默认向下展开；main.ts 的 Picker.open 会量下方空间，放不下时给它加 .up 改成向上翻
+   （贴按钮上沿），高度也由那段代码压到可用空间里 —— 绝对定位的弹层会撞大文档净高，
+   页面跟着上下跳（维护者要求下拉框展开不得撞大界面）。 */
+.picker-list.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.picker-option:hover,
+.picker-option.active {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 占位项不能吃 hover 蓝底（上面的选择器特指度不够，得单独压回去）。 */
+.picker-option.disabled:hover {
+  background: none;
+  color: var(--fg-dim);
+}
+
+.picker-list:not(:hover):not(:has(.picker-option.active))
+  .picker-option[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.picker-option .tick {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.picker-option .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 视口滚动条直接藏掉（不再占宽），改成自绘的滚动指示条（.scroll-track / .scroll-thumb）：
+   平时看不见，滚动时或指针落在右缘这条细带上时浮出，按住胶囊可以上下拖，
+   停手约 1 秒淡出。胶囊本身只有透明度变化，不加轨道底色、不随悬停变粗。 */
+html {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* 指示条挂在 .content-main 上（内容区外层）：#page 自己是滚动容器，绝对定位的子元素
+   会跟着内容滚走。贴内容区右缘、与内容区等高。 */
+.scroll-track {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.scroll-thumb {
+  width: 100%;
+  height: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 42%, transparent);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  cursor: grab;
+}
+
+.scroll-thumb:active {
+  cursor: grabbing;
+}
+
+.scroll-track:hover .scroll-thumb,
+.scroll-thumb.visible,
+.scroll-thumb.dragging {
+  opacity: 1;
+}
+
+/* 内部滚动条（日志浮层、缓存明细等滚动块）：细窄半透明。平时几乎看不见（轨道全透 + 极低透明度的
+   滑块），指上去或拖拽的时候才浮出来。不用 scrollbar-width / scrollbar-color——
+   Chromium 一旦认了那两个标准属性就会整段忽略 ::-webkit-scrollbar，
+   也没法做「悬停才明显」这层反馈。 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 42%, transparent);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--fg) 55%, transparent);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 展开开关（缓存明细 / 垫片内容这类折叠块）：整行可点、带旋转箭头指示 */
+.log-box {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-2);
+}
+
+.log-box summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--fg-dim);
+  font-size: 13px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.log-box summary::-webkit-details-marker {
+  display: none;
+}
+
+.log-box summary:hover {
+  color: var(--fg);
+}
+
+.log-box .chev {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--fg-mute);
+  transition: transform 0.15s ease;
+}
+
+.log-box[open] .chev {
+  transform: rotate(90deg);
+}
+
+.log-box[open] summary {
+  margin-bottom: 10px;
+}
+
+.log-box[open] pre {
+  margin-top: 0;
+}
+
+/* 卡片里的子分组（补丁层 / 插件）：小卡（.cell）已经是「卡中卡」那一层，
+   再往下就只花一条细线分区，不叠第三个边框。 */

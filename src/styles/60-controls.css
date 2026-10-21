@@ -1,0 +1,596 @@
+/* 按钮都按内容取宽，不拉满一行：工具条右侧的主操作一排排开。 */
+
+/* 登录说明只在出错时出现；正常状态改挂在登录徽章的感叹号气泡里。
+   独立成段（不再和按钮同排），出现或消失都不会挤动上面的按钮行。 */
+.login-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button {
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 140ms,
+    border-color 140ms;
+}
+
+button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 84%, #ffffff);
+}
+
+/* 会话按钮左端那一段图标（分隔线 + 图标）：
+   常态 = 文字在右、图标占左端一个方格（边长 --btn-ico-size = 按钮高度）；
+   悬停不位移、不漫过（维护者要求回归「指哪亮哪」），只保留提亮与各自的图标反馈
+   （停止闪动 / 重启转一圈，见下方红黄块）。
+   只作用于工具条里带图标的按钮，「启动 DSH」形态（.swap 逐字切换）没有图标段，不受影响。 */
+.toolbar-actions button {
+  position: relative;
+  overflow: hidden;
+  /* 悬停提亮的过渡（时长 --btn-hl-ms）：停止换 background、重启换 filter，
+     两个都给过渡，避免重启的提亮瞬时跳变。 */
+  transition: background var(--btn-hl-ms), filter var(--btn-hl-ms);
+  /* 图标段边长：34px 够放 18px 图标且留出呼吸，同时让「停止 / 重启 DSH」这类
+     会话按钮收窄一档——它们一出现，工具条左侧还有三颗徽章要一起排下。 */
+  --btn-ico-size: 34px;
+}
+
+.toolbar-actions button .btn-text {
+  display: inline-block;
+}
+
+/* 图标段占左端一个方格（38px）：图标在左、文字在右，分隔线落在图标右侧。
+   给带图标的按钮把左侧内边距让出来（10px 间隙 + 方格），文字整体往右让一点、
+   不再被图标压住；「启动 DSH」形态没有图标段，不受影响。 */
+.toolbar-actions button:has(.btn-ico) {
+  padding-left: calc(6px + var(--btn-ico-size));
+  padding-right: 13px;
+}
+
+.toolbar-actions button .btn-ico {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: var(--btn-ico-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--btn-ico-line, rgba(255, 255, 255, 0.28));
+}
+
+.toolbar-actions button .btn-ico svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--btn-hl-ms);
+}
+
+.toolbar-actions button:active:not(:disabled) .btn-ico svg {
+  transform: scale(0.8);
+}
+
+/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 = 一轮时长 − 提前起势量
+   （500ms − 200ms = 300ms）；一次性动画，结束位 = 静止位
+   （360deg），不会在退出悬停时跳变。点击后进入持续转动（.is-restarting）时交给下面那套规则，
+   这里排除掉，免得两套 animation 抢同一个属性。 */
+@keyframes btn-restart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#btn-restart:hover:not(:disabled):not(.is-restarting) .btn-ico svg {
+  animation: btn-restart-spin var(--btn-sweep-ms) ease
+    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
+}
+
+/* 「停止」图标：实心方块（维护者要求），悬停时在实心与空心之间闪动一次——
+   与「重启 DSH」的旋转同节奏（时长与延迟同用 :root 动效变量）。fill 不是可插值属性，
+   按离散步进切换：实心 → 50% 处变空心 → 结束变回实心，看上去就是一次来回闪动；
+   结束位 = 实心常态，不跳变。延迟同旋转（一轮动画前提前起势）。
+   只作用于「停止」形态（#btn-toggle:not(.swap)）；「启动 DSH」形态走下面那套逐字切换。 */
+@keyframes btn-stop-flash {
+  0%,
+  100% {
+    fill: currentColor;
+  }
+  50% {
+    fill: none;
+  }
+}
+
+#btn-toggle:not(.swap) .btn-ico svg {
+  fill: currentColor;
+}
+
+#btn-toggle:not(.swap):hover:not(:disabled) .btn-ico svg {
+  animation: btn-stop-flash var(--btn-sweep-ms) ease
+    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
+}
+
+/* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁在悬停终态——
+   与鼠标是否还停在按钮上无关——图标按 --spin-ms 无限转，与「启动中」徽章的加载圈同速。
+   锁定的终态值就是上面悬停那组合并后的规则（:is(:hover, .is-restarting)），只此一份。
+   什么时候收工由 src/main.ts 定（徽章离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
+   收工后这里的类一去掉就交回悬停规则。
+   类名在重建界面（切主题）后会由 render 重新贴上，转动跨重建连续。 */
+#btn-restart.is-restarting .btn-ico svg {
+  animation: btn-restart-spin var(--spin-ms) linear infinite;
+}
+
+/* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
+   停止 = 红底白字（#e62222，2026-10-17 晚从 #ff0000 调整），重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
+   分隔线用深一档的同底色，让右端的图标分段落在这两颗亮色按钮上。
+   悬停 = 高亮加回（维护者要求）：停止提亮到 #ff3636（Uiverse 参考的高亮红），
+   重启用 brightness 轻提亮（两套主题通用，不硬编码色值）。 */
+
+#btn-toggle:not(.swap) {
+  background: #e62222;
+  border-color: #e62222;
+  color: #fff;
+  --btn-ico-line: rgba(0, 0, 0, 0.22);
+}
+
+#btn-toggle:not(.swap):hover:not(:disabled) {
+  background: #ff3636;
+  border-color: #ff3636;
+}
+
+#btn-restart {
+  background: #f5ae51;
+  border-color: #f5ae51;
+  color: #1b2536;
+  --btn-ico-line: rgba(0, 0, 0, 0.18);
+}
+
+#btn-restart:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/* 「启动 DSH」按钮的悬停动效：两组文字逐字上下切换 + 轻抖动。
+   改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±0.5px。
+   只在停止态生效（render 给按钮加 .swap）；运行态的「停止」是普通按钮。 */
+#btn-toggle.swap .text-window {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  /* 窗口高度 = 一行文字高；行内文字上移 1.3em 后完全落在窗外，切字过程不露破绽。 */
+  height: 1.2em;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+#btn-toggle.swap .span-mother,
+#btn-toggle.swap .span-mother2 {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* 第一组参与布局（决定窗口宽度）；第二组绝对定位盖在同一窗口上。 */
+#btn-toggle.swap .span-mother {
+  position: relative;
+}
+
+#btn-toggle.swap .span-mother2 {
+  position: absolute;
+  inset: 0;
+}
+
+#btn-toggle.swap .span-mother span {
+  display: inline-block;
+  transform: translateY(0);
+}
+
+/* 第二组默认藏在窗口上方，悬停时逐字下滑进入。 */
+#btn-toggle.swap .span-mother2 span {
+  display: inline-block;
+  transform: translateY(-1.3em);
+}
+
+#btn-toggle.swap:hover .span-mother span,
+#btn-toggle.swap:focus-visible .span-mother span {
+  transform: translateY(1.3em);
+}
+
+#btn-toggle.swap:hover .span-mother2 span,
+#btn-toggle.swap:focus-visible .span-mother2 span {
+  transform: translateY(0);
+}
+
+/* 逐字递增延时，文字像波浪一样错开（沿用原效果的 0.2~0.7s）。 */
+#btn-toggle.swap .span-mother span:nth-child(1),
+#btn-toggle.swap .span-mother2 span:nth-child(1) {
+  transition: transform 0.2s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(2),
+#btn-toggle.swap .span-mother2 span:nth-child(2) {
+  transition: transform 0.3s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(3),
+#btn-toggle.swap .span-mother2 span:nth-child(3) {
+  transition: transform 0.4s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(4),
+#btn-toggle.swap .span-mother2 span:nth-child(4) {
+  transition: transform 0.5s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(5),
+#btn-toggle.swap .span-mother2 span:nth-child(5) {
+  transition: transform 0.6s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(6),
+#btn-toggle.swap .span-mother2 span:nth-child(6) {
+  transition: transform 0.7s;
+}
+
+#btn-toggle.swap:hover,
+#btn-toggle.swap:focus-visible {
+  animation: dsharbor-shake 0.2s linear infinite both;
+}
+
+@keyframes dsharbor-shake {
+  0% {
+    transform: translate(0);
+  }
+
+  20% {
+    transform: translate(-0.5px, 0.5px);
+  }
+
+  40% {
+    transform: translate(-0.5px, -0.5px);
+  }
+
+  60% {
+    transform: translate(0.5px, 0.5px);
+  }
+
+  80% {
+    transform: translate(0.5px, -0.5px);
+  }
+
+  100% {
+    transform: translate(0);
+  }
+}
+
+/* 减少动态效果：关掉抖动与未读数字的弹动、过渡压到最短（沿用原效果的降级）。 */
+@media (prefers-reduced-motion: reduce) {
+  #btn-toggle.swap:hover,
+  #btn-toggle.swap:focus-visible {
+    animation: none;
+  }
+
+  /* 未读数字照常变化，只是不弹——上拍列表本身仍按 90ms 一拍走。 */
+  .ico-count.ico-count-bump {
+    animation: none;
+  }
+
+  #btn-toggle.swap .span-mother span,
+  #btn-toggle.swap .span-mother2 span {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.error {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+
+.log-box pre {
+  margin-top: 10px;
+  padding: 10px 12px;
+  /* 15 行（12px × 1.6 = 19.2px/行）：超出部分滚动，避免日志把卡片撑长。
+     全局 `box-sizing: border-box` 下 max-height 含 padding 与边框，
+     所以取值是 15 × 19.2 + 10 × 2 + 1 × 2 = 310px（写 288px 只装得下 13.8 行）。 */
+  max-height: 310px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 60%, var(--card));
+  border: 1px solid var(--line);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+  /* 日志要能随手拖选复制（维护者要求）；上面标题行保持不可选。 */
+  user-select: text;
+  cursor: text;
+}
+
+/* 折叠块里的输出区（缓存明细 / 垫片内容 / 垫片文本）：承载右上角的复制按钮。 */
+.log-area {
+  position: relative;
+}
+
+/* 输出区右上角的复制按钮：平时半透明、不可点，指到输出区或键盘聚焦时才浮出来，
+   免得压住最后几行文字。 */
+.log-copy {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+.log-area:hover .log-copy,
+.log-area:focus-within .log-copy {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.log-copy:hover {
+  background: var(--accent-soft);
+}
+
+/* 端口「还原」按钮（原来是显示当前状态的徽章）：点一下清空端口输入框 = 回到
+   「跟随 DSH 配置」；框里本来就空时禁用（disabled 的半透明由通用 button:disabled 给）。
+   「指定程序路径」的「浏览…」共用这套小按钮外观。 */
+.port-reset,
+.path-browse {
+  flex: none;
+  white-space: nowrap;
+  height: var(--badge-height);
+  padding: 0 var(--badge-padding-x);
+  border-radius: 999px;
+  font-size: var(--badge-font-size);
+  line-height: 1;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+.port-reset:hover:not(:disabled),
+.path-browse:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+/* 「指定程序路径」行：输入框 + 「浏览…」按钮同一行。输入框在上方的 #binary-path
+   例外里是 width:100%，这里让它可收缩，按钮永远不换行。 */
+.path-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.path-row > input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 字段下方的即时校验红字（比顶部错误条小一号，与字段同级）。 */
+.field-error {
+  font-size: 12px;
+}
+
+/* 「网络」卡代理提示行：出错时只要红字，不要红底卡片（那一行很窄，红底反而压住输入框）。 */
+p.hint.error {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  color: var(--danger);
+}
+
+/* 「启动方式」的每一项连同它展开的参数包成一组：选中时整组抬一层强调底色 + 细描边，
+   一眼看出「下面这几行参数属于这个选项」，而不是四行平铺的选项各管各的。
+   参数缩进到选项标题下方（radio 宽 + 两处间距），归属关系再明确一层。 */
+.mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  transition:
+    background 140ms,
+    border-color 140ms;
+}
+
+/* 只有「选中 + 真的展开了参数」的那一组才抬底色：没有参数项的选项（系统全局命令）
+   选中时仍是一行文字，给它套个框只会显得空。 */
+.mode-group:has(> .mode > input:checked):has(> .fields:not(.hidden)) {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: var(--accent-soft);
+}
+
+.mode-group > .fields {
+  padding-left: 37px;
+}
+
+.mode {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 140ms;
+}
+
+/* 悬停提示「这行可点」；选中组自己有底色，这里用中性的提亮，避免和选中色撞在一起。 */
+.mode:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.mode input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+.mode b {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.mode small {
+  color: var(--fg-mute);
+  font-size: 12px;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 10px;
+}
+
+/* 「指定程序路径」「自定义命令」两组参数靠 .hidden 收起，但上面那条 display:flex
+   跟 .hidden 优先级相同、且在文件里更靠后，会把它盖掉（参数一直露在外面）。 */
+.fields.hidden {
+  display: none;
+}
+
+.fields label {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+/* 非 <label> 的字段标题（运行环境 / 渠道）：<label for> 必须指向真实控件，
+   自绘下拉框是一整块 div，用 span 更名实相符，外观跟着 label 走。 */
+.fields .field-label {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+/* 同一行放两个控件（渠道下拉 + 版本徽章 / 版本下拉）。260px 放得下两个 260px 控件的地方
+   只有窄窗口以外的情况——这里不设 wrap，窗口收窄时让下拉框各自收窄，不换行。 */
+.control-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.control-line > .picker {
+  flex: 0 1 260px;
+  width: 260px;
+  min-width: 0;
+}
+
+.control-line > .badge {
+  flex: none;
+}
+
+/* 输入框与自绘下拉框共用同一套外观（原生 select 的弹层由系统绘制、圆角管不到，
+   所以下拉框改成自绘：见下方 .picker） */
+input[type="text"],
+.picker-btn {
+  padding: 8px 10px;
+  /* 圆角取官网输入控件的取值（--ds-radius-input: 10px）；下拉框与输入框一起改，
+     否则上下相邻的下拉框和输入框圆角会不一致。 */
+  border-radius: 10px;
+  /* 输入框/下拉框的凹陷底色与描边跟页面背景同一族冷蓝，不用中性黑，
+     否则在拟合后的钢蓝底色上会显得发灰、跟背景脱节。 */
+  border: 1px solid var(--line-strong);
+  background: var(--card-2);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+input[type="text"]:focus,
+.picker-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 短输入框固定 260px、左对齐（原来撑满整行）。260px 取自 .picker 里的最长选项
+   「官方 npx 命令（首次较慢）」这类 13px 文字 + 内边距 + 箭头后的余量
+   （候选 I 的 design/ui-candidates/i-native.html:100 用 min-width: 232px，这里放宽到 260px）。 */
+input[type="text"] {
+  width: 260px;
+}
+
+/* 两个例外：内容天然很长、必须撑满整行。用 id 选择器，特指度高于元素选择器与 .picker，
+   不受声明顺序影响。
+   #binary-path「指定程序路径」：可能是 D:\tools\dsh.cmd 这样的长路径，260px 看不全；
+   #custom-command「自定义命令」：整条启动命令行，比路径更长。 */
+#binary-path,
+#custom-command {
+  width: 100%;
+}
+
+/* 端口行：输入框 + 覆盖状态徽章并排 */
+.port-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  /* 原版（主题 1）的「通用设置」在两列网格里，列宽只有约 273px，而「260px 输入框 +
+     12px 间距 + 「还原」按钮」约 324px。放不下时让输入框收窄（flex-basis 260px、可缩到 0），
+     而不是把按钮挤到第二行。主题三的「通用设置」是整列宽（386px），260px 放得下，不会缩。 */
+  flex-wrap: nowrap;
+}
+
+/* 端口框：放得下时固定 260px（和「附加参数」对齐），放不下时收窄。 */
+.port-row > input[type="text"] {
+  flex: 0 1 260px;
+  width: 260px;
+  min-width: 0;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--fg-mute);
+  line-height: 1.7;
+}
+
+.hint code,
+.mode small code {
+  background: var(--elev);
+  padding: 1px 5px;
+  border-radius: 4px;
+}

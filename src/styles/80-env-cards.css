@@ -1,0 +1,194 @@
+/* ---- 环境大按钮：一排并列的环境卡片（点卡片切管理目标，点三点开操作菜单） ---- */
+/* 一排环境 + 行末竖排三颗按钮。宽度不够时整行换行，不把环境卡片压扁。 */
+.env-row {
+  display: flex;
+  /* 不 stretch：行末按钮列比卡片高，stretch 会把卡片行一起拉高，卡片下方留一片空。 */
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.env-cards {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  /* 折行后每一行各自贴合内容高度，同行的卡片仍然等高（对齐由 align-items 负责）。 */
+  align-content: flex-start;
+  align-items: stretch;
+  gap: 10px;
+}
+
+/* 一张环境卡：本体是按钮，右上角叠一颗三点按钮。
+   选中的那张换底色 + 强调色描边，一眼能看出「现在管理的是它」。 */
+.env-card {
+  position: relative;
+  flex: 0 1 168px;
+  min-width: 0;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-2);
+  transition:
+    border-color 140ms,
+    background 140ms;
+}
+
+.env-card.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.env-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 右边给三点按钮留位置，别让名字压到它底下。 */
+  padding: 9px 30px 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.env-card-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-card-meta,
+.env-card-marks {
+  font-size: 11.5px;
+  color: var(--fg-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-card-marks {
+  color: var(--fg-dim);
+}
+
+/* 三点按钮：叠在卡片右上角，本身不占布局宽度。 */
+.env-more {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  /* 给一圈淡底（维护者要求）：透明时三点像卡片自带的装饰，离「能点」太远。 */
+  background: var(--elev);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.env-more:hover,
+.env-more[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 横向三点（cx 5/12/19）：横向排列时上下留白天然更大，收一点尺寸才不显得空。 */
+.env-more svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+/* 行末一列三颗按钮：新建空白环境 / 桥接插件 / 补丁层，后两颗各自弹浮窗。
+   新建排在最上（维护者要求）：它是这一列里唯一造新东西的动作。 */
+.env-aside {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 140px 刚好容下「新建空白环境」六字加一枚加号，再窄就折成两行。 */
+  width: 140px;
+}
+
+.env-aside button {
+  width: 100%;
+  /* 一列三颗按钮文案固定，宽度跟着列走，不让它自己折行。 */
+  white-space: nowrap;
+}
+
+/* 「新建空白环境」带一枚加号，与下面两颗纯文字按钮区分开。 */
+.env-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.env-new svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* 环境操作菜单：跟着三点按钮定位（坐标由 JS 算，贴边会往里收）。 */
+.env-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.env-menu button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.env-menu button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.env-menu button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.env-menu button.danger:not(:disabled) {
+  color: var(--danger);
+}
+
+/* 插件卡里的插件清单：外层不再画框（小卡已经是卡中卡那一层）。 */
+.plugin-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

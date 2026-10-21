@@ -1,0 +1,185 @@
+/* ---- 日志：左栏里的一个分区，日志正文直接长在主卡里自己滚 ---- */
+.content-main {
+  /* 承载内容区与自绘滚动条（.scroll-track 绝对定位在这里，见下方），要当定位上下文。 */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 日志主卡：标题与两颗按钮直接摆在这张大卡上，日志正文是卡里唯一一层内嵌卡片。
+   三层（大卡 → 小卡 → 正文框）压成两层，少一层边框就显得干净。
+   覆盖 .block.main-card 的 overflow-y:auto：这一页不该整卡滚，滚的是正文自己。 */
+.block.main-card.main-card-log {
+  overflow: hidden;
+  gap: 14px;
+}
+
+/* 卡头右侧那两颗按钮（清空 / 复制）：与卡头标题同一条线，靠右。 */
+.log-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-action {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--elev);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 140ms,
+    color 140ms,
+    border-color 140ms;
+}
+
+.log-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 日志正文：卡里唯一一层内嵌卡片，撑满大卡剩下的高度（不给 flex 时正文会缩成一条）。
+   中性深底 + 细描边 + 等宽字，整块可选中复制。 */
+.log-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--log-line);
+  border-radius: calc(var(--radius-card) - 2px);
+  background: var(--log-fill);
+  overflow: auto;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--log-fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* 内容区：卡片之间的间隙由这里给，整页不滚（只有主卡内部滚）。 */
+.page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0 0;
+}
+
+/* 分区：主卡 + 次卡行，撑满内容区高度（主卡吃掉余量）。 */
+.panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel.hidden {
+  display: none;
+}
+
+/* 分区正文不额外包一层间距：主卡与次卡行自己带 gap。 */
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 主卡里并排的两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。 */
+.cell-row {
+  display: grid;
+  gap: 28px;
+  flex: none;
+}
+
+.cell-row[data-ratio="1-1"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.cell-row[data-ratio="2-1"] {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.cell-row[data-ratio="1-2"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+/* 卡片：淡底 + 细边框 + 圆角 + 轻阴影，浮在页面背景上。
+   块头左边标题、右边徽章或说明。 */
+.block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+
+/* 主卡：内容区里那张大卡片，吃掉余量，内部自己滚。里面的每个条目各装一张小卡
+   （.cell），卡与卡之间露缝、不画分隔线。 */
+.block.main-card {
+  flex: 1;
+  min-height: 0;
+  gap: 20px;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+/* 主卡里的小卡：靠明度与主卡拉开一档（深色再亮、浅色再沉），圆角比主卡收窄两圈，
+   靠主卡的内边距与 gap 露出主卡底色——露缝而不是细线。 */
+.cell {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-radius: calc(var(--radius-card) - 2px);
+  background: var(--cell);
+}
+
+/* 主卡里再并排两个子块已在 .cell-row 里处理，这里不再单独定义。 */
+
+/* 块内的输入框 / 下拉框吃掉可用宽度，给一台上限免得超宽屏上像横幅。 */
+.block .picker,
+.block input[type="text"] {
+  width: 100%;
+  max-width: 760px;
+}
+
+/* 并排两个控件（渠道下拉 + 版本徽章 / 端口 + 还原）时按比例分宽。 */
+.block .control-line > .picker,
+.block .port-row > input[type="text"] {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* 命令预览：等宽、淡底、可选中复制。 */
+.command-preview {
+  display: block;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--elev);
+  color: var(--fg-dim);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}

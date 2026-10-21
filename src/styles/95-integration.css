@@ -1,0 +1,42 @@
+/* ---- 「集成」卡片：命令行集成 ---- */
+
+/* 开关行（基础层原先没有开关/勾选框样式）：整行可点，方框用 accent-color 跟主题蓝色走，
+   与启动方式的单选框保持同一套视觉。 */
+.switch-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg);
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch-line input[type="checkbox"] {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.switch-line input[type="checkbox"]:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* 手动命令要能整行看清再选中复制：等宽字体、允许换行，不跟 PATH 一样缩成一条。 */
+.cli-command {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12.5px;
+  user-select: text;
+  cursor: text;
+}
+
+/* 状态说明与下方错误之间不必再挤：说明行就在 .kv 下面。 */
+#cli-message {
+  margin-top: 10px;
+}

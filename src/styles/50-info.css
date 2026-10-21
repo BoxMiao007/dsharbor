@@ -1,0 +1,127 @@
+/* ---- 感叹号小角标（ⓘ）+ 悬停气泡 ----
+   出现在徽章里，以及 <label> / .field-label 的文字后面。
+   徽章里是行内形式：跟文字排在同一条视觉中线上（中文字形墨迹比行盒高，13px 文字在
+   24px 胶囊里视觉中心还要再往上 1px，这里统一补一点）；
+   装在标签文字后面的那几个是角标：绝对定位到标签的右上角、像上标一样不占文字的位置。 */
+.info-dot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  /* 圆点直径跟着徽章字号走（13px 徽章 → 13px 圆点），8.5px 时缩在胶囊里像个错位的点。 */
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, currentColor 62%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  transform: translateY(-0.5px);
+}
+
+/* 角标形式：贴在标签文字的右上角。承载它的元素要能当定位上下文，且宽度要收紧到文字
+   （标签在各自的列里都是撑满的，不收的话 right: -10px 会把角标摆到列表右缘、
+   悬停气泡再向右展开就凸出窗口）。 */
+.fields label,
+.field-label {
+  position: relative;
+  width: max-content;
+}
+
+.fields label > .info-dot,
+.field-label > .info-dot {
+  position: absolute;
+  top: 0;
+  right: -10px;
+  width: 9px;
+  height: 9px;
+  font-size: 6.5px;
+  transform: none;
+}
+
+.info-dot::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 300px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--tip-bg);
+  box-shadow: var(--shadow);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+  /* 默认 display:none 而不是 opacity:0：气泡最宽 300px，留在布局里会把
+     内容区的 scrollWidth 撑大、逼出横向滚动条（它本来就看不见）。 */
+  display: none;
+}
+
+.info-dot:hover::after,
+.info-dot:focus-visible::after {
+  display: block;
+}
+
+.info-dot:focus-visible {
+  outline: none;
+}
+
+/* 标签里的 ⓘ 贴着卡片左缘，气泡再按 50% 居中就会向左撑出窗口：
+   这些位置的圆点改成气泡左边缘对齐圆点左边缘、只向右展开。 */
+.fields label .info-dot::after,
+.field-label .info-dot::after {
+  left: 0;
+  transform: none;
+}
+
+.badge-stopped {
+  border-color: var(--line-strong);
+  background: var(--elev);
+  color: var(--fg-dim);
+}
+
+.badge-failed {
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.badge-version {
+  border-color: var(--line-strong);
+  background: var(--elev);
+  color: var(--fg-dim);
+}
+
+/* 图标与徽章文字同一条视觉中线：中文字形墨迹中心比行盒中心高约 1px，
+   几何居中的 svg 会显得偏下，所以只补 0.5px（原来 -1.5px 补过头，看着往上飘）。 */
+.badge-version svg {
+  width: 12px;
+  height: 12px;
+  transform: translateY(-0.5px);
+}
+
+.status-meta {
+  font-size: 12.5px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+
+.status-meta b {
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}

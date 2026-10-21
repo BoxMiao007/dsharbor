@@ -1,0 +1,109 @@
+/* 尺寸与动效节奏的统一出口：全站徽章、按钮、转圈共用这几个值。 */
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 徽章尺寸统一：全站徽章与「复制」胶囊按钮共用这三个值，改一处即整体变化。 */
+  --badge-height: 24px;
+  --badge-padding-x: 10px;
+  --badge-font-size: 13px;
+  /* 会话按钮动效节奏统一收口：维护者频繁调节奏，原来散在多处的 500ms/300ms/200ms
+     改成三个变量，改这里全站生效。
+     悬停不再有「图标板漫过 + 文字推出」（维护者要求回归悬停指向），
+     --btn-sweep-ms 现在只作为下面两个一次性动画一轮的时长。 */
+  --btn-sweep-ms: 500ms;
+  --btn-lead-ms: 200ms; /* 提前起势量（延迟 = 一轮时长 − 提前量 = 300ms） */
+  --btn-hl-ms: 200ms; /* 悬停提亮与按下图标缩放的过渡 */
+  /* 卡片圆角与轻阴影：悬浮卡片骨架里左栏、工具条、主卡、次卡共用。 */
+  --radius-card: 14px;
+  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.18);
+  /* 「重启 DSH」点击后持续转动一圈的时长。
+     src/main.ts 的 RESTART_SPIN_MIN_MS 用同一个 700 数值但职责不同（那边=收场前
+     最短反馈时长，这里=一圈时长），改转速时两处一起检查。 */
+  --spin-ms: 700ms;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ==================== 浅色 / 深色两套外观 ====================
+   两套色板都写成 CSS 变量，切换只改 <html data-mode>（见 main.ts 的 applyMode），
+   不重建界面。深色是冷灰，浅色是同一套层级反相：卡片比页面亮，控件比卡片再亮一档。 */
+html[data-mode="dark"] {
+  color-scheme: dark;
+  --bg: #0b0f14;
+  --bg-2: #131a22;
+  --card: #171d25;
+  --card-2: #1d242d;
+  /* 主卡里的小卡（卡中卡）：比主卡再亮一档，靠明度差而不是描边把层次立起来。 */
+  --cell: #222c38;
+  --elev: #212933;
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg: #e8eef7;
+  --fg-dim: #9aa7b8;
+  --fg-mute: #6d7a8a;
+  --accent: #4ea1ff;
+  --accent-soft: rgba(78, 161, 255, 0.16);
+  --ok: #57c98b;
+  --warn: #e8c85c;
+  --danger: #ef5f6b;
+  /* 日志正文：中性深色面板，比卡片沉一档，靠描边和等宽字表示「这是控制台输出」。
+     早先用的饱和蓝底与整套冷灰卡片打架，改成中性色后不再抢画面的颜色。
+     fill = 正文底；fg = 底上的文字；line = 正文框描边（两套外观各自定义）。 */
+  --log-fill: #10161d;
+  --log-fg: #c9d5e3;
+  --log-line: rgba(255, 255, 255, 0.08);
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --shadow-soft: 0 3px 14px rgba(0, 0, 0, 0.34);
+  --tip-bg: #0b1219;
+}
+
+html[data-mode="light"] {
+  color-scheme: light;
+  --bg: #eef2f7;
+  --bg-2: #dde5ef;
+  --card: #ffffff;
+  --card-2: #f4f7fb;
+  /* 浅色反过来：小卡在主卡上沉下去一档（主卡已是最亮，没法再亮）。 */
+  --cell: #eef2f7;
+  --elev: #ffffff;
+  --line: rgba(15, 26, 40, 0.09);
+  --line-strong: rgba(15, 26, 40, 0.16);
+  --fg: #16202c;
+  --fg-dim: #5a6878;
+  --fg-mute: #8494a5;
+  --accent: #1f6feb;
+  --accent-soft: rgba(31, 111, 235, 0.12);
+  --ok: #1e9e5f;
+  --warn: #b8860b;
+  --danger: #d33a4a;
+  /* 浅色外观下的日志正文：仍走中性色（不用饱和蓝），只是反过来比卡片沉一档。 */
+  --log-fill: #f4f7fb;
+  --log-fg: #2b3846;
+  --log-line: rgba(15, 26, 40, 0.1);
+  --shadow: 0 18px 48px rgba(21, 38, 60, 0.16);
+  --shadow-soft: 0 2px 10px rgba(21, 38, 60, 0.1);
+  --tip-bg: #ffffff;
+}
+
+body {
+  /* 定高而不是最小高：让 #app 占满窗口，右栏内容区才好用 flex:1 吃掉剩余高度，
+     内容区内部自己滚，整个页面不会因为内容多而出现外层滚动条。 */
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#app {
+  /* 左栏 + 右栏两列：宽度上限只用来防超宽屏上一行字被拉成横幅。 */
+  width: 100%;
+  max-width: 1600px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}

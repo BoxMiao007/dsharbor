@@ -1,0 +1,232 @@
+/* ---- 右栏：工具条卡片 / 日志开关条 / 内容区 ---- */
+.content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 工具条：一张独立卡片，左边徽章群、右边主操作。整块可拖动（顶部留出拖动带）。 */
+/* 选择器带 .block 前缀：.block 在下面定义了纵向 flex，同特指度时后面的规则会赢。 */
+.block.toolbar-block {
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+/* 拖动带：工具条里徽章与按钮之间的空白，按住这里可以拖窗口。 */
+.toolbar-drag {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 24px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.badge {
+  /* 高度、内边距、字号统一走 :root 里的 --badge-* 变量。
+     固定 height + line-height: 1：徽章里有的带 SVG 图标、有的带旋转圈、有的纯文字，
+     按内容定高时高度会差 2~4px，统一钉死后完全一致。
+     flex: none：工具条挤的时候让整颗徽章换到下一行，而不是被压窄、文字冲出胶囊。 */
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: var(--badge-height);
+  padding: 0 var(--badge-padding-x);
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--elev);
+  color: var(--fg-dim);
+  font-size: var(--badge-font-size);
+  line-height: 1;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-running {
+  border-color: color-mix(in srgb, var(--ok) 42%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+
+/* 并排两列时的小标题（托盘设置 / 网络与代理）：两列都有一行，左列用空占位对齐。 */
+.col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--badge-height);
+}
+
+/* 卡片左上角的标题：每张卡都从这一行起，字号与字重都比正文明显高一档
+   （正文 12~13px / 常规字重），配合正文的淡色，一眼分出「这是这张卡的标题」。 */
+.col-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
+  letter-spacing: 0.2px;
+}
+
+/* 徽章按内容取宽，不被 flex 压扁（压扁会让文字冲出胶囊）。 */
+.panel-badge {
+  flex: none;
+}
+
+.status-meta {
+  font-size: 12.5px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+
+/* 窗口拉窄时按重要性依次收起次要信息（先 PID/监听，再版本），
+   保证工具条始终是「一排」——按钮掉到第二行就挤占内容区了。
+   900 是本窗口允许的最小宽度，两档断点都落在它之上。 */
+@media (max-width: 1120px) {
+  .status-meta {
+    display: none;
+  }
+}
+
+@media (max-width: 1000px) {
+  #version-badge {
+    display: none;
+  }
+}
+
+.status-meta b {
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+/* 登录提示：出错时占满工具条下方一行，平时隐藏。 */
+.login-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0 14px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 「打开方式」两段式：主按钮 + 右侧小三角，点小三角展开菜单 ---- */
+.open-split {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.open-split #btn-open {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  /* 图标在左、不再画竖线；竖线归右边那颗三角（见 #btn-open-more）。 */
+  border-right: 0;
+}
+
+/* 右半边那颗三角：自带左边线（= 主按钮与三角之间的那根竖线），和主按钮拼成一颗。 */
+#btn-open-more {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background: var(--elev);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+#btn-open-more svg {
+  /* 箭头收到 12px：14px 时看着比旁边按钮里的数字/图标都大一圈，像贴错了图。 */
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#btn-open-more:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+#btn-open-more[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 展开的菜单：绝对定位在主按钮下方，点击外面收起（见 main.ts）。 */
+.open-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.open-menu.hidden {
+  display: none;
+}
+
+.open-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.open-menu button svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.open-menu button:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.open-menu button[aria-checked="true"] {
+  color: var(--accent);
+}

@@ -1,0 +1,229 @@
+/* ---- 左右分栏：左栏一张卡片，右栏吃掉余量 ---- */
+/* 四周留白由这里给：左右各 20px（卡片不贴窗口边）、底部 20px、
+   与顶栏之间再让 4px（顶栏自己 40 高）。卡片之间用 gap 16px。 */
+.shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 20px;
+  padding: 20px 35px 32px;
+}
+
+/* 左栏：一张通高卡片。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。 */
+.sidebar {
+  /* 宽度与内边距按草图比例：卡片 238 宽、导航胶囊 200 宽（左右各让 19）。 */
+  width: 220px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+.sidebar-brand {
+  flex: none;
+  /* 分隔线横贯卡片整宽（草图上那根线从卡片左边一直到右边），所以用负外边距抵消
+     卡片内边距。 */
+  margin: 0 -18px;
+  padding: 0 18px 14px;
+  border-bottom: 1px solid var(--line);
+  /* 品牌名水平居中（维护者要求），不贴着左边线。 */
+  text-align: center;
+}
+
+/* 左栏顶部：主标题 + 一行小字副标题（不配图标，品牌信息已经搬到顶栏）。 */
+.sidebar-name {
+  display: block;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+.sidebar-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--fg-mute);
+}
+
+/* 分区导航：每一项自己是一枚浮在左栏卡片上的胶囊（草图里左栏 5 个浅色胶囊）。 */
+.rail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+  overflow-y: auto;
+}
+
+.ico-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 44px;
+  flex: none;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  /* 未选中不画底框（维护者要求）：一排同色块挤在一起，看不出哪块是当前项；
+     底色只在悬停与选中时出现。 */
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 140ms,
+    background 140ms;
+}
+
+.ico-item svg {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ico-item .txt {
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+.ico-item:hover {
+  background: var(--elev);
+  color: var(--fg);
+}
+
+.ico-item[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* 选中标记：胶囊内左侧一根 3px 竖条。画在胶囊内侧而不是栏外，免得贴到卡片边。 */
+.ico-item[aria-current="true"]::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* 左栏「日志」条目上的未读数字：只在有未读时出现——没有未读时容器内容是空的，
+   由下面的 :empty 收成不渲染，不需要界面再挂一个隐藏类。
+   尺寸对齐工具条徽章（字号 13px、圆角 999px、等宽数字），但矮一档取 20px：
+   它挤在 44px 高的导航条目里，与 24px 的独立徽章同高会顶掉条目的上下留白。
+   margin-left: auto 把它推到条目最右，flex: none 让它挨着最小窗口宽度也不被压窄。 */
+.ico-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ico-count:empty {
+  display: none;
+}
+
+/* 数字每变一拍弹一下（1 → 1.25 → 1）：节奏由 main.ts 的上拍队列控制，这里只给形状。 */
+@keyframes ico-count-bump {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.25);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.ico-count.ico-count-bump {
+  animation: ico-count-bump 220ms ease-out;
+}
+
+/* 底部三个纯图标入口（官网 / 仓库 / 浅深切换）：草图里是左栏底部居中三颗圆圈。 */
+.sidebar-links {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 27px;
+  /* 下方留白让三颗圆点离卡片下沿还有一段距离（草图里它们不贴着边），
+     圆点群上方不画分隔线。 */
+  padding: 12px 0 34px;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  /* 三颗图标按钮各带一圈底框与描边（维护者要求）：纯图标贴在卡片上像装饰，
+     有了边界才读得出「这里能点」。 */
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--card-2);
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition:
+    border-color 140ms,
+    background 140ms,
+    color 140ms;
+}
+
+/* 官网 / GitHub 两颗图标是官方 mark（实心 path），用 <img> 引。GitHub 那颗写
+   fill="currentColor"，直接跟着按钮文字色变；DeepSeek 那颗保留品牌蓝，深色外观下
+   同样看得清。 */
+.icon-btn img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-btn:hover {
+  background: var(--elev);
+  color: var(--fg);
+}

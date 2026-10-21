@@ -1,0 +1,84 @@
+/* ---- 悬浮卡片骨架（维护者草图：浅色是页面背景，色块是浮在上面的卡片） ----
+   最上面一条通栏透明顶栏（品牌在左上角 + 右端三只窗口按钮，整条可拖动）；
+   下面左栏一张通高卡片、右栏一张工具条卡片 + 日志窄条 + 主卡（里面每个条目
+   各装一张小卡）。块与块之间留缝露出页面背景，靠圆角 + 描边 + 阴影立起来。 */
+
+/* 顶栏：不吃背景色、不画分隔线，它就是一条透明的拖拽区，品牌和三只窗口按钮都住在这里。
+   拖拽属性必须挂在真正被命中的元素上（顶栏本身 + 品牌文字），挂父元素拖不动文字——
+   浏览器大改时就是这么把拖拽弄丢的。 */
+.titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 10px 0 20px;
+  user-select: none;
+}
+
+/* 品牌：DSHarbor 加粗在左，副标题用更小的字号跟在末尾、不再另起一行。 */
+.titlebar-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.titlebar-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+.titlebar-sub {
+  font-size: 11.5px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+
+/* 三只窗口按钮：住顶栏右端（不再是浮在窗口右上角的独立小块）。 */
+.win-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  border-radius: 9px;
+}
+
+.win-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  transition:
+    background 140ms,
+    color 140ms;
+}
+
+/* 图标是内联 SVG：描边跟着按钮的 color 走，悬停换底色时不用再动图标。 */
+.win-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.win-btn:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.win-btn.win-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}

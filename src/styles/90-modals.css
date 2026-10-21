@@ -1,0 +1,374 @@
+/* ---- 浮窗层：桥接插件 / 补丁层 / 环境名输入（一个遮罩 + 三张卡共用） ---- */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(4, 8, 14, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+/* 三张浮窗各自 fixed 居中（与遮罩并列，不是它的子元素；靠 z-index 压在上面）。
+   居中用 inset + margin:auto：内容高度变化时不会跳，也不必知道具体尺寸。 */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 91;
+  margin: auto;
+  /* 宽度按内容走（min(520px, …) 会让「重命名环境」这种一句话的浮窗空出一大片右侧），
+     上限仍受视口约束。 */
+  width: fit-content;
+  min-width: min(340px, calc(100vw - 48px));
+  max-width: min(520px, calc(100vw - 48px));
+  /* 高度按内容走：inset:0 只用来居中，配上 fit-content 才不会把浮窗拉满整屏。 */
+  height: fit-content;
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.modal-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.modal-close {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+.modal-close svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+/* 环境名浮窗（新建 / 重命名 / 复制 / 删除）：正文只有一个输入框和一两句提示，
+   按 520px 撑开会在输入框末尾留一大片空白。这一张单独收窄，输入框改成吃掉整行，
+   浮窗宽度就贴着内容走。 */
+.modal.modal-tight {
+  max-width: min(420px, calc(100vw - 48px));
+}
+
+/* 环境名输入框：本来按全站规矩固定 260px，在这个窄浮窗里会跟右边界拉出空档。 */
+#profile-manage-name {
+  width: 100%;
+}
+
+/* 浮窗正文自己滚：内容长短不一（补丁层备份清单可能很长），别把浮窗撑出屏幕。 */
+.modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.modal-foot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.profile-manage-tag {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+/* 删除的二次确认行：与动作按钮同宽的一段，视觉上从面板里「浮」出来提醒这是危险动作。 */
+.profile-confirm {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.profile-confirm .hint {
+  margin: 0 0 8px;
+}
+
+/* 危险动作按钮（删除环境）：常态用语言提示而不是红色禁用色，悬停才亮红。 */
+button.danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+/* 备份清单：一份备份一行。路径是等宽字（用户可能要照着去找文件），
+   长路径折行而不是把行撑出框（.patch-backup-path 用 break-all）。 */
+.patch-backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.patch-backup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-2);
+  font-size: 13px;
+}
+
+.patch-backup-time {
+  flex: none;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.patch-backup-path {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-mute);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* 插件开关：一行一个插件。开/关一个复选框，名字在后面，状态与标记靠右。
+   停用的行整行调淡，一眼能看出哪些现在不加载。 */
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 插件行：名字在左，右端一枚开关。开关本身就是唯一的状态表达，
+   不再另写「已启用 / 已停用」——同一件事说两次，还挤掉名字的宽度。 */
+.plugin-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-2);
+  font-size: 13px;
+  user-select: none;
+}
+
+.plugin-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12.5px;
+  word-break: break-all;
+}
+
+.plugin-row.is-off .plugin-name {
+  color: var(--fg-mute);
+}
+
+/* 开关：36×20 的胶囊 + 18px 圆头，开=强调色、关=灰底。
+   内置骨架包开关不可用时整颗置灰（disabled），鼠标移上去显示原因（title）。 */
+.switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--elev);
+  cursor: pointer;
+  transition:
+    background 160ms,
+    border-color 160ms;
+}
+
+.switch .switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg-mute);
+  transition:
+    transform 160ms ease,
+    background 160ms;
+}
+
+.switch[aria-checked="true"] {
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.switch[aria-checked="true"] .switch-knob {
+  transform: translateX(16px);
+  background: #ffffff;
+}
+
+/* 通用 button 悬停会换底色，开关自己一套，要盖回去。 */
+.switch:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--elev);
+}
+
+.switch[aria-checked="true"]:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 84%, #ffffff);
+}
+
+.switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.plugin-tag {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  background: var(--elev);
+}
+
+/* 桥接插件是唯一能让壳自动拿到登录链接的插件，标记用主色，与其它标记区分开。 */
+.plugin-tag-bridge {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 关掉桥接后的提醒：不提示就是用户自己把登录链接弄丢了，所以用警告色而不是 hint 灰。 */
+.plugin-warning {
+  color: var(--warn);
+}
+
+.plugin-empty {
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.plugin-empty .hint {
+  margin: 0 0 10px;
+}
+
+/* 代理地址框只在手动模式露出来；它包一层 div 是为了跟下载源一样能整行隐藏
+   （input 自己 hidden 也行，但 .hidden 与 input[type="text"] 选择器特指度打平后
+   要靠声明顺序取胜，包一层更稳）。 */
+.proxy-manual {
+  display: flex;
+}
+
+.proxy-manual.hidden {
+  display: none;
+}
+
+/* 键值行（桥接插件卡片） */
+/* 键值表：小卡里成组的信息（桥接状态、缓存占用、版本与目录、命令行集成路径）。
+   条目之间靠小卡的 gap 分区，这里不再自己加外边距。 */
+.kv {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.kv-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.kv-row:first-child {
+  border-top: none;
+}
+
+.kv-key {
+  flex: 0 0 76px;
+  color: var(--fg-mute);
+}
+
+.kv-value {
+  color: var(--fg);
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+/* 条目自带操作按钮的行（「关于」卡片）：按钮贴右，键值部分吃掉剩余宽度，
+   左侧键名与其它行保持同一列。 */
+.kv-row-action {
+  align-items: center;
+}
+
+.kv-row-action .kv-value {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 条目内按钮：与其它按钮同款，只是更紧凑，不把行高撑起来。 */
+.kv-action {
+  flex: none;
+  align-self: center;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.bridge-actions {
+  margin-bottom: 4px;
+}
+
+/* 操作按钮已并入各条目（见 .kv-row-action）；说明文字与上方条目留出间距。 */
+#about-note {
+  margin-top: 12px;
+}

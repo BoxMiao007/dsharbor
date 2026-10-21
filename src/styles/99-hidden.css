@@ -1,0 +1,6 @@
+/* ---- 收尾：.hidden 放在最末 ----------------------------------------------
+   文件里不少组件自带 display（.subcard、.cell-row、.fields…），与 .hidden 同特指度时
+   靠源码顺序定胜负。放在最末才能保证「加了 .hidden 就真的不显示」，不用逐个补 .xxx.hidden。 */
+.hidden {
+  display: none;
+}
