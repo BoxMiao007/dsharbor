@@ -84,20 +84,14 @@ button.primary:hover:not(:disabled) {
   padding-bottom: 0;
 }
 
-/* 带图标段的按钮（停止 / 重启 DSH / 应用内打开）：图标在左、文字紧跟其后。
-   图标板是绝对定位、不参与 flex 排布，所以这里只能管文字 —— 用 flex-start
-   让文字一律从图标右缘 +6px 处开始。别改成 center：定宽之后短字「停止」会被
-   推到图标右侧那段的中央，和「重启 DSH」的左缘差出 15px，两态切换时文字横向
-   跳一下，也和「应用内打开」的结构不一致。 */
-:where(.toolbar-actions button:has(.btn-ico)) {
-  justify-content: flex-start;
-}
-
-/* 「停止」与「重启 DSH」交替出现在同一个位置，按钮宽度必须一致，
-   否则切换时整排按钮左右跳一下。按较宽的那颗（「重启 DSH」在 13px 下的自然宽
-   102.8px）定格，短字的「停止」把多出来的宽度交给 flex 居中。 */
-.actions-primary button {
-  min-width: 103px;
+/* 会话按钮（停止 / 启动 DSH / 重启 DSH）与打开组主按钮共用同一套参数：
+   同一个宽度（--btn-w）、同一个高度（--btn-h，见上方规则）、同一个图标方块，
+   文字一律在「图标方块右缘 … 按钮右缘」这段里居中。
+   此前三颗各按内容撑宽（74 / 103 / 127px），停止与重启交替时整排按钮左右跳，
+   并排看也是一大一小；改成定宽 + 居中后三颗文字中线完全对齐。 */
+:where(.toolbar-actions button:not(.open-item):not(.btn-open-more)) {
+  min-width: var(--btn-w);
+  justify-content: center;
 }
 
 .toolbar-actions button .btn-text {
@@ -105,10 +99,9 @@ button.primary:hover:not(:disabled) {
   transition: transform var(--btn-sweep-ms) ease;
 }
 
-/* 图标段占左端一个方格（34px）：图标在左、文字在右。
+/* 图标段占左端一个方格（--btn-ico-size）：图标在左、文字在右。
    左内边距 = 6px 间隙 + 方格（图标板绝对定位盖在这段内边距上）；
-   右内边距只留 6px 呼吸——按钮宽度随内容走，若右边也让出 40px，
-   那 40px 是纯空白，图标+文字整体就贴向左边了（维护者指出的「文字偏左」）。 */
+   右内边距只留 6px 呼吸，多出来的宽度由上面的 flex 居中分给文字两侧。 */
 .toolbar-actions button:has(.btn-ico) {
   padding-left: calc(6px + var(--btn-ico-size));
   padding-right: 6px;

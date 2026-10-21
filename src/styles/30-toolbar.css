@@ -131,16 +131,13 @@
   align-items: center;
 }
 
-/* 两段式左半边：图标方块（边长 --btn-ico-size）+ 文字 + 左右等宽呼吸。
-   左内边距 = 图标方块 + 呼吸，右内边距 = 同一个呼吸 → 文字正好落在
-   「图标方块右缘 … 分隔线」这段的正中，两边不会一边宽一边窄。 */
+/* 两段式左半边：与「停止 / 重启 DSH」共用同一套按钮参数（宽高、内边距走
+   60-controls.css 的统一规则），这里只处理拼成一颗所必需的圆角与右边线。 */
 .open-split #btn-open {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   /* 竖线只归右半边那颗三角（见 #btn-open-more），主按钮自身不画右边线。 */
   border-right: 0;
-  padding-left: calc(var(--btn-ico-size) + var(--btn-open-gap));
-  padding-right: var(--btn-open-gap);
 }
 
 /* 图标方块不画竖线：全站 .btn-ico 默认带一条右边线（「停止 / 重启 DSH」
