@@ -146,12 +146,18 @@ button.primary:hover:not(:disabled) {
    用 ID 选择器：普通元素选择器与 :where() 都压不过 button 的 padding 简写。 */
 #btn-toggle.round,
 #btn-restart {
-  display: grid;
   place-items: center;
   width: var(--btn-h);
   min-width: var(--btn-h);
   padding: 0;
   border-radius: 50%;
+}
+
+/* display 必须单独走 :where() 把它降到 0 特指度：ID 规则 (1,0,0) 会压过
+   99-hidden.css 里 .hidden 的 (0,1,0)，停止态本该藏起来的「重启 DSH」就会一直显示
+   （与上方三颗按钮统一宽高那条规则同一个坑）。宽高与内边距仍需 ID 才压得过 button 的简写。 */
+:where(#btn-toggle.round, #btn-restart) {
+  display: grid;
 }
 
 #btn-toggle.round svg,
