@@ -162,25 +162,56 @@
 
 /* 主卡里再并排两个子块已在 .cell-row 里处理，这里不再单独定义。 */
 
-/* 块内的输入框 / 下拉框吃掉可用宽度。
-   早先给过 760px 上限，宽窗口下会变成「左边贴边、右边一大片空白」，左右不对称；
-   现在让它随容器走，左右留白由所在容器的内边距决定，两边一致。 */
+/* 块内的输入框 / 下拉框：长度统一取 --ctl-w，几行控件左右两端才对得齐。
+   之前让它随容器走满宽，宽窗口下拉得太长、右边大片空白；现在统一收窄到同一个长度。
+   max-width:100% 保证窄窗口下不会溢出。 */
 .block .picker,
 .block input[type="text"] {
-  width: 100%;
+  width: var(--ctl-w);
+  max-width: 100%;
 }
 
-/* 并排两个控件（渠道下拉 + 版本徽章 / 端口 + 还原）时按比例分宽。 */
+/* 带行尾按钮的控件行（版本下拉 + 刷新 / 程序路径 + 浏览 / 端口 + 还原）：
+   整行取统一长度 --ctl-w，行内控件吃掉按钮以外的宽度，按钮固定不缩。
+   这样单控件行与带按钮行左右两端都对齐，几行控件看着是同一个长度。 */
+.block .control-line,
+.block .path-row,
+.block .port-row {
+  width: var(--ctl-w);
+  max-width: 100%;
+}
+
 .block .control-line > .picker,
+.block .path-row > input[type="text"],
 .block .port-row > input[type="text"],
 .block .port-row > input[type="number"] {
   flex: 1 1 auto;
   width: auto;
+  min-width: 0;
 }
 
-/* 命令预览：等宽、淡底、可选中复制。
-   宽度收到内容宽（fit-content）而不是撑满整行：这条命令通常只有一行几十个字符，
-   撑满时右侧会留下大半片空底色，看着像「一个超长的空框」。长命令到满宽为止再折行。 */
+.block .control-line > button,
+.block .path-row > button,
+.block .port-row > button {
+  flex: none;
+}
+
+/* 程序路径与自定义命令天然很长，之前放开成整行宽；按「启动方式里所有框长度统一」
+   的要求一并收窄到 --ctl-w。ID 选择器的特指度最高，所以这里必须带 ID 才能压过
+   60-controls.css 里的 #binary-path / #custom-command 整行宽规则。 */
+.block .fields > #binary-path,
+.block .fields > #custom-command {
+  width: var(--ctl-w);
+  max-width: 100%;
+}
+
+/* 命令预览同样收到统一长度（原来是按内容宽 fit-content，各页长度不一致）。 */
+.block .command-preview {
+  width: var(--ctl-w);
+  max-width: 100%;
+}
+
+/* 命令预览：等宽、淡底、可选中复制。 */
 .command-preview {
   display: block;
   width: fit-content;
