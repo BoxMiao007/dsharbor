@@ -64,21 +64,40 @@ button.primary:hover:not(:disabled) {
   --btn-ico-size: 34px;
 }
 
-/* 工具条这一排按钮统一一个高度，垂直居中交给 flex 算：
-   - 「停止」「重启 DSH」「应用内打开」和它的三角段必须同高，否则亮色实底上
-     能看出 0.5px 台阶，看着就是「一边大一边小」；
-   - 「启动 DSH」停止态原来靠 .text-window 的 line-height:1.2em + vertical-align
-     凑竖直位置，实测整块比按钮中心低 1.5px（维护者看到的「文字偏下」）。
-     flex 居中后文字块的几何中心 = 按钮中心，不再受行高与基线影响。
-   菜单项 .open-item 是下拉里的行，不参与这套尺寸。 */
-.toolbar-actions button:not(.open-item) {
+/* 工具条这一排按钮统一高度与文字居中：
+   - 高度原来各按内容撑开（33 / 33.5 / 34px 三种），亮色实底上并排能看出半像素
+     台阶，看着就是「一边大一边小」；
+   - 「启动 DSH」停止态原来靠 .text-window 的 line-height + vertical-align 凑
+     竖直位置，实测比按钮中心低 1.5px（维护者指出的「文字偏下」）。改成 flex
+     居中后，文字块几何中心 = 按钮中心，不再受行高与基线影响。
+   整条选择器包在 :where() 里把特指度降到 0：.hidden 只有 (0,1,0)，普通写法
+   (0,2,1) 会把它顶掉，导致隐藏的「重启 DSH」被强行显示（停止态两颗按钮并排）。
+   同理排除 .btn-open-more —— 那颗三角靠自己的 grid + place-items 居中，
+   套上这里的 flex 会被 justify-content 顶到左边。 */
+:where(.toolbar-actions button:not(.open-item):not(.btn-open-more)) {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   height: var(--btn-h);
   box-sizing: border-box;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* 带图标段的按钮（停止 / 重启 DSH / 应用内打开）：图标在左、文字紧跟其后。
+   图标板是绝对定位、不参与 flex 排布，所以这里只能管文字 —— 用 flex-start
+   让文字一律从图标右缘 +6px 处开始。别改成 center：定宽之后短字「停止」会被
+   推到图标右侧那段的中央，和「重启 DSH」的左缘差出 15px，两态切换时文字横向
+   跳一下，也和「应用内打开」的结构不一致。 */
+:where(.toolbar-actions button:has(.btn-ico)) {
+  justify-content: flex-start;
+}
+
+/* 「停止」与「重启 DSH」交替出现在同一个位置，按钮宽度必须一致，
+   否则切换时整排按钮左右跳一下。按较宽的那颗（「重启 DSH」在 13px 下的自然宽
+   102.8px）定格，短字的「停止」把多出来的宽度交给 flex 居中。 */
+.actions-primary button {
+  min-width: 103px;
 }
 
 .toolbar-actions button .btn-text {
