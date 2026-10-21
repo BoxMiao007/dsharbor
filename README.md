@@ -115,6 +115,7 @@ pnpm exec tauri build
 | `design/ui-candidates/` | 界面候选静态稿（`node scripts/ui-candidates.mjs` 起预览台逐个点开挑选） |
 | `docs/decisions.md` | 重大技术决策记录（每条含决策、原因、放弃了什么） |
 | `docs/manual-acceptance.md` | 发布前 Windows 手动验收手册 |
+| `docs/ui-review-2026-10-21.md` | 界面评审报告（Web Interface Guidelines 合规 + 视觉设计，含实测对比度与优先级） |
 | `GLOSSARY.md` | 项目与 DSH 生态术语表 |
 
 ### 技术栈
