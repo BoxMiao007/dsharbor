@@ -68,7 +68,7 @@ pnpm exec tauri dev
 
 一条命令同时起 Vite（`127.0.0.1:1420`）和真正的 Tauri 窗口：改前端（`src/`）存盘即在窗口里刷新（CSS 走 HMR 不重载），改 Rust（`src-tauri/`、`crates/`）会增量重编并自动重启窗口。它是**真 WebView2 窗口**，所以拖动、缩放、贴靠、托盘、WebView2 渲染差异这些都能直接手动验；普通浏览器里的预览台（`node scripts/mock-preview.mjs`）量尺寸更快，但没有原生窗口行为。
 
-别用 `pnpm exec tauri build` 加装包来验界面：那一轮要几分钟，装完还得先关掉在跑的实例。只有发版、验安装器、验托盘或自启动这类「装出来的东西」时才需要。
+别用 `pnpm exec tauri build` 加装包来验界面：那一轮要几分钟，装完还得先关掉在跑的实例。只有发版、验安装器、验托盘这类「装出来的东西」时才需要。
 
 报 `Port 1420 is already in use` 是上一次的 dev server 没退干净：先 `Stop-Process -Name dsharbor -Force`，再占用 1420 端口的进程一起收掉，然后重开。
 
@@ -88,7 +88,7 @@ pnpm pack:bridge
 
 `node --test test/frontend/*.test.mjs` 用 `puppeteer-core` 驱动本机 Edge 在假数据预览台上跑，量的是「用量尺寸 / 可见性 / 动画」这类浏览器里才说得清的接缝；缺 puppeteer-core 或 Edge 时整组 skip（不是静默通过）。路径可用 `DSHARBOR_PUPPETEER` / `DSHARBOR_BROWSER` 覆盖。
 
-`pnpm exec tauri build` 只在发版、验安装包、验托盘或自启动这类「装出来的东西」时才跑，日常改界面不必等它。
+`pnpm exec tauri build` 只在发版、验安装包、验托盘这类「装出来的东西」时才跑，日常改界面不必等它。
 
 ### 一条命令出 Windows 安装包
 

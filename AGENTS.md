@@ -28,7 +28,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 2. 功能实际跑通:能启动的自测核心路径;涉及界面或输出的改动,附截图或运行结果作为交付证据。界面改动按两档验,**任何一档都不打安装包**:
    - 量尺寸、看排版:`pnpm build` 后用 `node scripts/mock-preview.mjs` 在普通浏览器里按假数据渲染、量尺寸、截图。注意验证门里的 `pnpm build` 会清空 `dist`,交付预览前必须重跑一次 `node scripts/mock-preview.mjs --no-serve` 重新生成 `dist/mock.html`,否则预览地址返回 404。
    - 需要在真窗口里点一遍:`pnpm exec tauri dev`(首次或桥接插件改过时先 `pnpm pack:bridge`)。一条命令同时起 Vite(`127.0.0.1:1420`)与真 Tauri 窗口,前端存盘即刷新、Rust 改动自动重编重启。拖动/缩放/贴靠、WebView2 与 Chromium 的渲染差异(例如 `::-webkit-scrollbar` 在预览的 overlay 滚动条下被忽略)、真 DSH 进程与托盘、按钮悬停漫过与逐字切换这类交互,都在这档验。
-   - 禁止用「`tauri build` + 静默安装 + 装出来的 exe」验界面:一轮要几分钟,且必须先关掉在跑的实例;那一套只在发版、验安装器/卸载、验开机自启动时才用。
+   - 禁止用「`tauri build` + 静默安装 + 装出来的 exe」验界面:一轮要几分钟,且必须先关掉在跑的实例;那一套只在发版、验安装器/卸载、验托盘时才用。
 3. 交付说明讲给不写代码的人听:做了什么、怎么看到结果(地址/命令/截图)、有什么限制和后续建议;没把握或未完成的部分明说,不藏在细节里。
 4. 打出来的安装包只在发版或专门验安装器时用,不用于日常界面验证:
    - 需要装到本机时:先关掉在跑的实例(`Stop-Process -Name dsharbor -Force`,或托盘里完全退出),再静默执行 `target/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe /S`(安装包会一并刷新注册表卸载项、开始菜单与 `uninstall.exe`,不用再手工 copy 文件)。安装目录沿用上次选择的位置(已实测:NSIS 从注册表卸载项读回 `InstallLocation`,当前是 `D:\Program Files\DSHarbor`;装完 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSHarbor` 的 `DisplayVersion` 会跟着更新)。
