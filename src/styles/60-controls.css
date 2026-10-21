@@ -456,6 +456,13 @@ button.primary:hover:not(:disabled) {
   position: relative;
 }
 
+/* 「垫片内容」这类只有一个短路径的输出区：整块收到内容宽（连右上角复制按钮一起），
+   否则一条 60 字符的路径下面会拖出大半屏的空底色。长内容到满宽才开始折行。 */
+.log-area-code {
+  width: fit-content;
+  max-width: 100%;
+}
+
 /* 输出区右上角的复制按钮：平时半透明、不可点，指到输出区或键盘聚焦时才浮出来，
    免得压住最后几行文字。 */
 .log-copy {
@@ -760,6 +767,10 @@ input[type="number"] {
    拼不过 display:block，所以这里自己让开「被隐藏时」的情况，否则空提示会留个空胶囊。 */
 .hint.notice:not(.hidden) {
   display: block;
+  /* 宽度跟内容走：提示多数只有一两行短句，撑满整行会让淡黄底横贯整个卡片，
+     看着像「一个超长的空背景框」。到卡片宽度为止才折行。 */
+  width: fit-content;
+  max-width: 100%;
   padding: 8px 12px;
   border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--card));
   border-radius: 10px;

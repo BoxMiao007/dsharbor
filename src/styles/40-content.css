@@ -10,8 +10,11 @@
 
 /* 日志主卡：标题与两颗按钮直接摆在这张大卡上，日志正文是卡里唯一一层内嵌卡片。
    三层（大卡 → 小卡 → 正文框）压成两层，少一层边框就显得干净。
-   覆盖 .block.main-card 的 overflow-y:auto：这一页不该整卡滚，滚的是正文自己。 */
+   覆盖 .block.main-card 的 overflow-y:auto：这一页不该整卡滚，滚的是正文自己。
+   高度要撑满（flex:1 1 auto）：正文 .log-body 靠吃掉剩余高度来决定自己的视口高度，
+   主卡按内容收缩的话正文就只剩一行高。 */
 .block.main-card.main-card-log {
+  flex: 1 1 auto;
   overflow: hidden;
   gap: 14px;
 }
@@ -132,11 +135,13 @@
   box-shadow: var(--shadow-soft);
 }
 
-/* 主卡：内容区里那张大卡片，吃掉余量，内部自己滚。里面的每个条目各装一张小卡
-   （.cell），卡与卡之间露缝、不画分隔线。 */
+/* 主卡：内容区里那张大卡片。里面的每个条目各装一张小卡（.cell），卡与卡之间露缝、
+   不画分隔线。
+   高度按内容伸缩（0 1 auto）而不是恒撑满：撑满时内容少的页（关于、托盘与网络、环境）
+   会在卡片底部留下几百像素空白。上限是父容器的 100%，内容超出时才滚动。 */
 .block.main-card {
-  flex: 1;
-  min-height: 0;
+  flex: 0 1 auto;
+  max-height: 100%;
   gap: 20px;
   padding: 32px;
   overflow-y: auto;
@@ -172,9 +177,13 @@
   width: auto;
 }
 
-/* 命令预览：等宽、淡底、可选中复制。 */
+/* 命令预览：等宽、淡底、可选中复制。
+   宽度收到内容宽（fit-content）而不是撑满整行：这条命令通常只有一行几十个字符，
+   撑满时右侧会留下大半片空底色，看着像「一个超长的空框」。长命令到满宽为止再折行。 */
 .command-preview {
   display: block;
+  width: fit-content;
+  max-width: 100%;
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;

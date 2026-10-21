@@ -220,7 +220,7 @@ export function buildHtml(info: AppInfo): string {
     <div class="cli-windows-only">
       <details class="log-box">
         <summary><span class="chev">▸</span>垫片内容（跟随当前启动方式）</summary>
-        <div class="log-area">
+        <div class="log-area log-area-code">
           <pre id="cli-shim-text">（读取中）</pre>
           <button type="button" class="log-copy" id="btn-cli-copy-shim">复制</button>
         </div>
