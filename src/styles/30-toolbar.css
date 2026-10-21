@@ -212,8 +212,9 @@
 }
 
 .open-menu button svg {
-  width: 17px;
-  height: 17px;
+  /* 图标收到 14px：17px 时比 13px 的菜单文字大出一圈，像反过来配的文字。 */
+  width: 14px;
+  height: 14px;
   flex: none;
   fill: none;
   stroke: currentColor;

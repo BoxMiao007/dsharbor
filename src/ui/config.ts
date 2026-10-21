@@ -85,6 +85,5 @@ export const CUSTOM_DEFAULT_COMMAND = "npx --yes @deepseek-ai/dsh@next web";
  */
 export const START_PROFILE = "web";
 
-/** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
+/** 「启动 DSH」按钮停止态的常显文字。 */
 export const TOGGLE_TEXT_REST = "启动 DSH";
-export const TOGGLE_TEXT_HOVER = "开始运行";

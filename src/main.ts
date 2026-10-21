@@ -13,7 +13,7 @@ import { Picker } from "./ui/picker";
 import type { PickerChoice } from "./ui/picker";
 import { THEME_KEY, readStoredTheme, applyMode } from "./ui/theme";
 import type { ThemeId } from "./ui/theme";
-import { escapeHtml, toggleSwapHtml } from "./ui/markup";
+import { escapeHtml } from "./ui/markup";
 import { applyRestartSpin, beginRestartSpin, endRestartSpin, updateRestartSpin, setStatusRefresher } from "./ui/spin";
 import { buildHtml } from "./ui/build-html";
 
@@ -1196,28 +1196,25 @@ async function main(): Promise<void> {
     let currentStatus: SessionStatus | null = null;
 
     /** 上次渲染的按钮形态：render 每秒跑一次，只在跨状态时重建 DOM。
-     * 初始就是 swap（buildHtml 的标记带 .swap），第一轮 render 不必重建。 */
-    let toggleMode: "swap" | "plain" | null = "swap";
+     * 初始就是「启动 DSH」纯文本（buildHtml 的初始标记），第一轮 render 不必重建。 */
+    let toggleMode: "rest" | "plain" | null = "rest";
 
     /**
-     * 渲染「启动 / 停止」按钮：停止态用两组文字做逐字切换（样式在 style.css 的 #btn-toggle.swap），
-     * 运行态是普通纯文本按钮。两种形态只在切换时重建一次。
-     * （TOGGLE_TEXT_* / charsToSpans / 初始 swap 标记在模块级，buildHtml 也要用。）
+     * 渲染「启动 / 停止」按钮：停止态是纯文本「启动 DSH」（默认悬停高亮），
+     * 运行态带图标段。两种形态只在切换时重建一次。
      */
     function renderToggleButton(stopped: boolean): void {
-      const mode = stopped ? "swap" : "plain";
+      const mode = stopped ? "rest" : "plain";
       if (mode === toggleMode) return;
       toggleMode = mode;
       if (!stopped) {
-        btnToggle.classList.remove("swap");
         btnToggle.removeAttribute("aria-label");
         // 「停止」与其余三颗会话按钮一样带图标段（悬停展开效果由 CSS 统一处理）。
         btnToggle.innerHTML = `<span class="btn-text">停止</span><span class="btn-ico" aria-hidden="true">${ICON_STOP}</span>`;
         return;
       }
-      btnToggle.classList.add("swap");
       btnToggle.setAttribute("aria-label", TOGGLE_TEXT_REST);
-      btnToggle.innerHTML = toggleSwapHtml();
+      btnToggle.innerHTML = `<span class="btn-text">${TOGGLE_TEXT_REST}</span>`;
     }
 
     function render(status: SessionStatus): void {
@@ -1614,10 +1611,12 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 插件卡的徽章跟着选中的环境走：一眼看出开关作用在哪个环境、有几项。 */
+    /** 插件卡的徽章跟着选中的环境走：一眼看出开关作用在哪个环境、启用了几项。
+     *  plugins 数的是 dsh.profile.bundles 里登记的插件（启动时实际挂载的那些），
+     *  所以文案写「已启用 N 个插件」，与下方开关列表的启停语义一致。 */
     function renderPluginSummary(): void {
       const target = profileOf(prefs.profile);
-      const count = target ? `${target.plugins} 个插件` : "未选中环境";
+      const count = target ? `已启用 ${target.plugins} 个插件` : "未选中环境";
       pluginSummary.textContent = `${target?.name ?? "—"} · ${count}`;
       pluginSummary.className = `badge ${target && target.depsInstalled ? "badge-running" : "badge-stopped"} panel-badge`;
     }
