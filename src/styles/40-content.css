@@ -123,6 +123,13 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
 }
 
+/* 「托盘设置│网络与代理」两卡的每行是「标题 + 下拉 + 说明」，说明长短不一：
+   左边第一行说明折两行、右边只占一行时，第二行就会错开一截（实测差 21px）。
+   给这两卡的说明留够两行的高度，两列每行就都从同一条横线上起。 */
+.cell-row:has(.network-content) .cell .fields > .hint {
+  min-height: 2lh;
+}
+
 /* 卡片：淡底 + 细边框 + 圆角 + 轻阴影，浮在页面背景上。
    块头左边标题、右边徽章或说明。 */
 .block {
@@ -171,18 +178,29 @@
   max-width: 100%;
 }
 
-/* 带行尾按钮的控件行（版本下拉 + 刷新 / 程序路径 + 浏览 / 端口 + 还原）：
-   整行取统一长度 --ctl-w，行内控件吃掉按钮以外的宽度，按钮固定不缩。
-   这样单控件行与带按钮行左右两端都对齐，几行控件看着是同一个长度。 */
-.block .control-line,
-.block .path-row,
+/* 「版本」这一行：下拉框与上面的「运行环境」同宽（--ctl-w），刷新按钮放到框外右侧，
+   单独排在框后面。整行随内容走（不受 --ctl-w 限制），所以按钮不会挤进下拉框的宽度里。 */
+.block .control-line {
+  width: auto;
+  max-width: 100%;
+}
+
+.block .control-line > .picker {
+  flex: none;
+  width: var(--ctl-w);
+  max-width: 100%;
+}
+
+.block .control-line > button {
+  flex: none;
+}
+
+/* 「监听端口 + 还原」仍是整行取 --ctl-w：端口很短，收在一起才好对上面几行。 */
 .block .port-row {
   width: var(--ctl-w);
   max-width: 100%;
 }
 
-.block .control-line > .picker,
-.block .path-row > input[type="text"],
 .block .port-row > input[type="text"],
 .block .port-row > input[type="number"] {
   flex: 1 1 auto;
@@ -190,24 +208,44 @@
   min-width: 0;
 }
 
-.block .control-line > button,
-.block .path-row > button,
 .block .port-row > button {
   flex: none;
 }
 
-/* 程序路径与自定义命令天然很长，之前放开成整行宽；按「启动方式里所有框长度统一」
-   的要求一并收窄到 --ctl-w。ID 选择器的特指度最高，所以这里必须带 ID 才能压过
-   60-controls.css 里的 #binary-path / #custom-command 整行宽规则。 */
-.block .fields > #binary-path,
-.block .fields > #custom-command {
-  width: var(--ctl-w);
+/* 程序路径 / 自定义命令这两类内容天然可以很长，按「可自动延长」处理：跟随容器走满整行，
+   右侧留白由所在卡片的内边距提供，不再套 --ctl-w。（ID 选择器特指度最高，必须带 ID
+   才能压过 60-controls.css 里 #binary-path / #custom-command 的 width:100%。） */
+.block .path-row {
+  width: auto;
   max-width: 100%;
 }
 
-/* 命令预览同样收到统一长度（原来是按内容宽 fit-content，各页长度不一致）。 */
+.block .path-row > input[type="text"] {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.block .path-row > button {
+  flex: none;
+}
+
+.block .fields > #binary-path,
+.block .fields > #custom-command {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* 「自定义命令」里的运行环境下拉只放一半长度（480→190 的视觉比例），
+   给下面的整条命令留出对照，不跟启动方式里那些 380 的框一样长。 */
+.block .fields > #custom-runtime-picker {
+  width: calc(var(--ctl-w) / 2);
+  max-width: 100%;
+}
+
+/* 命令预览会随命令长度变长，让它撑满一行、靠卡片内边距留出右侧空隙。 */
 .block .command-preview {
-  width: var(--ctl-w);
+  width: 100%;
   max-width: 100%;
 }
 

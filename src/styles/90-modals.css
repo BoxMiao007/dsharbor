@@ -322,6 +322,19 @@ button.danger:hover:not(:disabled) {
 /* 代理地址框只在手动模式露出来；它包一层 div 是为了跟下载源一样能整行隐藏
    （input 自己 hidden 也行，但 .hidden 与 input[type="text"] 选择器特指度打平后
    要靠声明顺序取胜，包一层更稳）。 */
+/* 「网络与代理」卡的内容包了一层 #network-content（原来只为整块按平台隐藏）。
+   它必须是列 flex + 与 .cell 相同的 10px 间距，否则里面的 col-head 与两个 .fields
+   会贴在一起，竖排节奏和左边「托盘设置」卡对不上，两卡的行就错位。 */
+.network-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.network-content.hidden {
+  display: none;
+}
+
 .proxy-manual {
   display: flex;
 }
