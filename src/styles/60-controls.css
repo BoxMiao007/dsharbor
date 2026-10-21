@@ -579,8 +579,12 @@ p.hint.error {
   background: transparent;
 }
 
+/* 参数区缩进到选项标题下方（radio 宽 + 两处间距）。
+   右侧给同样的缩进：里面下拉框/输入框现在随容器走满宽，右边不补就会贴到卡片右边缘，
+   与左边的缩进不对称。 */
 .mode-group > .fields {
   padding-left: 37px;
+  padding-right: 37px;
 }
 
 .mode {

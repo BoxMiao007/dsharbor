@@ -409,7 +409,10 @@ export function buildHtml(info: AppInfo): string {
     panelSection("integ", mainCard([cell(cliBlockBody), cell(dshVersionsBody)])),
     panelSection(
       "traynet",
-      mainCard([cellRow("1-2", trayFields, networkFieldsBody), cell(selfCheckBody)]),
+      // 托盘设置与网络与代理两张小卡等宽：内容不是一个量级（网络那边的说明长得多），
+      // 但两张并排的卡宽窄不一、控件左右对不齐，观感更差；等宽后两列的标题、下拉框、
+      // 说明都从同一条竖线起，看着才整齐。
+      mainCard([cellRow("1-1", trayFields, networkFieldsBody), cell(selfCheckBody)]),
     ),
     // 日志分区是唯一不走「每项一张小卡」的分区：标题与按钮直接在大卡上，
     // 正文单独一层，所以这里把 logBody 直接铺进主卡，不套 cell。
