@@ -49,10 +49,12 @@ html[data-mode="dark"] {
   --ok: #57c98b;
   --warn: #e8c85c;
   --danger: #ef5f6b;
-  /* 日志正文：走强调色（蓝），把「这是控制台输出」和别的卡片区分开。
-     fill = 正文底；fg = 蓝底上的文字。这一组跟着外观走（浅色外观下用浅色那套）。 */
-  --log-fill: #12325e;
-  --log-fg: #ffffff;
+  /* 日志正文：中性深色面板，比卡片沉一档，靠描边和等宽字表示「这是控制台输出」。
+     早先用的饱和蓝底与整套冷灰卡片打架，改成中性色后不再抢画面的颜色。
+     fill = 正文底；fg = 底上的文字；line = 正文框描边（两套外观各自定义）。 */
+  --log-fill: #10161d;
+  --log-fg: #c9d5e3;
+  --log-line: rgba(255, 255, 255, 0.08);
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
   --shadow-soft: 0 3px 14px rgba(0, 0, 0, 0.34);
   --tip-bg: #0b1219;
@@ -77,9 +79,10 @@ html[data-mode="light"] {
   --ok: #1e9e5f;
   --warn: #b8860b;
   --danger: #d33a4a;
-  /* 浅色外观下的日志色：正文底压深一档保证白字够读。 */
-  --log-fill: #1b4b9c;
-  --log-fg: #ffffff;
+  /* 浅色外观下的日志正文：仍走中性色（不用饱和蓝），只是反过来比卡片沉一档。 */
+  --log-fill: #f4f7fb;
+  --log-fg: #2b3846;
+  --log-line: rgba(15, 26, 40, 0.1);
   --shadow: 0 18px 48px rgba(21, 38, 60, 0.16);
   --shadow-soft: 0 2px 10px rgba(21, 38, 60, 0.1);
   --tip-bg: #ffffff;
@@ -495,10 +498,12 @@ body {
   min-height: var(--badge-height);
 }
 
+/* 卡片左上角的标题：每张卡都从这一行起，字号与字重都比正文明显高一档
+   （正文 12~13px / 常规字重），配合正文的淡色，一眼分出「这是这张卡的标题」。 */
 .col-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--fg-dim);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
   letter-spacing: 0.2px;
 }
 
@@ -660,13 +665,12 @@ body {
   flex-direction: column;
 }
 
-/* 日志卡：把日志正文撑满整张主卡（不给高度时正文会缩成一条）。
-   写成 .cell.cell-log 是因为 .cell 的 flex:none 在下面才定义，同特指度会被它压回去。 */
-.cell.cell-log {
-  flex: 1;
-  min-height: 0;
-  /* 日志卡自己不再滚（滚的是内部正文），主卡也不用为它让出滚动条。 */
+/* 日志主卡：标题与两颗按钮直接摆在这张大卡上，日志正文是卡里唯一一层内嵌卡片。
+   三层（大卡 → 小卡 → 正文框）压成两层，少一层边框就显得干净。
+   覆盖 .block.main-card 的 overflow-y:auto：这一页不该整卡滚，滚的是正文自己。 */
+.block.main-card.main-card-log {
   overflow: hidden;
+  gap: 14px;
 }
 
 /* 卡头右侧那两颗按钮（清空 / 复制）：与卡头标题同一条线，靠右。 */
@@ -699,13 +703,15 @@ body {
   color: var(--fg);
 }
 
-/* 日志正文：卡中卡，圆角与别的 cell 内的块一致；整块等宽字体、可选中复制。 */
+/* 日志正文：卡里唯一一层内嵌卡片，撑满大卡剩下的高度（不给 flex 时正文会缩成一条）。
+   中性深底 + 细描边 + 等宽字，整块可选中复制。 */
 .log-body {
   flex: 1;
   min-height: 0;
   margin: 0;
   padding: 14px 16px;
-  border-radius: 10px;
+  border: 1px solid var(--log-line);
+  border-radius: calc(var(--radius-card) - 2px);
   background: var(--log-fill);
   overflow: auto;
   font-family: Consolas, "Cascadia Mono", monospace;
@@ -1390,6 +1396,32 @@ p.hint.error {
   color: var(--danger);
 }
 
+/* 「启动方式」的每一项连同它展开的参数包成一组：选中时整组抬一层强调底色 + 细描边，
+   一眼看出「下面这几行参数属于这个选项」，而不是四行平铺的选项各管各的。
+   参数缩进到选项标题下方（radio 宽 + 两处间距），归属关系再明确一层。 */
+.mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  transition:
+    background 140ms,
+    border-color 140ms;
+}
+
+/* 只有「选中 + 真的展开了参数」的那一组才抬底色：没有参数项的选项（系统全局命令）
+   选中时仍是一行文字，给它套个框只会显得空。 */
+.mode-group:has(> .mode > input:checked):has(> .fields:not(.hidden)) {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: var(--accent-soft);
+}
+
+.mode-group > .fields {
+  padding-left: 37px;
+}
+
 .mode {
   display: flex;
   gap: 12px;
@@ -1398,10 +1430,12 @@ p.hint.error {
   border-radius: 10px;
   border: 1px solid transparent;
   cursor: pointer;
+  transition: background 140ms;
 }
 
+/* 悬停提示「这行可点」；选中组自己有底色，这里用中性的提亮，避免和选中色撞在一起。 */
 .mode:hover {
-  background: var(--card-2);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 
 .mode input {
@@ -2081,6 +2115,18 @@ html::-webkit-scrollbar {
   stroke: currentColor;
   stroke-width: 1.7;
   stroke-linecap: round;
+}
+
+/* 环境名浮窗（新建 / 重命名 / 复制 / 删除）：正文只有一个输入框和一两句提示，
+   按 520px 撑开会在输入框末尾留一大片空白。这一张单独收窄，输入框改成吃掉整行，
+   浮窗宽度就贴着内容走。 */
+.modal.modal-tight {
+  max-width: min(420px, calc(100vw - 48px));
+}
+
+/* 环境名输入框：本来按全站规矩固定 260px，在这个窄浮窗里会跟右边界拉出空档。 */
+#profile-manage-name {
+  width: 100%;
 }
 
 /* 浮窗正文自己滚：内容长短不一（补丁层备份清单可能很长），别把浮窗撑出屏幕。 */

@@ -860,15 +860,15 @@ function panelSection(key: PanelKey, body: string): string {
  * 小卡：主卡里每个条目各装一张小卡（卡中卡）。圆角比主卡收窄两圈，
  * 靠主卡的内边距与 gap 露出主卡底色——露缝，不画分隔线。
  */
-function cell(body: string, extra = ""): string {
-  return `<section class="cell${extra ? ` ${extra}` : ""}">${body}</section>`;
+function cell(body: string): string {
+  return `<section class="cell">${body}</section>`;
 }
 
 /**
  * 主卡：内容区里那张大卡片，里面按顺序摆若干小卡；条目撑高时由主卡自己滚。
  */
-function mainCard(items: string[]): string {
-  return `<section class="block main-card">${items.join("")}</section>`;
+function mainCard(items: string[], extra = ""): string {
+  return `<section class="block main-card${extra ? ` ${extra}` : ""}">${items.join("")}</section>`;
 }
 
 /** 主卡里并排两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。 */
@@ -1118,59 +1118,69 @@ function buildHtml(info: AppInfo): string {
   `;
 
   // 「启动方式」块：四选一 + 各自参数。实际执行的命令与附加参数放在下面并排的两块里。
+  // 每一项连同它展开的参数包在同一个 .mode-group 里：选中且展开参数时整组抬一层底色，
+  // 让人一眼看出「这几行参数属于这个选项」，而不是四行平铺的选项各管各的。
   const modesBody = `
     ${colHead("启动方式")}
-    <label class="mode">
-      <input type="radio" name="mode" value="npx" checked />
-      <span>
-        <b>${MODE_LABELS.npx}</b>
-        <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）；实际执行的命令见下方「命令预览」。</small>
-      </span>
-    </label>
-    <div id="npx-fields" class="fields hidden">
-      <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行，桥接插件也装到那个发行版里。">!</span></span>
-      <div class="picker" id="npx-runtime-picker"></div>
-      <span class="field-label">渠道 <span class="info-dot" role="img" tabindex="0" aria-label="渠道说明" data-tip="稳定版 / 最新尝鲜版对应 npm 的 latest / next 标签，右侧徽章显示标签当前指向的版本；尝鲜版历史版本 / 内测版是版本范围，需要再选一个具体版本。">!</span></span>
-      <div class="control-line">
-        <div class="picker" id="npx-channel-picker"></div>
-        <span id="npx-channel-badge" class="badge badge-version"></span>
-        <div class="picker hidden" id="npx-version-picker"></div>
+    <div class="mode-group">
+      <label class="mode">
+        <input type="radio" name="mode" value="npx" checked />
+        <span>
+          <b>${MODE_LABELS.npx}</b>
+          <small>未全局安装 DSH 时用；首次启动会自动下载（较慢）；实际执行的命令见下方「命令预览」。</small>
+        </span>
+      </label>
+      <div id="npx-fields" class="fields hidden">
+        <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行，桥接插件也装到那个发行版里。">!</span></span>
+        <div class="picker" id="npx-runtime-picker"></div>
+        <span class="field-label">渠道 <span class="info-dot" role="img" tabindex="0" aria-label="渠道说明" data-tip="稳定版 / 最新尝鲜版对应 npm 的 latest / next 标签，右侧徽章显示标签当前指向的版本；尝鲜版历史版本 / 内测版是版本范围，需要再选一个具体版本。">!</span></span>
+        <div class="control-line">
+          <div class="picker" id="npx-channel-picker"></div>
+          <span id="npx-channel-badge" class="badge badge-version"></span>
+          <div class="picker hidden" id="npx-version-picker"></div>
+        </div>
+        <div id="npx-versions-hint" class="hint hidden"></div>
       </div>
-      <div id="npx-versions-hint" class="hint hidden"></div>
     </div>
-    <label class="mode">
-      <input type="radio" name="mode" value="system" />
-      <span>
-        <b>${MODE_LABELS.system}</b>
-        <small>已执行过 <code>npm install -g @deepseek-ai/dsh</code></small>
-      </span>
-    </label>
-    <label class="mode">
-      <input type="radio" name="mode" value="binary" />
-      <span>
-        <b>${MODE_LABELS.binary}</b>
-        <small>最可靠：直接启动 dsh.exe / dsh.cmd 的完整路径</small>
-      </span>
-    </label>
-    <div id="binary-fields" class="fields hidden">
-      <div class="path-row">
-        <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" />
-        <button type="button" id="binary-browse" class="path-browse" title="选择 dsh.exe / dsh.cmd / dsh.bat">浏览…</button>
+    <div class="mode-group">
+      <label class="mode">
+        <input type="radio" name="mode" value="system" />
+        <span>
+          <b>${MODE_LABELS.system}</b>
+          <small>已执行过 <code>npm install -g @deepseek-ai/dsh</code></small>
+        </span>
+      </label>
+    </div>
+    <div class="mode-group">
+      <label class="mode">
+        <input type="radio" name="mode" value="binary" />
+        <span>
+          <b>${MODE_LABELS.binary}</b>
+          <small>最可靠：直接启动 dsh.exe / dsh.cmd 的完整路径</small>
+        </span>
+      </label>
+      <div id="binary-fields" class="fields hidden">
+        <div class="path-row">
+          <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" />
+          <button type="button" id="binary-browse" class="path-browse" title="选择 dsh.exe / dsh.cmd / dsh.bat">浏览…</button>
+        </div>
+        <p id="binary-error" class="error field-error hidden"></p>
       </div>
-      <p id="binary-error" class="error field-error hidden"></p>
     </div>
-    <label class="mode">
-      <input type="radio" name="mode" value="custom" />
-      <span>
-        <b>${MODE_LABELS.custom}</b>
-        <small>自己写整条启动命令，例如 <code>npx @deepseek-ai/dsh@next web</code>（换版本标签、换包管理器、包一层脚本都行）</small>
-      </span>
-    </label>
-    <div id="custom-fields" class="fields hidden">
-      <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行这条命令。">!</span></span>
-      <div class="picker" id="custom-runtime-picker"></div>
-      <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
-      <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」面板里的其它环境时不会改写这条命令——自己写进去才算数。</p>
+    <div class="mode-group">
+      <label class="mode">
+        <input type="radio" name="mode" value="custom" />
+        <span>
+          <b>${MODE_LABELS.custom}</b>
+          <small>自己写整条启动命令，例如 <code>npx @deepseek-ai/dsh@next web</code>（换版本标签、换包管理器、包一层脚本都行）</small>
+        </span>
+      </label>
+      <div id="custom-fields" class="fields hidden">
+        <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行这条命令。">!</span></span>
+        <div class="picker" id="custom-runtime-picker"></div>
+        <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
+        <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」面板里的其它环境时不会改写这条命令——自己写进去才算数。</p>
+      </div>
     </div>
   `;
 
@@ -1242,9 +1252,9 @@ function buildHtml(info: AppInfo): string {
   // 「关于」卡：一行小标题 + 版本与目录表。
   const aboutBody = `${colHead("版本与目录")}${aboutKv}${aboutTail}`;
 
-  // 「日志」卡：日志正文就在主卡里自己滚，不再有窄条、浮层、遮罩与点外面收起——
-  // 它是左栏里的一个分区，与其他分区平等的进进出出。启动 / 重启 / 桥接 / 环境 / 缓存
-  // 这些动作产生的输出不再把界面切到这里，只在左栏「日志」上挂未读数字提示多了几行。
+  // 「日志」卡：标题与两颗按钮直接放在这张大卡上，日志正文是卡里唯一的一层内嵌卡片，
+  // 自己滚。启动 / 重启 / 桥接 / 环境 / 缓存这些动作产生的输出不再把界面切到这里，
+  // 只在左栏「日志」上挂未读数字提示多了几行。
   const logBody = `
     ${colHead("日志", `<div class="log-tools">
       <button id="btn-clear-log" class="log-action" type="button">清空日志</button>
@@ -1266,7 +1276,9 @@ function buildHtml(info: AppInfo): string {
       "traynet",
       mainCard([cellRow("1-2", trayFields, networkFieldsBody), cell(selfCheckBody)]),
     ),
-    panelSection("log", mainCard([cell(logBody, "cell-log")])),
+    // 日志分区是唯一不走「每项一张小卡」的分区：标题与按钮直接在大卡上，
+    // 正文单独一层，所以这里把 logBody 直接铺进主卡，不套 cell。
+    panelSection("log", mainCard([logBody], "main-card-log")),
     panelSection("about", mainCard([cell(aboutBody)])),
   ].join("\n");
 
@@ -1291,7 +1303,7 @@ function buildHtml(info: AppInfo): string {
         ${patchBody}
       </div>
     </section>
-    <section id="modal-name" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-name-title">
+    <section id="modal-name" class="modal modal-tight hidden" role="dialog" aria-modal="true" aria-labelledby="modal-name-title">
       <header class="modal-head">
         <span class="modal-title" id="modal-name-title">环境名</span>
         <button class="modal-close" type="button" data-modal-close="name" title="关闭" aria-label="关闭">${ICON_MODAL_CLOSE}</button>
