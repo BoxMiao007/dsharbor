@@ -6,7 +6,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./style.css";
 import { PANELS, ICON_SUN, ICON_MOON, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
 import { isStarting } from "./ui/types";
-import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, CacheState, CleanupResult, AutoCleanupReport } from "./ui/types";
+import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, InstalledDsh } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
 import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOOLTIP_STOP } from "./ui/config";
 import { Picker } from "./ui/picker";
@@ -650,20 +650,10 @@ async function main(): Promise<void> {
     // 「自动接入」那两半截（开关 + 目录、垫片内容）只在 Windows 下有意义。
     const cliWindowsOnly = Array.from(root.querySelectorAll<HTMLElement>(".cli-windows-only"));
 
-    // ---- 集成面板：npx 缓存盘面 --------------------------------------------------
-    // 占用字节、可回收字节、目录明细、每次删除的结果都在后端算好，界面只渲染。
-    const CACHE_WINDOWS_ONLY = Array.from(root.querySelectorAll<HTMLElement>(".cache-windows-only"));
-    const cacheOwn = $<HTMLElement>("cache-own");
-    const cacheReclaimable = $<HTMLElement>("cache-reclaimable");
-    const cacheRoot = $<HTMLElement>("cache-root");
-    const btnCacheClean = $<HTMLButtonElement>("btn-cache-clean");
-    const cacheMessage = $<HTMLParagraphElement>("cache-message");
-    const cacheWarning = $<HTMLParagraphElement>("cache-warning");
-    const cacheError = $<HTMLParagraphElement>("cache-error");
-    const cacheDirs = $<HTMLPreElement>("cache-dirs");
-    const cacheResults = $<HTMLDivElement>("cache-results");
-    const cacheResultsBody = $<HTMLDivElement>("cache-results-body");
-    const cacheAutoToggle = $<HTMLInputElement>("cache-auto-toggle");
+    // ---- 集成面板：DSH 版本 ------------------------------------------------------
+    // 「本机装了哪几份 dsh」由后端扫出来（npx 缓存 + npm 全局），界面只渲染列表与卸载按钮。
+    const dshVersionsList = $<HTMLDivElement>("dsh-versions-list");
+    const dshVersionsError = $<HTMLParagraphElement>("dsh-versions-error");
 
     // 分区导航：点左侧图标切右侧面板。选择记在 localStorage，壳重启、轻量模式重建窗口后沿用。
     // 不放 config.json：那是整份回写的设置文件，界面偏好丢了不影响功能。
@@ -1338,8 +1328,6 @@ async function main(): Promise<void> {
       } catch (err) {
         console.error("查询状态失败:", err);
       }
-      // 自动清理是后端在真的拉起 DSH 进程之后自己跑的，没有推送通道：顺路问一句有没有新结果。
-      await pollAutoCleanup();
     }
     setStatusRefresher(refresh);
 
@@ -2006,6 +1994,8 @@ async function main(): Promise<void> {
       );
       setManageError(null);
       const deleting = mode === "delete";
+      // 删除是危险动作：整张浮窗染成危险色（描边 + 淡底），让人一眼看出这次不是普通的改名。
+      modalName.classList.toggle("modal-danger", deleting);
       nameInputRow.classList.toggle("hidden", deleting);
       profileManageConfirm.classList.toggle("hidden", !deleting);
       if (deleting && target) {
@@ -2185,7 +2175,6 @@ async function main(): Promise<void> {
         const saved = await invoke<ShellConfig>("load_shell_config");
         prefs = normalizePrefs(saved);
         renderProfilesUI();
-        renderCacheAutoToggle();
       } catch (err) {
         setManageError(`重读配置失败：${err}`);
       }
@@ -2644,30 +2633,30 @@ async function main(): Promise<void> {
     let cliBusy = false;
     /** 后端说当前宿主能不能自动接入（只有 Windows）。非 Windows 时开关整段藏起来。 */
     let cliSupported = false;
-    /** 两张半卡（命令行 + 缓存）共享同一个收起后徽章，所以各自只记录状态，徽章统一渲染。 */
+    /** 两张半卡（命令行 + DSH 版本）共享同一个收起后徽章，所以各自只记录状态，徽章统一渲染。 */
     let cliBadgeText = "命令行读取中";
     let cliBadgeConnected = false;
     let cliBadgeFailed = false;
     /** 命令行那半是否已经拿到结果（两半各跑各的，先到的不应该把另一份还没读的当成「不可用」）。 */
     let cliLoaded = false;
-    let cacheBadgeText: string | null = null;
-    let cacheBadgeFailed = false;
+    let dshVersionsBadgeText: string | null = null;
+    let dshVersionsBadgeFailed = false;
 
-    /** 收起后只能看到这一个徽章，所以两半的信息合在一起：`命令行已接入 · 缓存 1.8 GB`。 */
+    /** 收起后只能看到这一个徽章，所以两半的信息合在一起：`命令行已接入 · 装了 2 份 DSH`。 */
     function renderIntegrationsSummary(): void {
       if (cliLoaded && !cliSupported) {
         cliSummary.className = "badge badge-stopped panel-badge";
         cliSummary.textContent = "仅 Windows 可用";
         return;
       }
-      if (cliLoaded && cacheBadgeFailed && cliBadgeFailed) {
+      if (cliLoaded && dshVersionsBadgeFailed && cliBadgeFailed) {
         cliSummary.className = "badge badge-failed panel-badge";
         cliSummary.textContent = "读取失败";
         return;
       }
       const parts = [cliBadgeText];
-      if (cacheBadgeText !== null) {
-        parts.push(cacheBadgeText);
+      if (dshVersionsBadgeText !== null) {
+        parts.push(dshVersionsBadgeText);
       }
       cliSummary.className = `badge ${cliBadgeConnected ? "badge-running" : "badge-stopped"} panel-badge`;
       cliSummary.textContent = parts.join(" · ");
@@ -2731,10 +2720,8 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 启动方式（或二进制路径、自定义命令）改了就按新配置重写垫片；开关关着时只刷新说明。
-        顺便重扫缓存盘面：保留集合里的「当前配置那份」跟着启动配置走，不重扫就会停在旧值。 */
+    /** 启动方式（或二进制路径、自定义命令）改了就按新配置重写垫片；开关关着时只刷新说明。 */
     async function syncCliShim(): Promise<void> {
-      void refreshCacheState();
       if (!prefs.cliIntegration) {
         await refreshCliState();
         return;
@@ -2754,13 +2741,6 @@ async function main(): Promise<void> {
       void applyCliIntegration(cliToggle.checked);
     });
 
-    // 自动清理开关：只改一个持久化的偏好，真正的触发在后端真的拉起 DSH 进程之后。
-    // 先回写 prefs 再保存，否则下一次任何字段的自动保存都会把刚打开的值抹回默认。
-    cacheAutoToggle.addEventListener("change", () => {
-      prefs.cacheCleanup = cacheAutoToggle.checked;
-      void persistConfigQuiet();
-    });
-
     btnCliDir.addEventListener("click", () => {
       void (async () => {
         cliError.classList.add("hidden");
@@ -2773,157 +2753,124 @@ async function main(): Promise<void> {
       })();
     });
 
-    // ---- 集成面板：npx 缓存盘面 --------------------------------------------------
-    // 归属判定、保留集合、占用与可回收字节、每次删除成败与原因全部在后端算好，
-    // 界面只负责渲染（数字已由后端格式化成 `1.8 GB` 这种形式）。
-    let cacheBusy = false;
-    /** 最近一次拿到的盘面：清理结束后要根据新的可回收份数决定按钮能不能再点。 */
-    let cacheRemovable = 0;
+    // ---- 集成面板：DSH 版本 ------------------------------------------------------
+    // 后端扫出「本机装了哪几份 dsh」（npx 缓存 + npm 全局），界面只渲染列表；
+    // 卸载只针对 npm 全局那一份，npx 缓存交给 npm 自己回收（不在本壳的职责内）。
+    let dshVersionsBusy = false;
 
-    /** 缓存明细：每行一份目录，写清是保留还是可回收。 */
-    function renderCacheDirs(state: CacheState): void {
-      if (state.dirs.length === 0) {
-        cacheDirs.textContent = "（本包还没有 npx 缓存目录）";
-        return;
-      }
-      cacheDirs.textContent = state.dirs
-        .map((dir) => {
-          const tag = dir.current ? "当前配置" : dir.keep ? "保留" : "可回收";
-          return `${tag}  ${dir.label}  ${dir.bytesText}`;
-        })
-        .join("\n");
+    const DSH_SOURCE_LABELS: Record<string, string> = {
+      npx: "npx 缓存",
+      npm: "npm 全局",
+    };
+
+    /** 一行的版本号：读不到版本时说清楚「读不到」，不要留空白让人以为坏了。 */
+    function dshVersionText(entry: InstalledDsh): string {
+      return entry.version === null ? "版本未知" : `v${entry.version}`;
     }
 
-    /** 逐条结果：清掉了什么（带字节数）与没清掉什么（带原因），清空重画。 */
-    function renderCleanupResults(result: CleanupResult): void {
-      cacheResultsBody.textContent = "";
-      for (const dir of result.removed) {
-        const row = document.createElement("div");
-        row.className = "kv-row";
-        const key = document.createElement("span");
-        key.className = "kv-key";
-        key.textContent = "已清掉";
-        const value = document.createElement("span");
-        value.className = "kv-value";
-        value.textContent = `${dir.label}（${dir.bytesText}）`;
-        row.append(key, value);
-        cacheResultsBody.append(row);
-      }
-      for (const failure of result.failed) {
-        const row = document.createElement("div");
-        row.className = "kv-row";
-        const key = document.createElement("span");
-        key.className = "kv-key";
-        key.textContent = "没清掉";
-        const value = document.createElement("span");
-        value.className = "kv-value";
-        value.textContent = `${failure.label}：${failure.reason}`;
-        row.append(key, value);
-        cacheResultsBody.append(row);
-      }
-      cacheResults.classList.toggle("hidden", cacheResultsBody.childElementCount === 0);
-    }
-
-    function renderCacheState(state: CacheState): void {
-      for (const el of CACHE_WINDOWS_ONLY) {
-        el.classList.toggle("hidden", !state.supported);
-      }
-      cacheOwn.textContent = state.supported ? `${state.ownBytesText}（${state.ownCount} 份）` : "—";
-      cacheReclaimable.textContent = state.supported ? state.reclaimableBytesText : "—";
-      cacheRoot.textContent = state.root === null ? "—" : state.root;
-      cacheRemovable = state.removableCount;
-      btnCacheClean.disabled = cacheBusy || !state.supported || state.removableCount === 0;
-      cacheMessage.textContent = state.message;
-      // 没问出 npm 缓存位置时后端会退到平台默认位置，并在这里说清用的是哪个。
-      cacheWarning.textContent = state.warning ?? "";
-      cacheWarning.classList.toggle("hidden", state.warning === null);
-      renderCacheDirs(state);
-      if (!state.supported) {
-        cacheBadgeText = null;
-        cacheBadgeFailed = false;
+    function renderDshVersions(list: InstalledDsh[]): void {
+      dshVersionsList.textContent = "";
+      if (list.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "hint";
+        empty.textContent =
+          "本机还没有装过 dsh web。选「官方 npx 命令」启动一次，就会在 npx 缓存里出现一份。";
+        dshVersionsList.append(empty);
+        dshVersionsBadgeText = "未装过";
+        dshVersionsBadgeFailed = false;
         renderIntegrationsSummary();
         return;
       }
-      cacheBadgeFailed = false;
-      cacheBadgeText =
-        state.ownCount === 0
-          ? "缓存为空"
-          : state.removableCount > 0
-            ? `缓存 ${state.ownBytesText} · 可回收 ${state.reclaimableBytesText}`
-            : `缓存 ${state.ownBytesText}`;
+
+      for (const entry of list) {
+        const row = document.createElement("div");
+        row.className = "dsh-version-row";
+
+        const main = document.createElement("div");
+        main.className = "dsh-version-main";
+
+        const version = document.createElement("span");
+        version.className = "dsh-version-ver";
+        version.textContent = dshVersionText(entry);
+
+        const source = document.createElement("span");
+        source.className = "badge badge-stopped dsh-version-source";
+        source.textContent = DSH_SOURCE_LABELS[entry.source] ?? entry.source;
+
+        main.append(version, source);
+
+        if (entry.inUse) {
+          const inUse = document.createElement("span");
+          inUse.className = "badge badge-running dsh-version-inuse";
+          inUse.textContent = "使用中";
+          main.append(inUse);
+        }
+
+        const path = document.createElement("p");
+        path.className = "dsh-version-path";
+        path.textContent = entry.path;
+
+        row.append(main, path);
+
+        // 只有 npm 全局那份能在本壳里卸（npx 缓存不归我们删）。
+        if (entry.source === "npm") {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "dsh-version-uninstall";
+          btn.textContent = "卸载";
+          btn.addEventListener("click", () => {
+            void uninstallDshGlobal(btn);
+          });
+          row.append(btn);
+        }
+
+        dshVersionsList.append(row);
+      }
+
+      dshVersionsBadgeText = `装了 ${list.length} 份`;
+      dshVersionsBadgeFailed = false;
       renderIntegrationsSummary();
     }
 
-    /** 已经播报过的自动清理序号：界面只用它分辨「有没有新的一次」，不重复播报。 */
-    let autoCleanupSeq = 0;
-
-    /** 开关状态跟着配置走：读回配置、改开关都调它，避免两处各写一遍。 */
-    function renderCacheAutoToggle(): void {
-      cacheAutoToggle.checked = prefs.cacheCleanup;
+    async function uninstallDshGlobal(button: HTMLButtonElement): Promise<void> {
+      if (dshVersionsBusy) return;
+      dshVersionsBusy = true;
+      button.disabled = true;
+      dshVersionsError.classList.add("hidden");
+      try {
+        // 卸载成功不用弹提示条：列表重画后那一行没了，本身就是结果。
+        await invoke<string>("uninstall_dsh_global", { runtime: collectConfig().runtime });
+        await refreshDshVersions();
+      } catch (err) {
+        dshVersionsError.textContent = `卸载全局 DSH 失败：${err}`;
+        dshVersionsError.classList.remove("hidden");
+        button.disabled = false;
+      } finally {
+        dshVersionsBusy = false;
+      }
     }
 
-    /** 自动清理的结果在后端，界面没有推送通道：搭在每秒的状态轮询上顺路问一句。
-        超过 `autoCleanupSeq` 的才算新结果（启动后删东西是用户看不见的事，必须播报）。 */
-    async function pollAutoCleanup(): Promise<void> {
-      let report: AutoCleanupReport | null;
+    async function refreshDshVersions(): Promise<void> {
       try {
-        report = await invoke<AutoCleanupReport | null>("auto_cleanup_report", { since: autoCleanupSeq });
+        const list = await invoke<InstalledDsh[]>("installed_dsh_versions", {
+          config: collectConfig(),
+        });
+        renderDshVersions(list);
       } catch (err) {
-        console.debug("读取自动清理结果失败:", err);
-        return;
-      }
-      if (report === null) return;
-      autoCleanupSeq = report.seq;
-      if (report.result === null) {
-        // 连缓存根都没定位到（npm 坏了等）：没有逐条结果，只留一行说明。
-        cacheMessage.textContent = report.message;
-        return;
-      }
-      // 与「立即清理」走同一套渲染：新盘面 + 「清掉哪些」逐条列表。
-      renderCacheState(report.result.state);
-      renderCleanupResults(report.result);
-      cacheMessage.textContent = report.message;
-    }
-
-    async function refreshCacheState(): Promise<void> {
-      try {
-        const state = await invoke<CacheState>("cache_state", { config: collectConfig() });
-        renderCacheState(state);
-        // 重扫说明盘面变了（切了启动方式等），上一次的逐条结果已经不对应当前盘面，一并清掉。
-        cacheResultsBody.textContent = "";
-        cacheResults.classList.add("hidden");
-      } catch (err) {
-        cacheMessage.textContent = `读取缓存盘面失败：${err}`;
-        cacheBadgeFailed = true;
+        dshVersionsList.textContent = "";
+        const failed = document.createElement("p");
+        failed.className = "hint";
+        failed.textContent = "读取失败，稍后重试。";
+        dshVersionsList.append(failed);
+        dshVersionsError.textContent = `读取已装 DSH 版本失败：${err}`;
+        dshVersionsError.classList.remove("hidden");
+        dshVersionsBadgeFailed = true;
         renderIntegrationsSummary();
       }
     }
 
-    btnCacheClean.addEventListener("click", () => {
-      void (async () => {
-        cacheBusy = true;
-        btnCacheClean.disabled = true;
-        cacheError.classList.add("hidden");
-        try {
-          const result = await invoke<CleanupResult>("cleanup_cache", { config: collectConfig() });
-          // 后端清完会顺手重扫一遍并把新盘面一起送回来，数字直接跟着刷。
-          renderCacheState(result.state);
-          renderCleanupResults(result);
-          cacheMessage.textContent = result.message;
-        } catch (err) {
-          cacheError.textContent = `清理缓存失败：${err}`;
-          cacheError.classList.remove("hidden");
-          // 失败时也重扫一次：部分目录可能已经删掉了，数字不能停在旧值。
-          await refreshCacheState();
-        } finally {
-          cacheBusy = false;
-          // 按钮能不能再点看清理后的可回收份数，不能无脑恢复成可点。
-          btnCacheClean.disabled = cacheRemovable === 0;
-        }
-      })();
-    });
-
-    /** 桥接插件：「打开备份目录」（安装/卸载的备份都落在这里）。 */    btnBridgeBackups.addEventListener("click", () => {
+    /** 桥接插件：「打开备份目录」（安装/卸载的备份都落在这里）。 */
+    btnBridgeBackups.addEventListener("click", () => {
       void (async () => {
         bridgeNote.classList.add("hidden");
         try {
@@ -3060,8 +3007,6 @@ async function main(): Promise<void> {
       proxyModePicker.setValue(prefs.proxyMode);
       proxyAddressInput.value = prefs.proxyAddress;
       renderNetworkUI();
-      // 缓存自动清理开关（默认关）：跟着读回来的配置走，重开壳仍然生效。
-      renderCacheAutoToggle();
       void refreshProxyState();
     }
 
@@ -3073,8 +3018,8 @@ async function main(): Promise<void> {
     await refresh();
     void refreshBridgeState();
     void refreshCliState();
-    // 缓存盘面要起 npm 子进程，不阻塞首次挂载。
-    void refreshCacheState();
+    // 「已装 DSH 版本」要起 npm 子进程，不阻塞首次挂载。
+    void refreshDshVersions();
     void loadProfiles();
     refreshNowHook = refresh;
     // 转动状态与计时在模块级（界面元素可能被重建），这里把类贴到当前这颗「重启 DSH」上。

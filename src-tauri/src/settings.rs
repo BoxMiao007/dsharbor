@@ -68,7 +68,7 @@ pub struct ShellConfig {
     /// 界面下次启动会写回合法值。
     #[serde(default)]
     pub ui_theme: Option<UiTheme>,
-    /// 「环境 / 网络 / 集成」三张卡承载的六个字段（JSON 里与上面几个键平级）。
+    /// 「环境 / 网络 / 集成」三张卡承载的五个字段（JSON 里与上面几个键平级）。
     /// 取值、默认值与宽容读取都在核心库（`dsharbor_core::prefs`）里定义与测试：
     /// 缺键取默认，枚举认不出的名字只让那一个字段回默认，不牵连其余设置。
     #[serde(flatten)]
@@ -220,9 +220,9 @@ pub fn save_launch(app: &tauri::AppHandle, launch: &LaunchConfig) -> Result<(), 
 mod tests {
     use super::*;
 
-    /// 壳配置里六个新字段的完整往返：界面改 → 存盘（序列化）→ 重启（反序列化）。
+    /// 壳配置里五个新字段的完整往返：界面改 → 存盘（序列化）→ 重启（反序列化）。
     #[test]
-    fn shell_config_round_trips_the_six_new_fields() {
+    fn shell_config_round_trips_the_five_new_fields() {
         let config = ShellConfig {
             prefs: ShellPrefs {
                 profile: "自定义环境".into(),
@@ -230,7 +230,6 @@ mod tests {
                 proxy_mode: dsharbor_core::prefs::ProxyMode::Manual,
                 proxy_address: "http://127.0.0.1:7890".into(),
                 cli_integration: true,
-                cache_cleanup: true,
             },
             ..ShellConfig::default()
         };
@@ -238,10 +237,10 @@ mod tests {
         let text = serde_json::to_string_pretty(&config).expect("序列化壳配置失败");
         let back: ShellConfig = serde_json::from_str(&text).expect("反序列化壳配置失败");
 
-        assert_eq!(back.prefs, config.prefs, "六个新字段应原样往返");
+        assert_eq!(back.prefs, config.prefs, "五个新字段应原样往返");
     }
 
-    /// 老配置文件（没有六个新键）与新配置（六个键齐全）混着读都要成立。
+    /// 老配置文件（没有这些新键）与新配置（键齐全）混着读都要成立。
     #[test]
     fn missing_new_keys_take_defaults_without_dropping_other_settings() {
         // 旧配置文件：只有壳自己的键，没有环境/网络/集成的字段。
@@ -263,7 +262,7 @@ mod tests {
         assert_eq!(
             config.prefs,
             ShellPrefs::default(),
-            "缺键时六个字段取默认值"
+            "缺键时这些字段取默认值"
         );
     }
 

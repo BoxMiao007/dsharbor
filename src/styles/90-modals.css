@@ -125,15 +125,34 @@
   margin: 0 0 8px;
 }
 
-/* 危险动作按钮（删除环境）：常态用语言提示而不是红色禁用色，悬停才亮红。 */
-button.danger {
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+/* 删除确认：整张浮窗染危险色。删除环境是不可撤销的操作，光靠按钮变红不够醒目——
+   边框与底色都带上危险色，让人在按下之前就知道这张浮窗是「删除」。
+   只作用于 .modal-danger（由 openNameModal 在 deleting 时加上）。 */
+.modal.modal-danger {
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
+  background: color-mix(in srgb, var(--danger) 6%, var(--card));
+  box-shadow:
+    var(--shadow),
+    0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+/* 标题也跟着染危险色：整张浮窗「是红的」，一眼就知道在删东西。 */
+.modal.modal-danger .modal-title {
   color: var(--danger);
 }
 
+/* 危险动作按钮：实心红 + 白字。原先只有描边红字（白字压浅红对比不足），
+   真正要按下去的那个按钮必须一眼可辨，所以改成实心填充（--danger-fill 白字 ≥4.5:1）。 */
+button.danger {
+  border-color: transparent;
+  background: var(--danger-fill);
+  color: #ffffff;
+  font-weight: 600;
+}
+
 button.danger:hover:not(:disabled) {
-  border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--danger-fill) 88%, #ffffff);
 }
 
 /* 备份清单：一份备份一行。路径是等宽字（用户可能要照着去找文件），

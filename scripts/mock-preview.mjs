@@ -76,7 +76,6 @@ const state = {
     proxyMode: "system",
     proxyAddress: "",
     cliIntegration: false,
-    cacheCleanup: false,
   },
   /** 系统代理的假数据：url 改成 null 可预览「跟随系统但系统里没配」。
       bypass 就是系统里那份例外列表（回环地址由后端补，这里不列）。 */
@@ -92,26 +91,17 @@ const state = {
   freezeLog: false,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
-  /** 「启动后自动清理」的假结果：start_dsh / restart_dsh 在缓存开关打开时把结果写进这里，
-      `auto_cleanup_report` 按 since 返回新的一次（改 autoCleanup 可预览各种结果文案）。 */
-  autoCleanup: null,
-  autoCleanupSeq: 0,
   /** 命令行集成的假状态：改它能预览开关打开/关闭、PATH 里没有目录、被别的 dsh 盖住、
       以及非 Windows 宿主（supported: false）等分支。enabled 默认跟 savedShell 走。 */
   cli: { supported: true, enabled: false, onPath: false, shadow: null },
-  /** npx 缓存盘面的假数据：dirs 里 keep=true 的是保留的（current 那份必保留），
-      其余会被「立即清理」删掉；把 cleanupFails 设为 true 可预览「删不掉 + 逐条原因」分支。 */
-  cache: {
-    supported: true,
-    rootSource: "npm",
-    warning: null,
-    cleanupFails: false,
-    dirs: [
-      { name: "1e7f6d9597241db0", label: "@deepseek-ai/dsh（1e7f6d95）", bytes: 486539264, keep: true, current: true },
-      { name: "50d2c97abf8f4186", label: "@deepseek-ai/dsh@next（50d2c97a）", bytes: 412090368, keep: false, current: false },
-      { name: "c8633a242642d858", label: "@deepseek-ai/dsh@0.2.1-rc.2（c8633a24）", bytes: 297795584, keep: false, current: false },
-    ],
-  },
+  /** 已装 DSH 的假数据（`installed_dsh_versions`）：npx 缓存里的几份 + npm 全局装的一份。
+      改成 [] 可预览「本机还没装过」；把某份 version 设成 null 可预览「版本读不到」；
+      卸掉 npm 全局那份（`uninstall_dsh_global`）后这张列表会少一行。 */
+  installedDsh: [
+    { version: "0.2.1-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\c8633a242642d858", inUse: true },
+    { version: "0.2.0-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\50d2c97abf8f4186", inUse: false },
+    { version: "0.1.9", source: "npm", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\bin\\node_modules\\@deepseek-ai\\dsh", inUse: false },
+  ],
   /** 环境列表（`list_profiles`）的假数据：删掉某项可预览「配置里记的环境已不在」，
       把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。
       把 profilesUnsupported 改成 true 可预览非 Windows 宿主下的「仅在 Windows 宿主可用」。 */
@@ -274,128 +264,8 @@ window.__mockUnimplemented = [];
       message: message,
     };
   };
-  // 字节数的显示形式（1024 进制，B 取整、其余 1 位小数），与核心库的 human_bytes 一致；
-  // 真实后端会把算好的文字一起送过来，这里只是为了假数据看着像真的。
-  const humanBytes = (bytes) => {
-    if (bytes < 1024) return bytes + " B";
-    const units = ["KB", "MB", "GB", "TB"];
-    let value = bytes / 1024;
-    let i = 0;
-    while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
-    return value.toFixed(1) + " " + units[i];
-  };
-  // 缓存盘面的假状态：只含属于本包的目录，与真实后端一个口径。
-  // 可回收 = keep=false 的字节和，份数与文案都跟着算，改 S.cache.dirs 就能预览各种分支。
-  const cacheState = (cache) => {
-    const dirs = (cache.dirs || []).map((dir) => ({
-      name: dir.name,
-      label: dir.label,
-      bytes: dir.bytes,
-      bytesText: humanBytes(dir.bytes),
-      bytes_text: humanBytes(dir.bytes),
-      keep: !!dir.keep,
-      current: !!dir.current,
-    }));
-    const ownBytes = dirs.reduce((sum, dir) => sum + dir.bytes, 0);
-    const removable = dirs.filter((dir) => !dir.keep);
-    const reclaimable = removable.reduce((sum, dir) => sum + dir.bytes, 0);
-    const current = dirs.find((dir) => dir.current);
-    let message;
-    if (!cache.supported) {
-      message = "缓存盘面仅在 Windows 宿主可用。";
-    } else if (dirs.length === 0) {
-      message = "没找到本包的 npx 缓存：本包还没用 npx 跑过时这里就是空的。只统计明确记录着本包的目录，别的包不计入。";
-    } else if (removable.length === 0) {
-      message = "本包占用 " + humanBytes(ownBytes) + "（" + dirs.length + " 份），没有可回收的部分：保留份数已经覆盖全部。";
-    } else {
-      message =
-        "本包占用 " +
-        humanBytes(ownBytes) +
-        "（" +
-        dirs.length +
-        " 份），可回收 " +
-        humanBytes(reclaimable) +
-        "（" +
-        removable.length +
-        " 份）。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。";
-    }
-    const warning = cache.warning === undefined ? null : cache.warning;
-    return {
-      supported: !!cache.supported,
-      root: cache.root === undefined ? "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache" : cache.root,
-      rootSource: cache.rootSource || "npm",
-      root_source: cache.rootSource || "npm",
-      ownBytes: ownBytes,
-      own_bytes: ownBytes,
-      ownBytesText: humanBytes(ownBytes),
-      own_bytes_text: humanBytes(ownBytes),
-      ownCount: dirs.length,
-      own_count: dirs.length,
-      reclaimableBytes: reclaimable,
-      reclaimable_bytes: reclaimable,
-      reclaimableBytesText: humanBytes(reclaimable),
-      reclaimable_bytes_text: humanBytes(reclaimable),
-      removableCount: removable.length,
-      removable_count: removable.length,
-      keepCount: dirs.length - removable.length,
-      keep_count: dirs.length - removable.length,
-      current: current ? current.name : null,
-      message: message,
-      warning: warning,
-      dirs: dirs,
-    };
-  };
-  // 清理的实际动作（与「立即清理」按钮和「启动后自动清理」共用一份，真后端也是同一个函数）。
-  const doCleanup = () => {
-    const cache = S.cache || (S.cache = { supported: true, dirs: [] });
-    const removable = (cache.dirs || []).filter((dir) => !dir.keep);
-    const freedBytes = removable.reduce((sum, dir) => sum + dir.bytes, 0);
-    if (cache.cleanupFails) {
-      return {
-        removed: [],
-        failed: removable.map((dir) => ({
-          label: dir.label,
-          path: "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache\\\\_npx\\\\" + dir.name,
-          reason: "文件被占用（可能 DSH 正在运行）：拒绝访问。 (os error 32)",
-        })),
-        freedBytes: 0,
-        freed_bytes: 0,
-        message: "这次一个目录都没能清掉，原因见下面的逐条结果。",
-        state: cacheState(cache),
-      };
-    }
-    cache.dirs = (cache.dirs || []).filter((dir) => dir.keep);
-    return {
-      removed: removable.map((dir) => ({
-        label: dir.label,
-        bytes: dir.bytes,
-        bytesText: humanBytes(dir.bytes),
-        bytes_text: humanBytes(dir.bytes),
-      })),
-      failed: [],
-      freedBytes: freedBytes,
-      freed_bytes: freedBytes,
-      message:
-        removable.length === 0
-          ? "没有需要清理的目录。"
-          : "已清掉 " + removable.length + " 个目录，释放 " + humanBytes(freedBytes) + "。",
-      state: cacheState(cache),
-    };
-  };
-  // 真的 DSH 拉起成功后、开关开着时，后端会自己跑一次清理并把结果留着等界面来取。
-  // 预览里用假数据把这条链路补上：只有开关开着才跑，且每次 seq 自增一次。
-  const maybeAutoCleanup = () => {
-    const shell = S.lastSavedShell || S.savedShell;
-    if (!shell || !shell.cacheCleanup) return;
-    const result = doCleanup();
-    S.autoCleanupSeq = (S.autoCleanupSeq || 0) + 1;
-    S.autoCleanup = {
-      seq: S.autoCleanupSeq,
-      message: "启动后自动清理：" + result.message,
-      result: result,
-    };
-  };
-  const cmds = {    app_info: () => ({
+  const cmds = {
+    app_info: () => ({
       name: "DSHarbor",
       version: "0.0.0-mock",
       coreVersion: "0.0.0-mock",
@@ -533,23 +403,20 @@ window.__mockUnimplemented = [];
     },
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
-    // 缓存盘面：只读扫描。
-    cache_state: () => {
-      const cache = S.cache || (S.cache = { supported: true, dirs: [] });
-      return cacheState(cache);
+    // 已装 DSH 版本：只读扫描（npx 缓存 + npm 全局）。
+    installed_dsh_versions: () => {
+      seen("installed_dsh_versions");
+      return S.installedDsh || [];
     },
-    // 立即清理：把 keep=false 的目录从假数据里拿掉，返回逐条结果与清理后的新盘面。
-    // cleanupFails=true 时假装删不掉（预览「没清掉 + 原因」那几行）。
-    cleanup_cache: () => {
-      seen("cleanup_cache");
-      return doCleanup();
-    },
-    // 启动后自动清理的结果：since 是界面已经播报过的序号，只有更新的才返回。
-    auto_cleanup_report: (a) => {
-      seen("auto_cleanup_report");
-      const report = S.autoCleanup;
-      const since = (a && a.since) || 0;
-      return report && report.seq > since ? report : null;
+    // 卸载 npm 全局那一份：从假数据里拿掉 source=npm 的行，界面重扫后少一行。
+    uninstall_dsh_global: () => {
+      seen("uninstall_dsh_global");
+      const before = (S.installedDsh || []).length;
+      S.installedDsh = (S.installedDsh || []).filter((item) => item.source !== "npm");
+      if (S.installedDsh.length === before) {
+        throw "npm 全局没有装 @deepseek-ai/dsh。";
+      }
+      return "已卸载全局安装的 DSH。";
     },
     profile_port_hint: () => S.portHint,
     // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」；
@@ -749,9 +616,9 @@ window.__mockUnimplemented = [];
             : null,
       };
     },
-    start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
+    start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; return status(); },
     stop_dsh: () => { seen("stop_dsh"); S.counter += 1; S.session = "stopped"; return status(); },
-    restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
+    restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; return status(); },
     // 工具条主按钮区在「运行中」时点「重启 DSH」：与 start_dsh 一样产生输出。
     // 「复制登录链接」每次现取（token 是一次性铸造的），预览里给个固定假地址。
     dsh_login_url: () => {

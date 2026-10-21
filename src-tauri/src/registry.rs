@@ -279,7 +279,19 @@ fn run_query(runtime: &Runtime, env: &[(String, String)]) -> Result<RegistryInfo
 /// 子进程读到的就是用户自己 `.npmrc` 里的源）与代理。都是环境变量覆盖，
 /// 不修改用户的任何配置文件。
 fn build_command(runtime: &Runtime, extra_env: &[(String, String)]) -> Result<Command, String> {
-    let args = registry::query_args();
+    npm_command(runtime, &registry::query_args(), extra_env)
+}
+
+/// 组装一条任意的 npm 命令（Windows 经 cmd.exe，WSL 经 wsl.exe 进发行版）。
+///
+/// 与 `build_command` 是同一个装配逻辑，只是把参数从「查版本清单」放开成调用方给的
+/// 那串——`dsh_versions` 要用它跑 `npm ls -g` 与 `npm uninstall -g`。`args` 全是
+/// 代码里的固定字面量，不经过任何用户输入。
+pub(crate) fn npm_command(
+    runtime: &Runtime,
+    args: &[&str],
+    extra_env: &[(String, String)],
+) -> Result<Command, String> {
     match runtime {
         Runtime::Default => {
             let mut command = if cfg!(windows) {

@@ -40,3 +40,76 @@
 #cli-message {
   margin-top: 10px;
 }
+
+/* ---- 「集成」卡片：DSH 版本 ---- */
+
+/* 装了多份时逐行列出，行之间用分隔线，整体一张描边表（与 .kv 同一套观感）。
+   一份都没装时列表里只有一段 .hint，此时不要描边，免得看着像空表。 */
+.version-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.version-list:has(.dsh-version-row) {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.dsh-version-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "main action"
+    "path action";
+  align-items: center;
+  gap: 4px 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.dsh-version-row:first-child {
+  border-top: 0;
+}
+
+.dsh-version-main {
+  grid-area: main;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 版本号是这一行最该被先看到的信息：等宽、稍大、加粗。 */
+.dsh-version-ver {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+/* 「npx 缓存 / npm 全局」两个来源标签与「使用中」共用 .badge，这里只收紧尺寸。 */
+.dsh-version-source,
+.dsh-version-inuse {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+/* 装在哪：路径常常很长，允许任意位置断行，不撑破卡片。 */
+.dsh-version-path {
+  grid-area: path;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-mute);
+  word-break: break-all;
+}
+
+.dsh-version-uninstall {
+  grid-area: action;
+  align-self: center;
+  padding: 5px 12px;
+  font-size: 12.5px;
+}
+

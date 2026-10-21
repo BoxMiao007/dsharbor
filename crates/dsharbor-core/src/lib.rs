@@ -6,7 +6,6 @@
 //! - 后续的启动命令构造、参数校验、窗口状态机都进这个库。
 
 pub mod bridge;
-pub mod cache_auto;
 pub mod console;
 pub mod endpoint;
 pub mod launch;

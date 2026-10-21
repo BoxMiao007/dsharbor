@@ -199,14 +199,14 @@ export function buildHtml(info: AppInfo): string {
 
   // 「命令行集成」块：内容全部由后端算好（目录、垫片内容、手动命令、状态说明），
   // 界面只负责显示，避免两边各算一套口径。非 Windows 宿主只留手动命令。
+  // 长段解释统一收进底部折叠区：默认只留开关与两行路径，读起来不糊。
   const cliBlockBody = `
     ${colHead("命令行集成", badgeLine("integrations-summary", "读取中…"))}
     <div class="cli-windows-only">
       <label class="switch-line">
         <input type="checkbox" id="cli-toggle" />
-        <span>把 <code>dsh</code> 命令接进终端：在固定目录写一份 <code>dsh.cmd</code>，再把这个目录加到当前用户的 PATH 末尾</span>
+        <span>把 <code>dsh</code> 命令接进终端</span>
       </label>
-      <p class="hint">只改当前用户的 PATH，不动系统 PATH，其它条目原样保留（百分号变量也不会被展开）；写入是原值回写，再长也不会截断。改完不影响已经开着的终端，<b>新开一个终端</b>才生效。</p>
       <div class="kv">
         <div class="kv-row"><span class="kv-key">垫片目录</span><span class="kv-value" id="cli-bin-dir">—</span></div>
         <div class="kv-row kv-row-action"><span class="kv-key">垫片文件</span><span class="kv-value" id="cli-shim-path">—</span><button id="btn-cli-dir" class="kv-action">打开目录</button></div>
@@ -215,7 +215,6 @@ export function buildHtml(info: AppInfo): string {
     <div class="kv">
       <div class="kv-row kv-row-action"><span class="kv-key">手动命令</span><span class="kv-value cli-command" id="cli-manual">—</span><button id="btn-cli-copy" class="kv-action">复制</button></div>
     </div>
-    <p class="hint">不想打开上面的开关时，把这条命令粘进 <b>命令提示符（cmd）</b> 或 <b>PowerShell</b> 回车执行，也就是自己把它追加到当前用户的 PATH 末尾；开新终端后生效。注意 <code>setx</code> 会把 <code>%VAR%</code> 展开成当前值、超过 1024 个字符会被截断，所以它只适合手动救场，日常用上面那个开关（那边是原值回写，不会被展开也不会截断）。</p>
     <p id="cli-message" class="hint">读取中…</p>
     <p id="cli-error" class="error hidden"></p>
     <div class="cli-windows-only">
@@ -227,32 +226,27 @@ export function buildHtml(info: AppInfo): string {
         </div>
       </details>
     </div>
+    <details class="log-box">
+      <summary><span class="chev">▸</span>这段在做什么 / 手动怎么配</summary>
+      <div class="log-area">
+        <p class="hint">只改当前用户的 PATH，不动系统 PATH，其它条目原样保留（百分号变量也不会被展开）；写入是原值回写，再长也不会截断。改完不影响已经开着的终端，<b>新开一个终端</b>才生效。</p>
+        <p class="hint">不想打开上面的开关时，把「手动命令」粘进 <b>命令提示符（cmd）</b> 或 <b>PowerShell</b> 回车执行就行。注意 <code>setx</code> 会把 <code>%VAR%</code> 展开成当前值、超过 1024 个字符会被截断，所以它只适合手动救场，日常用上面那个开关（原值回写，不会被展开也不会截断）。</p>
+      </div>
+    </details>
   `;
 
-  // 「npx 缓存」块：占用字节、可回收字节、目录明细、每次删除的结果都在后端算好。
-  const cacheBlockBody = `
-    ${colHead("npx 缓存")}
-    <p class="hint">只统计明确记录着本包的缓存目录，别的包既不计入也不删。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。</p>
-    <label class="switch-line">
-      <input type="checkbox" id="cache-auto-toggle" />
-      <span>真的拉起一个 DSH 进程之后自动清理一次：保留当前启动配置对应的那份与最近用过的几份，其余删掉</span>
-    </label>
-    <p class="hint">默认关闭。打开后，只在这一回真的拉起了一个 DSH 进程之后修剪一次（壳外已经有一份在跑时什么也不拉起，所以什么也不删）；进程起来了但随后又崩了也照样清理，这里不等它健康退出。清掉了哪些、释放了多少会显示在下面。</p>
-    <div class="kv">
-      <div class="kv-row"><span class="kv-key">本包占用</span><span class="kv-value" id="cache-own">—</span></div>
-      <div class="kv-row"><span class="kv-key">可回收</span><span class="kv-value" id="cache-reclaimable">—</span></div>
-      <div class="kv-row kv-row-action"><span class="kv-key">缓存目录</span><span class="kv-value" id="cache-root">—</span><button id="btn-cache-clean" class="kv-action">立即清理</button></div>
-    </div>
-    <p id="cache-message" class="hint">读取中…</p>
-    <p id="cache-warning" class="hint hidden"></p>
-    <p id="cache-error" class="error hidden"></p>
-    <div id="cache-results" class="hidden">
-      <div class="kv" id="cache-results-body"></div>
-    </div>
+  // 「DSH 版本」块：只读报告本机装了哪些 dsh web，外加卸载 npm 全局装的那一份。
+  // 壳不再管理 npx 缓存（不统计占用、不清理），这里只回答「装了哪几份、装在哪、在不在用」。
+  const dshVersionsBody = `
+    ${colHead("DSH 版本")}
+    <p class="hint">本机装了哪些 dsh web：npx 缓存里的，与 <code>npm install -g</code> 装的。桌面版自带的 CLI 不算。</p>
+    <div id="dsh-versions-list" class="version-list"><p class="hint">读取中…</p></div>
+    <p id="dsh-versions-error" class="error hidden"></p>
     <details class="log-box">
-      <summary><span class="chev">▸</span>缓存明细（保留的与可回收的）</summary>
+      <summary><span class="chev">▸</span>卸载与清理说明</summary>
       <div class="log-area">
-        <pre id="cache-dirs">（读取中）</pre>
+        <p class="hint">列表里「npm 全局」那一份可以在这里直接卸载（等同于 <code>npm uninstall -g @deepseek-ai/dsh</code>）；正被当前启动方式用着时会先提示，卸掉后要换一种启动方式。</p>
+        <p class="hint">npx 缓存里的那几份不用手动删：npm 自己会按时间回收，下次选对应版本启动时也不用重新下载。真要清，在终端跑 <code>npm cache clean --force</code>。</p>
       </div>
     </details>
   `;
@@ -412,7 +406,7 @@ export function buildHtml(info: AppInfo): string {
       mainCard([cell(modesBody), cellRow("1-1", extraArgsBody, portBody)]),
     ),
     panelSection("env", mainCard([cell(profilesBody), cell(pluginBody)])),
-    panelSection("integ", mainCard([cell(cliBlockBody), cell(cacheBlockBody)])),
+    panelSection("integ", mainCard([cell(cliBlockBody), cell(dshVersionsBody)])),
     panelSection(
       "traynet",
       mainCard([cellRow("1-2", trayFields, networkFieldsBody), cell(selfCheckBody)]),
@@ -455,10 +449,6 @@ export function buildHtml(info: AppInfo): string {
         </div>
         <div id="profile-manage-confirm" class="profile-confirm hidden">
           <p id="profile-manage-confirm-text" class="hint"></p>
-          <div class="actions">
-            <button id="btn-profile-confirm-yes" class="danger">确定删除</button>
-            <button id="btn-profile-confirm-no" class="ghost">取消</button>
-          </div>
         </div>
         <p id="profile-manage-note" class="hint hidden"></p>
         <p id="profile-manage-error" class="error hidden"></p>
