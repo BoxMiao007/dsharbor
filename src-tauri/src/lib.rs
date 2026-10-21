@@ -112,9 +112,12 @@ fn start_session(
 ) -> Result<(), String> {
     // 先过校验并持久化（保留托盘单击等壳偏好）：非法输入在这里报错——不写配置、不启动进程。
     settings::save_launch(app, config)?;
-    let profile = settings::load(app).prefs.profile;
-    let launcher_args = profile::port_overlay_args(app, config, &profile)?;
-    spawn_session(app, state, config, &profile, &launcher_args)?;
+    // 启动恒用 web 环境（`launch::PROFILE_NAME`）。「环境与插件」里选中哪个环境只是
+    // 插件与补丁层的管理目标，不参与启动——之前跟着选中项走，选中官方桌面端的
+    // `desktop` 会去跑 `dsh desktop`，那个环境起不了 web 服务，整个启动就失败。
+    let profile = launch::PROFILE_NAME;
+    let launcher_args = profile::port_overlay_args(app, config, profile)?;
+    spawn_session(app, state, config, profile, &launcher_args)?;
     remember_config(state, config);
     Ok(())
 }
@@ -447,19 +450,20 @@ async fn delete_dsh_npx(runtime: launch::Runtime, path: String) -> Result<String
         .map_err(|err| format!("删除 npx 缓存中的 DSH 失败：{err}"))?
 }
 
-/// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
+/// 读取启动用 web 环境里 webserver 的托管端口信息（界面展示用）。
 ///
 /// async 命令：同步命令跑在主线程上，而读 target 环境配置在 WSL 模式下要起 wsl.exe
 /// （几百毫秒到数秒）——主线程一堵，窗口的拖动/滚动/点击全跟着僵（切换启动方式卡顿的根因）。
 #[tauri::command]
 async fn profile_port_hint(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     config: LaunchConfig,
 ) -> Result<profile::PortHint, String> {
     // spawn_blocking 错掉（JoinError）或 port_hint 自己报错都要传给界面。
     let hint = tauri::async_runtime::spawn_blocking(move || {
-        let profile = settings::load(&app).prefs.profile;
-        profile::port_hint(&config, &profile)
+        // 端口提示要看的是真正会被拉起来的那个环境：启动恒用 web，
+        // 「环境与插件」里选中的只影响插件与补丁层管理，不能拿它的端口来提示。
+        profile::port_hint(&config, launch::PROFILE_NAME)
     })
     .await
     .map_err(|err| format!("后台读取端口信息失败：{err}"))??;
@@ -554,8 +558,8 @@ fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option
                     guard.clone()
                 };
                 if let Some(config) = config {
-                    let profile = settings::load(app).prefs.profile;
-                    let endpoint = detect::effective_endpoint(&config, &profile);
+                    // 探测地址按真正会启动的 web 环境算：选中项只影响插件/补丁层管理。
+                    let endpoint = detect::effective_endpoint(&config, launch::PROFILE_NAME);
                     if detect::port_alive(&endpoint)
                         && detect::dsh_fingerprint(&endpoint) == Some(true)
                     {
