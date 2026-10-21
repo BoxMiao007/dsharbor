@@ -183,7 +183,16 @@
   cursor: not-allowed;
 }
 
-.env-menu button.danger:not(:disabled) {
+/* 菜单里的「删除」只染红字，任何时候都不铺红底（含鼠标悬停与置灰态）。
+   全局 button.danger 是弹窗里那颗实心确认键，这里必须显式盖回去——注意不能加
+   :not(:disabled)，否则「web / 当前管理的环境」这类置灰行会落回全局实心红底。 */
+.env-menu button.danger {
+  background: transparent;
+  color: var(--danger);
+}
+
+.env-menu button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
   color: var(--danger);
 }
 

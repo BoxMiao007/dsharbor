@@ -127,9 +127,10 @@ export function buildHtml(info: AppInfo): string {
   `;
 
   // 「环境/插件」卡：顶部一排能起网页界面的环境大按钮，点一下就切「当前管理的环境」；
-  // 右侧一列三颗按钮（新建空白环境 / 桥接插件 / 补丁层），三颗等宽对齐。新建之所以放在最上面：
+  // 右侧一列两颗按钮（新建空白环境 / 桥接插件），两颗等宽对齐。新建之所以放在最上面：
   // 它是这一块唯一的「添东西」动作，放行尾会被误读成与插件同类的设置项；它的命名规则说明
   // 收进点开后的弹窗，不在卡里占三行字。
+  // 补丁层是「某个环境的」东西，所以入口收进环境三点菜单里，不在这里占一颗全局按钮。
   // 启动 DSH 永远用 web 环境（核心库 launch::PROFILE_NAME），这里选的只是「管理目标」。
   const profilesBody = `
     ${colHead("环境与插件")}
@@ -140,7 +141,6 @@ export function buildHtml(info: AppInfo): string {
         <div class="env-aside">
           <button id="btn-profile-create" class="ghost env-new" type="button">${ICON_PLUS}<span>新建空白环境</span></button>
           <button id="btn-bridge" class="ghost" type="button">桥接插件</button>
-          <button id="btn-patch" class="ghost" type="button">补丁层</button>
         </div>
       </div>
       <p id="profile-note" class="hint hidden"></p>
@@ -205,7 +205,7 @@ export function buildHtml(info: AppInfo): string {
     <div class="cli-windows-only">
       <div class="switch-row">
         <span class="switch-label" id="cli-toggle-label">把 <code>dsh</code> 命令接进终端</span>
-        <button class="switch" type="button" role="switch" id="cli-toggle" aria-checked="false" aria-labelledby="cli-toggle-label" data-tip="把 dsh 命令接进终端"><span class="switch-knob"></span></button>
+        <button class="switch" type="button" role="switch" id="cli-toggle" aria-checked="false" aria-labelledby="cli-toggle-label"><span class="switch-knob"></span></button>
       </div>
       <div class="kv">
         <div class="kv-row"><span class="kv-key">垫片目录</span><span class="kv-value" id="cli-bin-dir">—</span></div>
@@ -237,8 +237,9 @@ export function buildHtml(info: AppInfo): string {
 
   // 「DSH 版本」块：列出本机装了哪些 dsh web，并允许删掉某一份。
   // 壳不再管理 npx 缓存（不统计占用、不自动清理），这里只回答「装了哪几份、装在哪、在不在用」。
+  // 同一个版本装了好几份很常见（每次换 npx 参数都会新解一份），标题旁挂一枚黄色徽章点出来。
   const dshVersionsBody = `
-    ${colHead("DSH 版本")}
+    ${colHead("DSH 版本", '<span id="dsh-versions-dup" class="badge badge-warn panel-badge hidden"></span>')}
     <p class="hint">本机装了哪些 dsh web：npx 缓存里的，与 <code>npm install -g</code> 装的。桌面版自带的 CLI 不算。</p>
     <div id="dsh-versions-list" class="version-list"><p class="hint">读取中…</p></div>
     <p id="dsh-versions-error" class="error hidden"></p>
@@ -466,6 +467,7 @@ export function buildHtml(info: AppInfo): string {
       <button type="button" role="menuitem" data-env-act="copy">复制</button>
       <button type="button" role="menuitem" data-env-act="delete" class="danger">删除</button>
       <button type="button" role="menuitem" data-env-act="deps">安装依赖</button>
+      <button type="button" role="menuitem" data-env-act="patch">补丁层</button>
       <button type="button" role="menuitem" data-env-act="open">打开目录</button>
     </div>
   `;

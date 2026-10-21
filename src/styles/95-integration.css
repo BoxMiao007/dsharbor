@@ -17,36 +17,21 @@
   min-width: 0;
 }
 
-/* 开关自己的悬停气泡：开关只有 36px 宽、上面没有文字，光看开关猜不出它管什么。
-   用与 ⓘ 角标同一套观感的气泡，指向时在开关上方弹出说明。
-   右对齐（right:0）而不是居中：开关贴着卡片右内边距，居中会向右撑出卡片。 */
-.switch-row .switch::after {
-  content: attr(data-tip);
-  position: absolute;
-  z-index: 20;
-  bottom: calc(100% + 8px);
-  right: 0;
-  width: max-content;
-  max-width: 300px;
-  padding: 7px 11px;
-  border-radius: 10px;
-  border: 1px solid var(--line-strong);
-  background: var(--tip-bg);
-  box-shadow: var(--shadow);
-  color: var(--fg);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.6;
-  letter-spacing: 0;
-  text-align: left;
-  white-space: normal;
-  /* 与 ⓘ 气泡一样用 display:none：留在布局里会撑大内容区 scrollWidth。 */
-  display: none;
+/* 这一行的开关比插件列表里的大一号：它是整张卡的主动作，做大才点得准。 */
+.switch-row .switch {
+  width: 44px;
+  height: 24px;
 }
 
-.switch-row .switch:hover::after,
-.switch-row .switch:focus-visible::after {
-  display: block;
+.switch-row .switch .switch-knob {
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+}
+
+.switch-row .switch[aria-checked="true"] .switch-knob {
+  transform: translateX(20px);
 }
 
 /* 手动命令要能整行看清再选中复制：等宽字体、允许换行，不跟 PATH 一样缩成一条。 */

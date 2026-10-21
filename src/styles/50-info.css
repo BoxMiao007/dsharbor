@@ -101,6 +101,14 @@
   color: var(--danger);
 }
 
+/* 提醒类徽章（如「同一版本装了 2 份」）：用 --warn 一档的黄，
+   与「运行中」的绿、「读取失败」的红区分开，深浅两套都过 AA。 */
+.badge-warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+}
+
 .badge-version {
   border-color: var(--line-strong);
   background: var(--elev);

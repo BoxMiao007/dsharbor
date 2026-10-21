@@ -654,6 +654,7 @@ async function main(): Promise<void> {
     // 「本机装了哪几份 dsh」由后端扫出来（npx 缓存 + npm 全局），界面只渲染列表与卸载按钮。
     const dshVersionsList = $<HTMLDivElement>("dsh-versions-list");
     const dshVersionsError = $<HTMLParagraphElement>("dsh-versions-error");
+    const dshVersionsDup = $<HTMLSpanElement>("dsh-versions-dup");
 
     // 分区导航：点左侧图标切右侧面板。选择记在 localStorage，壳重启、轻量模式重建窗口后沿用。
     // 不放 config.json：那是整份回写的设置文件，界面偏好丢了不影响功能。
@@ -1604,7 +1605,6 @@ async function main(): Promise<void> {
     const pluginSummary = $<HTMLSpanElement>("plugin-summary");
     const btnProfileCreate = $<HTMLButtonElement>("btn-profile-create");
     const btnBridge = $<HTMLButtonElement>("btn-bridge");
-    const btnPatch = $<HTMLButtonElement>("btn-patch");
     const envMenu = $<HTMLElement>("env-menu");
 
     /** 后端枚举回来的全部环境（含不能起网页的：照样列出来，只是标一句）。 */
@@ -1816,6 +1816,12 @@ async function main(): Promise<void> {
           openNameModal("delete", name);
         } else if (act === "deps") {
           void runEnvAction(() => installDeps(name));
+        } else if (act === "patch") {
+          // 补丁层是「按环境」的：先把管理目标切到这一个，再开浮窗（浮窗自己会去拉它的备份）。
+          void selectProfile(name).then(() => {
+            syncPatchModal();
+            setModal("patch");
+          });
         } else if (act === "open") {
           void openProfileDir(name);
         }
@@ -1929,10 +1935,6 @@ async function main(): Promise<void> {
     btnBridge.addEventListener("click", () => {
       void refreshBridgeState();
       setModal("bridge");
-    });
-    btnPatch.addEventListener("click", () => {
-      syncPatchModal();
-      setModal("patch");
     });
 
     // ---- 环境名输入：新建 / 重命名 / 复制 / 删除确认 ---------------------------
@@ -2765,6 +2767,10 @@ async function main(): Promise<void> {
     // 列表里每一份都能删：npm 全局那份跑 npm uninstall -g，npx 缓存那份直接删目录。
     // 删除不可撤销，所以都要再点一次「确定」；确认按钮只在点开的那一行展开。
     let dshVersionsBusy = false;
+    /** 最近一次渲染的列表（按行顺序），重画动作区时按同一顺序对回每条记录。 */
+    let dshVersionEntries: InstalledDsh[] = [];
+    /** 当前处于「确认删除」状态的那一行（用的是 dshEntryKey）；null 表示没有。 */
+    let dshPendingDelete: string | null = null;
 
     const DSH_SOURCE_LABELS: Record<string, string> = {
       npx: "npx 缓存",
@@ -2778,6 +2784,9 @@ async function main(): Promise<void> {
 
     function renderDshVersions(list: InstalledDsh[]): void {
       dshVersionsList.textContent = "";
+      // 重画列表就意味着原来那行的确认没了，待确认状态一起清掉。
+      dshPendingDelete = null;
+      dshVersionEntries = list;
       if (list.length === 0) {
         const empty = document.createElement("p");
         empty.className = "hint notice";
@@ -2786,6 +2795,7 @@ async function main(): Promise<void> {
         dshVersionsList.append(empty);
         dshVersionsBadgeText = "未装过";
         dshVersionsBadgeFailed = false;
+        paintDuplicateBadge(list);
         renderIntegrationsSummary();
         return;
       }
@@ -2824,15 +2834,69 @@ async function main(): Promise<void> {
 
       dshVersionsBadgeText = `装了 ${list.length} 份`;
       dshVersionsBadgeFailed = false;
+      paintDuplicateBadge(list);
       renderIntegrationsSummary();
     }
 
-    /** 一行的动作区：先给一个「删除/卸载」，点了才换成二次确认（不可撤销的操作不一把梭）。 */
+    /** 同一个版本装了不止一份时，在标题旁挂一枚黄色徽章点出重复数量。
+     *  重复常见于换过 npx 参数（版本号一样但缓存目录不同），不提示的话很难发现多占了盘。
+     *  只有一组重复就点明是哪个版本、几份；多组重复则给组数，避免徽章被撑长。 */
+    function paintDuplicateBadge(list: InstalledDsh[]): void {
+      const counts = new Map<string, number>();
+      for (const entry of list) {
+        const key = entry.version ?? "未知";
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const duplicated = [...counts.entries()].filter(([, count]) => count > 1);
+      if (duplicated.length === 0) {
+        dshVersionsDup.textContent = "";
+        dshVersionsDup.classList.add("hidden");
+        return;
+      }
+      if (duplicated.length === 1) {
+        const [version, count] = duplicated[0] as [string, number];
+        dshVersionsDup.textContent = `${version === "未知" ? "版本未知" : `v${version}`} 装了 ${count} 份`;
+      } else {
+        dshVersionsDup.textContent = `${duplicated.length} 个版本有重复`;
+      }
+      dshVersionsDup.classList.remove("hidden");
+    }
+
+    /** 一行的动作区：默认一个「删除/卸载」；点了才换成二次确认。
+     *  同一时刻最多只有一行处于确认态——否则两行并排红着，很容易点错删错。 */
     function versionActions(entry: InstalledDsh): HTMLElement {
       const box = document.createElement("div");
       box.className = "dsh-version-actions";
-      paintDeleteButton(box, entry);
+      paintActionBox(box, entry);
       return box;
+    }
+
+    /** 这一行的唯一标识：同一个路径不会同时出现在两个来源下，拿来源加路径就够。 */
+    function dshEntryKey(entry: InstalledDsh): string {
+      return `${entry.source}:${entry.path}`;
+    }
+
+    /** 按「这一行是不是待确认的那一行」来画：是就画确认对，否则画单颗删除。 */
+    function paintActionBox(box: HTMLElement, entry: InstalledDsh): void {
+      if (dshPendingDelete === dshEntryKey(entry)) {
+        paintConfirm(box, entry);
+      } else {
+        paintDeleteButton(box, entry);
+      }
+    }
+
+    /** 把列表里所有动作区按当前待确认状态重画（点了某行就整表刷一次，保证只有一行在确认）。 */
+    function repaintActionBoxes(): void {
+      const boxes = Array.from(
+        dshVersionsList.querySelectorAll<HTMLElement>(".dsh-version-actions"),
+      );
+      for (let i = 0; i < boxes.length && i < dshVersionEntries.length; i += 1) {
+        const box = boxes[i];
+        const entry = dshVersionEntries[i];
+        if (box && entry) {
+          paintActionBox(box, entry);
+        }
+      }
     }
 
     function paintDeleteButton(box: HTMLElement, entry: InstalledDsh): void {
@@ -2841,7 +2905,10 @@ async function main(): Promise<void> {
       btn.type = "button";
       btn.className = "dsh-version-uninstall";
       btn.textContent = entry.source === "npm" ? "卸载" : "删除";
-      btn.addEventListener("click", () => paintConfirm(box, entry));
+      btn.addEventListener("click", () => {
+        dshPendingDelete = dshEntryKey(entry);
+        repaintActionBoxes();
+      });
       box.append(btn);
     }
 
@@ -2858,7 +2925,10 @@ async function main(): Promise<void> {
       no.type = "button";
       no.className = "dsh-version-uninstall ghost";
       no.textContent = "取消";
-      no.addEventListener("click", () => paintDeleteButton(box, entry));
+      no.addEventListener("click", () => {
+        dshPendingDelete = null;
+        repaintActionBoxes();
+      });
       box.append(yes, no);
     }
 
@@ -2880,6 +2950,7 @@ async function main(): Promise<void> {
             path: entry.path,
           });
         }
+        dshPendingDelete = null;
         await refreshDshVersions();
       } catch (err) {
         dshVersionsError.textContent = String(err);
