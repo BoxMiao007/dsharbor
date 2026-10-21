@@ -64,6 +64,23 @@ button.primary:hover:not(:disabled) {
   --btn-ico-size: 34px;
 }
 
+/* 工具条这一排按钮统一一个高度，垂直居中交给 flex 算：
+   - 「停止」「重启 DSH」「应用内打开」和它的三角段必须同高，否则亮色实底上
+     能看出 0.5px 台阶，看着就是「一边大一边小」；
+   - 「启动 DSH」停止态原来靠 .text-window 的 line-height:1.2em + vertical-align
+     凑竖直位置，实测整块比按钮中心低 1.5px（维护者看到的「文字偏下」）。
+     flex 居中后文字块的几何中心 = 按钮中心，不再受行高与基线影响。
+   菜单项 .open-item 是下拉里的行，不参与这套尺寸。 */
+.toolbar-actions button:not(.open-item) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: var(--btn-h);
+  box-sizing: border-box;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .toolbar-actions button .btn-text {
   display: inline-block;
   transition: transform var(--btn-sweep-ms) ease;
@@ -207,12 +224,13 @@ button.primary:hover:not(:disabled) {
    运行态的「停止」是带图标段的普通按钮，不走这套。 */
 #btn-toggle.swap .text-window {
   position: relative;
-  display: inline-block;
+  display: block;
   overflow: hidden;
-  /* 窗口高度 = 一行文字高；行内文字上移 1.3em 后完全落在窗外，切字过程不露破绽。 */
+  /* 窗口高度 = 一行文字高（em 跟随字号）；窗口在 flex 按钮里垂直居中，
+     文字块中心与按钮中心重合。原来用 inline-block + vertical-align:middle，
+     实测整块比按钮中心低 1.5px（维护者指出的「文字偏下」），不再用那套基线凑法。 */
   height: 1.2em;
   line-height: 1.2;
-  vertical-align: middle;
 }
 
 #btn-toggle.swap .span-mother,

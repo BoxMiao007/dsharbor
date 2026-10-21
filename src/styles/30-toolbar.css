@@ -131,22 +131,32 @@
   align-items: center;
 }
 
+/* 两段式左半边：图标方块（边长 --btn-ico-size）+ 文字 + 左右等宽呼吸。
+   左内边距 = 图标方块 + 呼吸，右内边距 = 同一个呼吸 → 文字正好落在
+   「图标方块右缘 … 分隔线」这段的正中，两边不会一边宽一边窄。 */
 .open-split #btn-open {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
-  /* 图标在左、不再画竖线；竖线归右边那颗三角（见 #btn-open-more）。 */
+  /* 竖线只归右半边那颗三角（见 #btn-open-more），主按钮自身不画右边线。 */
   border-right: 0;
-  /* 文字贴着图标排，与右侧三角之间留一档比呼吸位稍大的空——
-     两段式按钮按「内容靠左 + 分隔线前留白」排，不做整体居中。 */
-  padding-right: 13px;
+  padding-left: calc(var(--btn-ico-size) + var(--btn-open-gap));
+  padding-right: var(--btn-open-gap);
 }
 
-/* 右半边那颗三角：自带左边线（= 主按钮与三角之间的那根竖线），和主按钮拼成一颗。 */
+/* 图标方块不画竖线：全站 .btn-ico 默认带一条右边线（「停止 / 重启 DSH」
+   靠它分格），两段式只有一颗分隔线，在这里单独收回，否则图标右侧会多出一条
+   短线，看起来像三段、文字被夹在中间。 */
+.open-split #btn-open .btn-ico {
+  border-right-color: transparent;
+}
+
+/* 右半边那颗三角：自带左边线（= 主按钮与三角之间的那根竖线），和主按钮拼成一颗。
+   宽度取和图标方块同一个边长 —— 两段式左右两头一样宽，视觉才配平。 */
 #btn-open-more {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 34px;
+  width: var(--btn-ico-size);
+  height: var(--btn-h);
   padding: 0;
   border: 1px solid var(--line-strong);
   border-top-left-radius: 0;
