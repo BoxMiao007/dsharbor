@@ -236,9 +236,11 @@ button.danger:hover:not(:disabled) {
     background 160ms;
 }
 
+/* 开启态轨道用 --accent-fill（深一档实底）：白色圆头压浅冰蓝 accent 只有 ~2.1:1，
+   圆头与轨道几乎分不开；压实底后白圆头清晰（4.88/5.84）。 */
 .switch[aria-checked="true"] {
   border-color: transparent;
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 .switch[aria-checked="true"] .switch-knob {

@@ -22,6 +22,9 @@
   /* 卡片圆角与轻阴影：悬浮卡片骨架里左栏、工具条、主卡、次卡共用。 */
   --radius-card: 14px;
   --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.18);
+  /* 卡片之间的统一间距：顶栏→卡片、左栏↔右栏、工具条↔主卡一律取这一个值，
+     三张卡片的相互间隔才对得上（原来工具条到主卡是 8px、其余是 20px，看着不齐）。 */
+  --gap-card: 16px;
   /* 「重启 DSH」点击后持续转动一圈的时长。
      src/main.ts 的 RESTART_SPIN_MIN_MS 用同一个 700 数值但职责不同（那边=收场前
      最短反馈时长，这里=一圈时长），改转速时两处一起检查。 */
@@ -39,57 +42,65 @@
    不重建界面。深色是冷灰，浅色是同一套层级反相：卡片比页面亮，控件比卡片再亮一档。 */
 html[data-mode="dark"] {
   color-scheme: dark;
-  --bg: #0b0f14;
-  --bg-2: #131a22;
-  --card: #171d25;
-  --card-2: #1d242d;
+  /* 中性石墨底：底色不带蓝相，层级靠明度差立起来；蓝只留给强调色，
+     避免整屏泛蓝（原来 bg/card/cell/elev 全带蓝且明度挤在一起，边界会糊）。 */
+  --bg: #101114;
+  --bg-2: #15171b;
+  --card: #1a1c20;
+  --card-2: #202329;
   /* 主卡里的小卡（卡中卡）：比主卡再亮一档，靠明度差而不是描边把层次立起来。 */
-  --cell: #222c38;
-  --elev: #212933;
-  --line: rgba(255, 255, 255, 0.075);
-  --line-strong: rgba(255, 255, 255, 0.14);
-  --fg: #e8eef7;
-  --fg-dim: #9aa7b8;
-  --fg-mute: #6d7a8a;
-  --accent: #4ea1ff;
-  --accent-soft: rgba(78, 161, 255, 0.16);
-  --ok: #57c98b;
-  --warn: #e8c85c;
-  --danger: #ef5f6b;
+  --cell: #292c32;
+  --elev: #242830;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.15);
+  --fg: #eceff4;
+  --fg-dim: #9ea5b0;
+  /* 次要文字压到 cell 底上也要 ≥4.5:1（#8e96a2 对 cell 4.69 / 对 card 5.71）。 */
+  --fg-mute: #8e96a2;
+  /* accent 是「浅冰蓝」，只用于文字、图标、描边与焦点环，不再做大面积填充——
+     白字压它只有 ~2.1:1。需要填充的地方一律用下面深一档的 --accent-fill。 */
+  --accent: #7fb2ff;
+  --accent-soft: rgba(127, 178, 255, 0.1);
+  --accent-fill: #2f6fd0; /* 主按钮实底：白字压它 4.88:1（达 AA） */
+  --ok: #5fcf94;
+  --warn: #e6c766;
+  --danger: #f06a75;
   /* 日志正文：中性深色面板，比卡片沉一档，靠描边和等宽字表示「这是控制台输出」。
-     早先用的饱和蓝底与整套冷灰卡片打架，改成中性色后不再抢画面的颜色。
      fill = 正文底；fg = 底上的文字；line = 正文框描边（两套外观各自定义）。 */
-  --log-fill: #10161d;
-  --log-fg: #c9d5e3;
+  --log-fill: #14161a;
+  --log-fg: #ccd2db;
   --log-line: rgba(255, 255, 255, 0.08);
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
   --shadow-soft: 0 3px 14px rgba(0, 0, 0, 0.34);
-  --tip-bg: #0b1219;
+  --tip-bg: #16181c;
 }
 
 html[data-mode="light"] {
   color-scheme: light;
-  --bg: #eef2f7;
-  --bg-2: #dde5ef;
+  --bg: #f2f3f5;
+  --bg-2: #e6e8ec;
   --card: #ffffff;
-  --card-2: #f4f7fb;
+  --card-2: #f6f7f9;
   /* 浅色反过来：小卡在主卡上沉下去一档（主卡已是最亮，没法再亮）。 */
-  --cell: #eef2f7;
+  --cell: #eef0f3;
   --elev: #ffffff;
-  --line: rgba(15, 26, 40, 0.09);
-  --line-strong: rgba(15, 26, 40, 0.16);
-  --fg: #16202c;
-  --fg-dim: #5a6878;
-  --fg-mute: #8494a5;
-  --accent: #1f6feb;
-  --accent-soft: rgba(31, 111, 235, 0.12);
-  --ok: #1e9e5f;
-  --warn: #b8860b;
-  --danger: #d33a4a;
+  --line: rgba(20, 24, 32, 0.1);
+  --line-strong: rgba(20, 24, 32, 0.17);
+  --fg: #1a1d22;
+  --fg-dim: #5d6673;
+  /* 次要文字压到 cell 底上也要 ≥4.5:1（#656d78 对 cell 4.58 / 对 card 5.23）。 */
+  --fg-mute: #656d78;
+  --accent: #1c5fd0;
+  --accent-soft: rgba(28, 95, 208, 0.08);
+  --accent-fill: #1c5fd0; /* 主按钮实底：白字压它 5.84:1 */
+  /* 浅色下 ok / warn 原来太亮，11.5~12px 小字压在白底上不到 4.5:1，压深一档。 */
+  --ok: #12805c;
+  --warn: #8a6100;
+  --danger: #c2323f;
   /* 浅色外观下的日志正文：仍走中性色（不用饱和蓝），只是反过来比卡片沉一档。 */
-  --log-fill: #f4f7fb;
-  --log-fg: #2b3846;
-  --log-line: rgba(15, 26, 40, 0.1);
+  --log-fill: #f6f7f9;
+  --log-fg: #2b3038;
+  --log-line: rgba(20, 24, 32, 0.1);
   --shadow: 0 18px 48px rgba(21, 38, 60, 0.16);
   --shadow-soft: 0 2px 10px rgba(21, 38, 60, 0.1);
   --tip-bg: #ffffff;

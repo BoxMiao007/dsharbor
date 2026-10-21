@@ -77,7 +77,7 @@ export function buildHtml(info: AppInfo): string {
   const toolbar = `
     <section class="block toolbar-block">
       <div class="status-row">
-        <span id="login-badge" class="badge badge-stopped"><span id="login-text">桥接未安装</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="桥接插件说明" data-tip="正在读取桥接插件状态…">!</span></span>
+        <span id="login-badge" class="badge badge-stopped" role="status" aria-live="polite"><span id="login-text">桥接未安装</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="桥接插件说明" data-tip="正在读取桥接插件状态…">!</span></span>
         <span id="version-badge" class="badge badge-version" title="每次成功启动 DSH 后自动读取">${SPARKLE_SVG}<span id="version-text">DSH 版本未知</span></span>
         <span class="status-meta">PID <b id="status-pid">—</b></span>
         <span class="status-meta">监听 <b id="status-port">—</b></span>
@@ -107,8 +107,9 @@ export function buildHtml(info: AppInfo): string {
   `;
 
   // 状态错误与登录失败的两行提示：工具条下方整行显示，不塞进任何块。
-  const statusErrorBlock = `<p id="status-error" class="error hidden"></p>`;
-  const loginNoteBlock = `<p id="login-note" class="hint login-note hidden"></p>`;
+  // 两者都是「运行中才出现」的动态状态，加 aria-live 让屏幕阅读器在出现时读出来。
+  const statusErrorBlock = `<p id="status-error" class="error hidden" role="alert" aria-live="assertive"></p>`;
+  const loginNoteBlock = `<p id="login-note" class="hint login-note hidden" role="status" aria-live="polite"></p>`;
 
   // 两条托盘设置（单击打开 / 释放界面内存）在「托盘设置」块里，说明直接写在控件下方。
   const trayFields = `
@@ -178,7 +179,7 @@ export function buildHtml(info: AppInfo): string {
       <span class="field-label">代理</span>
       <div class="picker" id="proxy-mode-picker"></div>
       <div id="proxy-manual" class="proxy-manual hidden">
-        <input id="proxy-address" type="text" placeholder="例如 http://127.0.0.1:7890" spellcheck="false" autocomplete="off" />
+        <input id="proxy-address" type="text" placeholder="例如 http://127.0.0.1:7890" aria-label="代理地址" spellcheck="false" autocomplete="off" />
       </div>
       <p class="hint" id="proxy-hint"></p>
     </div>
@@ -300,7 +301,7 @@ export function buildHtml(info: AppInfo): string {
       </label>
       <div id="binary-fields" class="fields hidden">
         <div class="path-row">
-          <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" />
+          <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" aria-label="指定程序路径" />
           <button type="button" id="binary-browse" class="square-btn" title="浏览程序路径" aria-label="浏览程序路径">${ICON_FOLDER}</button>
         </div>
         <p id="binary-error" class="error field-error hidden"></p>
@@ -317,7 +318,7 @@ export function buildHtml(info: AppInfo): string {
       <div id="custom-fields" class="fields hidden">
         <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行这条命令。">!</span></span>
         <div class="picker" id="custom-runtime-picker"></div>
-        <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
+        <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" aria-label="自定义启动命令" />
         <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」面板里的其它环境时不会改写这条命令——自己写进去才算数。</p>
       </div>
     </div>
@@ -450,7 +451,7 @@ export function buildHtml(info: AppInfo): string {
       </header>
       <div class="modal-body">
         <div class="fields" id="profile-manage-name-row">
-          <input id="profile-manage-name" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lab">
+          <input id="profile-manage-name" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lab" aria-label="环境名">
         </div>
         <div id="profile-manage-confirm" class="profile-confirm hidden">
           <p id="profile-manage-confirm-text" class="hint"></p>

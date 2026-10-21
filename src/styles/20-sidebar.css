@@ -1,12 +1,13 @@
 /* ---- 左右分栏：左栏一张卡片，右栏吃掉余量 ---- */
-/* 四周留白由这里给：左右各 20px（卡片不贴窗口边）、底部 20px、
-   与顶栏之间再让 4px（顶栏自己 40 高）。卡片之间用 gap 16px。 */
+/* 四周留白由这里给：左右各 35px（卡片不贴窗口边）、底部 32px、
+   顶部 16px（顶栏自己 40 高）。卡片之间统一用 --gap-card：
+   顶栏→卡片、左栏↔右栏、工具条↔主卡全部对齐同一个值，三张卡片的间隔才一致。 */
 .shell {
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 20px;
-  padding: 20px 35px 32px;
+  gap: var(--gap-card);
+  padding: var(--gap-card) 35px 32px;
 }
 
 /* 左栏：一张通高卡片。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。 */
@@ -128,7 +129,9 @@
    由下面的 :empty 收成不渲染，不需要界面再挂一个隐藏类。
    尺寸对齐工具条徽章（字号 13px、圆角 999px、等宽数字），但矮一档取 20px：
    它挤在 44px 高的导航条目里，与 24px 的独立徽章同高会顶掉条目的上下留白。
-   margin-left: auto 把它推到条目最右，flex: none 让它挨着最小窗口宽度也不被压窄。 */
+   margin-left: auto 把它推到条目最右，flex: none 让它挨着最小窗口宽度也不被压窄。
+   底色用 --accent-fill（深一档实底）而不是 --accent：白字压浅冰蓝只有 ~2.1:1，
+   压实底是 4.88/5.84。 */
 .ico-count {
   display: inline-flex;
   flex: none;
@@ -139,7 +142,7 @@
   margin-left: auto;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-size: 13px;
   font-weight: 600;

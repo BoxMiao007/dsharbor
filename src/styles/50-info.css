@@ -72,8 +72,13 @@
   display: block;
 }
 
+/* 圆点本身用键盘聚焦时也要看得见：原来直接 outline:none 抹掉了焦点，
+   只能靠气泡出现来暗示——焦点环被抹掉后键盘用户很难判断当前停在哪。
+   这里给一圈强调色焦点环（气泡仍照常展开说明）。 */
 .info-dot:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 50%;
 }
 
 /* 标签里的 ⓘ 贴着卡片左缘，气泡再按 50% 居中就会向左撑出窗口：
@@ -110,16 +115,8 @@
   transform: translateY(-0.5px);
 }
 
-.status-meta {
-  font-size: 12.5px;
-  color: var(--fg-mute);
-  white-space: nowrap;
-}
-
-.status-meta b {
-  color: var(--fg-dim);
-  font-weight: 500;
-}
+/* .status-meta 定义在 30-toolbar.css（工具条里的 PID / 监听），这里不再重复一份：
+   两处 font-weight 不一致（600 vs 500）会让实际生效值随引入顺序漂移。 */
 
 .actions {
   display: flex;

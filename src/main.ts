@@ -1842,17 +1842,77 @@ async function main(): Promise<void> {
     const modalNameTitle = $<HTMLElement>("modal-name-title");
     type ModalId = "bridge" | "patch" | "name";
     let openModal: ModalId | null = null;
+    /** 打开浮窗前焦点所在的元素：关闭时把焦点还回去，键盘用户才不会被丢在页面顶部。 */
+    let modalReturnFocus: HTMLElement | null = null;
+
+    /** 浮窗内可聚焦的控件（用于初始聚焦与 Tab 兜圈）。 */
+    function focusablesIn(container: HTMLElement): HTMLElement[] {
+      const nodes = container.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      return Array.from(nodes).filter(
+        (el) => !el.hasAttribute("disabled") && el.offsetParent !== null,
+      );
+    }
 
     function setModal(id: ModalId | null): void {
+      const wasOpen = openModal !== null;
       openModal = id;
       modalBridge.classList.toggle("hidden", id !== "bridge");
       modalPatch.classList.toggle("hidden", id !== "patch");
       modalName.classList.toggle("hidden", id !== "name");
       modalScrim.classList.toggle("hidden", id === null);
+      if (id !== null) {
+        // 打开：把焦点送进浮窗（环境名浮窗优先落在输入框上），并记住打开前的焦点。
+        if (!wasOpen) {
+          modalReturnFocus =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null;
+        }
+        const panel =
+          id === "bridge" ? modalBridge : id === "patch" ? modalPatch : modalName;
+        const first = focusablesIn(panel)[0] ?? panel;
+        first.focus();
+      } else if (wasOpen) {
+        // 关闭：焦点还给原来的触发点（若它还在文档里）。
+        const back = modalReturnFocus;
+        modalReturnFocus = null;
+        if (back && back.isConnected) {
+          back.focus();
+        }
+      }
       if (id === null) {
         closeEnvMenu();
       }
     }
+
+    // 焦点圈在打开着的浮窗里：Tab / Shift+Tab 到首尾时折返，不会跑到浮窗背后的页面上。
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab" || openModal === null) {
+        return;
+      }
+      const panel =
+        openModal === "bridge"
+          ? modalBridge
+          : openModal === "patch"
+            ? modalPatch
+            : modalName;
+      const items = focusablesIn(panel);
+      if (items.length === 0) {
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || active === panel)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
 
     modalScrim.addEventListener("click", () => setModal(null));
     for (const close of root.querySelectorAll<HTMLButtonElement>("[data-modal-close]")) {

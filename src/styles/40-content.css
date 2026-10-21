@@ -66,14 +66,15 @@
   user-select: text;
 }
 
-/* 内容区：卡片之间的间隙由这里给，整页不滚（只有主卡内部滚）。 */
+/* 内容区：卡片之间的间隙由 .content 的 gap 给（原来这里 8px 的 padding-top 让
+   工具条到主卡只有 8px，比左栏↔右栏的 20px 窄一截，看着不齐），这里清零。 */
 .page {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 8px 0 0;
+  padding: 0;
 }
 
 /* 分区：主卡 + 次卡行，撑满内容区高度（主卡吃掉余量）。 */

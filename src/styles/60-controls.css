@@ -1,14 +1,22 @@
 /* 按钮都按内容取宽，不拉满一行：工具条右侧的主操作一排排开。 */
 
 /* 登录说明只在出错时出现；正常状态改挂在登录徽章的感叹号气泡里。
-   独立成段（不再和按钮同排），出现或消失都不会挤动上面的按钮行。 */
+   它是 .content（纵向 flex）的直接子节点，所以不能 flex:1——那会在纵向抢掉剩余高度、
+   把提示撑成一大块。改成按内容占高（flex:none），横向仍可截断。 */
 .login-note {
-  flex: 1;
+  flex: none;
   min-width: 0;
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 出错 / 登录提示这两行是 .content 的直接子节点，间距交给 .content 的统一 gap，
+   不再用 .error 自带的 margin（那是给字段内联错误留的），否则会把 16px 节奏撑成 26/20px。 */
+.content > .error,
+.content > .login-note {
+  margin: 0;
 }
 
 button {
@@ -30,21 +38,33 @@ button:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 
+/* 全站键盘焦点环：统一用强调色 2px 外描边，跟 .switch 的既有做法一致。
+   原来只有浏览器默认的近黑 outline，深底上几乎看不见（轴心缺陷）。 */
+button:focus-visible,
+.square-btn:focus-visible,
+.icon-btn:focus-visible,
+.win-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
+/* 主按钮用深一档的实底（--accent-fill）+ 白字，白字对比 4.88/5.84；
+   亮 --accent 只留给文字、图标与描边，不再拿去做大面积填充。 */
 button.primary {
   border-color: transparent;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #ffffff;
   font-weight: 600;
 }
 
 button.primary:hover:not(:disabled) {
   border-color: transparent;
-  background: color-mix(in srgb, var(--accent) 84%, #ffffff);
+  background: color-mix(in srgb, var(--accent-fill) 92%, #ffffff);
 }
 
 /* 会话按钮左端那一段图标（分隔线 + 图标）：
@@ -373,7 +393,9 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 减少动态效果：关掉抖动与未读数字的弹动、swap 切字压到最短
-   （数字照常变化，只是不弹——上拍列表仍按 90ms 一拍走）。 */
+   （数字照常变化，只是不弹——上拍列表仍按 90ms 一拍走）。
+   两处「无限转圈」也一并停掉：重启按钮的转圈与方形按钮（自查 / 刷新）的转圈，
+   它们是 linear infinite，不关掉会一直动，对前庭敏感的用户不友好。 */
 @media (prefers-reduced-motion: reduce) {
   .ico-count.ico-count-bump {
     animation: none;
@@ -381,6 +403,11 @@ button.primary:hover:not(:disabled) {
 
   #btn-toggle.swap:hover,
   #btn-toggle.swap:focus-visible {
+    animation: none;
+  }
+
+  #btn-restart.is-restarting svg,
+  .square-btn.is-spinning svg {
     animation: none;
   }
 
@@ -531,18 +558,20 @@ p.hint.error {
     border-color 140ms;
 }
 
-/* 只有「选中 + 真的展开了参数」的那一组才抬整组底色：参数跟着选项走，抬色让人
-   一眼看出「下面这几行参数属于这个选项」。 */
+/* 只有「选中 + 真的展开了参数」的那一组才描一圈边强调：参数跟着选项走，边框让人
+   一眼看出「下面这几行参数属于这个选项」。
+   原先把整组刷成 --accent-soft，深色下是一大块雾蓝板、浅色下更明显；改成透明底 +
+   42% 强调色细描边，只留下「这一组被选中」的信号，不再染蓝。 */
 .mode-group:has(> .mode > input:checked):has(> .fields:not(.hidden)) {
-  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: transparent;
 }
 
-/* 没有参数区的选项（系统全局命令）选中时给选项行本身抬同一层底色 + 描边：
+/* 没有参数区的选项（系统全局命令）选中时给选项行本身描同一圈边：
    与其他三项的选中视觉同源，但不套整组大框——没有参数撑着，大框只会显得空。 */
 .mode-group:has(> .mode > input:checked):not(:has(> .fields)) > .mode {
-  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: transparent;
 }
 
 .mode-group > .fields {
@@ -642,11 +671,20 @@ input[type="number"],
   font-size: 13px;
 }
 
+/* 输入框原来的 :focus{outline:none} 只靠描边变色提示焦点，键盘用户几乎看不出；
+   改成强调色描边 + 2px 外焦点环（鼠标点击时不显示环，只剩描边变色）。 */
 input[type="text"]:focus,
 input[type="number"]:focus,
 .picker-btn:focus-visible {
   outline: none;
   border-color: var(--accent);
+}
+
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+.picker-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* 短输入框固定 260px、左对齐（原来撑满整行）。260px 取自 .picker 里的最长选项

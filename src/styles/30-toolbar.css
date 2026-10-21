@@ -1,10 +1,13 @@
 /* ---- 右栏：工具条卡片 / 日志开关条 / 内容区 ---- */
+/* 工具条卡片与下面内容区之间的间隙由这里的 gap 给（原来靠 .page 里 8px 的
+   padding-top，和左栏↔右栏的 20px 对不齐）。统一取 --gap-card。 */
 .content {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: var(--gap-card);
 }
 
 /* 工具条：一张独立卡片，左边徽章群、右边主操作。整块可拖动（顶部留出拖动带）。 */
@@ -114,15 +117,8 @@
   color: var(--fg-dim);
 }
 
-/* 登录提示：出错时占满工具条下方一行，平时隐藏。 */
-.login-note {
-  flex: 1;
-  min-width: 0;
-  margin: 0 14px 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* 登录提示的样式统一在 60-controls.css 的 .login-note 里（本文件早先那条
+   margin:0 14px 8px 已被它整条覆盖，是死规则，删掉免得两处各改一半）。 */
 
 /* ---- 「打开方式」两段式：主按钮 + 右侧小三角，点小三角展开菜单 ---- */
 .open-split {
