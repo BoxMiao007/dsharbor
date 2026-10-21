@@ -3,7 +3,8 @@
  *
  * 只测这一个接缝——运行态与停止态下 `#btn-toggle`、`#btn-restart` 的形状与可见性：
  *  1. 运行态：两颗都是圆形图标钮（宽 = 高、`border-radius: 50%`），圆钮里没有可见文字，
- *     名字只靠 title / aria-label；「停止」是实心方块图标。
+ *     名字只靠 title / aria-label；「停止」是实心方块图标，且描边在场
+ *     （悬停闪动的空心那半拍只有描边能留下轮廓，stroke: none 时那一拍方块会整个消失）。
  *  2. 停止态：只剩蓝色长条「启动 DSH」，「重启 DSH」必须真的不显示（rect 为 0×0）。
  *     这条是回归点：`.round` 的 `display: grid` 曾用 ID 选择器写成 (1,0,0)，
  *     压过 99-hidden.css 里 `.hidden` 的 (0,1,0)，停止态两颗按钮一起露出来。
@@ -73,7 +74,7 @@ async function openPage(browser, state) {
   return page;
 }
 
-/** 量一颗按钮：可见性、矩形、圆角、圆钮里有没有可见文字。 */
+/** 量一颗按钮：可见性、矩形、圆角、圆钮里有没有可见文字、图标自身的填充与描边。 */
 function readButton(page, id) {
   return page.evaluate((btnId) => {
     const el = document.getElementById(btnId);
@@ -83,6 +84,8 @@ function readButton(page, id) {
       text: t.textContent.trim(),
       width: t.getBoundingClientRect().width,
     }));
+    const svg = el.querySelector("svg");
+    const svgStyle = svg ? getComputedStyle(svg) : null;
     return {
       className: el.className,
       visible: rect.width > 0 && rect.height > 0,
@@ -93,12 +96,15 @@ function readButton(page, id) {
       label: el.getAttribute("aria-label") ?? "",
       title: el.getAttribute("title") ?? "",
       texts,
-      svgRect: (() => {
-        const svg = el.querySelector("svg");
-        if (!svg) return null;
-        const r = svg.getBoundingClientRect();
-        return { width: Math.round(r.width), height: Math.round(r.height) };
-      })(),
+      svgRect: svg
+        ? (() => {
+            const r = svg.getBoundingClientRect();
+            return { width: Math.round(r.width), height: Math.round(r.height) };
+          })()
+        : null,
+      svgFill: svgStyle?.fill ?? null,
+      svgStroke: svgStyle?.stroke ?? null,
+      svgStrokeWidth: svgStyle?.strokeWidth ?? null,
     };
   }, id);
 }
@@ -142,6 +148,15 @@ test("运行态：停止与重启都是圆形图标钮，钮里没有文字", { 
     assert.match(stop.label, /停止/, "停止钮的 aria-label 应说明这是「停止」");
     assert.match(stop.title, /停止/, "停止钮的 title 应说明这是「停止」");
     assert.equal(restart.label, "重启 DSH");
+
+    // 回归点：悬停闪动的空心那半拍只靠描边留下方框轮廓。stroke 若退回 none，
+    // 那一拍整个方块会消失（填充分与描边分同时为「无」），看上去像图标没了。
+    assert.notEqual(stop.svgFill, "none", "停止图标常态应是实心（fill 跟随 currentColor）");
+    assert.notEqual(stop.svgStroke, "none", "停止图标必须带描边，空心那半拍才有轮廓");
+    assert.ok(
+      Number.parseFloat(stop.svgStrokeWidth) > 0,
+      `停止图标的描边宽度应大于 0，实际 ${stop.svgStrokeWidth}`,
+    );
   } finally {
     await page.close();
   }

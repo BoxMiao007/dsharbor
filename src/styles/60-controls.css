@@ -166,10 +166,15 @@ button.primary:hover:not(:disabled) {
   height: 18px;
 }
 
-/* 「停止」图标是实心方块：圆钮底色是亮的红，图标走 currentColor（白）。 */
+/* 「停止」图标是实心方块：圆钮底色是亮的红，图标走 currentColor（白）。
+   描边与填充同色、且始终在场：常态看不出来（同色叠加仍是实心），闪到空心那半拍
+   就留下方框轮廓——没有它那一拍方块整个消失，看着像图标没了。
+   外沿尺寸按「矩形 + 描边」留好，见 icons.ts 的 ICON_STOP。 */
 #btn-toggle.round svg {
   fill: currentColor;
-  stroke: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linejoin: round;
 }
 
 #btn-restart svg {
@@ -183,7 +188,8 @@ button.primary:hover:not(:disabled) {
 
 /* 「停止」图标：悬停时在实心与空心之间闪动一次——与「重启 DSH」的旋转同节奏
    （时长与延迟同用 :root 动效变量）。fill 不是可插值属性，按离散步进切换：
-   实心 → 50% 处变空心 → 结束变回实心，看上去就是一次来回闪动；结束位 = 实心常态，不跳变。 */
+   实心 → 50% 处只剩描边（空心方框，轮廓靠上面那条同色 stroke） → 结束变回实心，
+   看上去就是一次来回闪动；结束位 = 实心常态，不跳变。 */
 @keyframes btn-stop-flash {
   0%,
   100% {
