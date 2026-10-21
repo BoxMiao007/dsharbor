@@ -2,14 +2,12 @@
 
 /* 登录说明只在出错时出现；正常状态改挂在登录徽章的感叹号气泡里。
    它是 .content（纵向 flex）的直接子节点，所以不能 flex:1——那会在纵向抢掉剩余高度、
-   把提示撑成一大块。改成按内容占高（flex:none），横向仍可截断。 */
+   把提示撑成一大块。改成按内容占高（flex:none）。
+   这里允许折行（不再用省略号截断）：它是带底色的醒目提示，截一半反而更难读。 */
 .login-note {
   flex: none;
   min-width: 0;
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* 出错 / 登录提示这两行是 .content 的直接子节点，间距交给 .content 的统一 gap，
@@ -704,8 +702,7 @@ input[type="number"] {
   width: 100%;
 }
 
-/* 端口行：输入框 + 覆盖状态徽章并排 */
-.port-row {
+/* 端口行：输入框 + 覆盖状态徽章并排 */.port-row {
   display: flex;
   gap: 12px;
   align-items: center;
@@ -747,15 +744,28 @@ input[type="number"] {
   gap: 6px;
 }
 
-/* 读不到版本列表时那行提示要像错误一样显眼（黄字），读得到时是普通灰字。 */
-.hint.is-warn {
-  color: var(--warn);
-}
-
 .hint {
   font-size: 12px;
   color: var(--fg-mute);
   line-height: 1.7;
+}
+
+/* 醒目提示：空态、读取失败、平台限制这类「用户必须一眼看到」的一句提示。
+   普通 .hint 是灰字说明，和正文混在一起要仔细读才发现；这里换成警告色胶囊把它拎出来。
+   用圆角矩形而不是 999px 正圆胶囊：这些句子多数会折成两三行，正圆胶囊在多行时很难看。
+   底与边框都混进不透明的 --card（不是透明色）：这样无论下面垫的是小卡（--cell）还是
+   大卡（--card），文字与底色的对比度都是同一个值，浅色主题下也稳定达标（实测 4.58:1）。
+   不加外边距——间距交给父容器的 gap，避免和 16px 卡片节奏打架。 */
+/* `.hidden` 在这条之后才生效（99-hidden.css），但它与 `.hint.notice` 特指度不同、
+   拼不过 display:block，所以这里自己让开「被隐藏时」的情况，否则空提示会留个空胶囊。 */
+.hint.notice:not(.hidden) {
+  display: block;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--card));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--card));
+  color: var(--warn);
+  line-height: 1.6;
 }
 
 .hint code,

@@ -39,6 +39,8 @@ const state = {
   session: "stopped", // stopped | running | starting | failed
   /** true = 运行中但登录链接还没就绪（真实的「启动中」：running + 无登录链接）。 */
   loginPending: false,
+  /** 设成一段文字可预览工具条下方那条「登录链接读不到」的黄色提示。 */
+  loginError: null,
   dshVersion: "0.2.1-rc.2",
   /** 端口提示的假数据：改它就能预览「跟随 DSH 配置」与「没读到配置」两种分支。 */
   portHint: { host: "127.0.0.1", port: 3080, source: "managed" },
@@ -94,6 +96,8 @@ const state = {
   /** 命令行集成的假状态：改它能预览开关打开/关闭、PATH 里没有目录、被别的 dsh 盖住、
       以及非 Windows 宿主（supported: false）等分支。enabled 默认跟 savedShell 走。 */
   cli: { supported: true, enabled: false, onPath: false, shadow: null },
+  /** 设成 true 可预览「读取命令行集成状态失败」那条黄色提示。 */
+  cliFails: false,
   /** 已装 DSH 的假数据（`installed_dsh_versions`）：npx 缓存里的几份 + npm 全局装的一份。
       改成 [] 可预览「本机还没装过」；把某份 version 设成 null 可预览「版本读不到」；
       卸掉 npm 全局那份（`uninstall_dsh_global`）后这张列表会少一行。 */
@@ -102,6 +106,8 @@ const state = {
     { version: "0.2.0-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\50d2c97abf8f4186", inUse: false },
     { version: "0.1.9", source: "npm", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\bin\\node_modules\\@deepseek-ai\\dsh", inUse: false },
   ],
+  /** 设成 true 可预览「读取已装 DSH 版本失败」那条黄色提示。 */
+  installedDshFails: false,
   /** 环境列表（`list_profiles`）的假数据：删掉某项可预览「配置里记的环境已不在」，
       把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。
       把 profilesUnsupported 改成 true 可预览非 Windows 宿主下的「仅在 Windows 宿主可用」。 */
@@ -192,7 +198,7 @@ window.__mockUnimplemented = [];
       port: running ? 3099 : null,
       loginUrl: running ? "https://example.invalid/dsh?token=mock" : null,
       loginReady: running && !S.loginPending,
-      loginError: null,
+      loginError: S.loginError || null,
       // 真后端的 logTail 是最后 300 行（见 launcher.rs 的 LOG_TAIL_LINES）：预览也照这个形状给
       // 一段持续增长的尾巴，才能看出界面「只追加新增的那几行」的效果。
       logTail:
@@ -295,6 +301,7 @@ window.__mockUnimplemented = [];
     // 命令行集成：假状态。改 S.cli 里的字段就能预览各种分支
     // （supported:false 看「仅在 Windows 宿主可用」、shadow 有值看「排在更前面」提示）。
     cli_integration_state: () => {
+      if (S.cliFails) throw "读不到 PATH";
       const cli = S.cli || (S.cli = { supported: true, enabled: false, onPath: false, shadow: null });
       if (cli.supported === undefined) cli.supported = true;
       if (cli.enabled === undefined) cli.enabled = !!S.savedShell.cliIntegration;
@@ -406,6 +413,7 @@ window.__mockUnimplemented = [];
     // 已装 DSH 版本：只读扫描（npx 缓存 + npm 全局）。
     installed_dsh_versions: () => {
       seen("installed_dsh_versions");
+      if (S.installedDshFails) throw "读取已装 DSH 版本失败：npm 不在 PATH 里";
       return S.installedDsh || [];
     },
     // 卸载 npm 全局那一份：从假数据里拿掉 source=npm 的行，界面重扫后少一行。

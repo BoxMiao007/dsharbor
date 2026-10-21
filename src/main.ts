@@ -300,8 +300,8 @@ async function main(): Promise<void> {
       const hint = registryHint();
       npxVersionsHint.textContent = hint;
       npxVersionsHint.classList.toggle("hidden", hint === "");
-      // 读不到列表时这句要像错误一样显眼，读得到时就是普通灰字。
-      npxVersionsHint.classList.toggle("is-warn", registryError !== null && !registryLoading);
+      // 读不到列表时这句要像错误一样显眼（黄色胶囊），读得到时就是普通灰字。
+      npxVersionsHint.classList.toggle("notice", registryError !== null && !registryLoading);
       // 读列表期间刷新按钮转圈并禁用：连点会让每次强制查询都真发一次 npm view。
       npxVersionsRefresh.disabled = registryLoading;
       npxVersionsRefresh.classList.toggle("is-spinning", registryLoading);
@@ -2246,7 +2246,7 @@ async function main(): Promise<void> {
     /** 备份清单：最新的在最上面，每行能直接点「还原」；路径原文照抄，方便自己去翻。 */
     function renderPatchList(): void {
       if (patchBackups.length === 0) {
-        patchBackupList.innerHTML = `<p class="hint">这个环境还没有补丁层备份。改补丁层之前先点「备份补丁层」留个底。</p>`;
+        patchBackupList.innerHTML = `<p class="hint notice">这个环境还没有补丁层备份。改补丁层之前先点「备份补丁层」留个底。</p>`;
         return;
       }
       const newest = patchBackups[patchBackups.length - 1]?.name ?? "";
@@ -2677,6 +2677,8 @@ async function main(): Promise<void> {
       // 垫片渲染不出来（启动方式还没填完整等）时把原因显示在代码块里，便于手改。
       cliShimText.textContent = state.shimError === null ? state.shimText : state.shimError;
       cliMessage.textContent = state.message;
+      // 正常态是灰字状态说明；上一次失败留下的黄色胶囊要撤掉。
+      cliMessage.classList.remove("notice");
       const connected = state.supported && state.enabled && state.onPath;
       cliBadgeConnected = connected;
       cliBadgeFailed = false;
@@ -2690,6 +2692,8 @@ async function main(): Promise<void> {
         renderCliState(state);
       } catch (err) {
         cliMessage.textContent = `读取命令行集成状态失败：${err}`;
+        // 读不到状态是要用户处理的事，用醒目提示把它从普通灰字里拎出来。
+        cliMessage.classList.add("notice");
         cliLoaded = true;
         cliBadgeFailed = true;
         cliBadgeText = "命令行读取失败";
@@ -2734,6 +2738,7 @@ async function main(): Promise<void> {
         renderCliState(state);
       } catch (err) {
         cliMessage.textContent = `垫片没能跟着重写：${err}`;
+        cliMessage.classList.add("notice");
       }
     }
 
@@ -2772,7 +2777,7 @@ async function main(): Promise<void> {
       dshVersionsList.textContent = "";
       if (list.length === 0) {
         const empty = document.createElement("p");
-        empty.className = "hint";
+        empty.className = "hint notice";
         empty.textContent =
           "本机还没有装过 dsh web。选「官方 npx 命令」启动一次，就会在 npx 缓存里出现一份。";
         dshVersionsList.append(empty);
@@ -2857,12 +2862,10 @@ async function main(): Promise<void> {
         });
         renderDshVersions(list);
       } catch (err) {
+        // 失败原因写在下面那行 .error 里；列表区不再重复一条「读取失败」，避免两句叠着说同一件事。
+        // 后端返回的错误文案已经带「读取已装 DSH 版本失败：」前缀，这里原样用，不再加一层。
         dshVersionsList.textContent = "";
-        const failed = document.createElement("p");
-        failed.className = "hint";
-        failed.textContent = "读取失败，稍后重试。";
-        dshVersionsList.append(failed);
-        dshVersionsError.textContent = `读取已装 DSH 版本失败：${err}`;
+        dshVersionsError.textContent = String(err);
         dshVersionsError.classList.remove("hidden");
         dshVersionsBadgeFailed = true;
         renderIntegrationsSummary();

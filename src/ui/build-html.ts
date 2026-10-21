@@ -109,7 +109,7 @@ export function buildHtml(info: AppInfo): string {
   // 状态错误与登录失败的两行提示：工具条下方整行显示，不塞进任何块。
   // 两者都是「运行中才出现」的动态状态，加 aria-live 让屏幕阅读器在出现时读出来。
   const statusErrorBlock = `<p id="status-error" class="error hidden" role="alert" aria-live="assertive"></p>`;
-  const loginNoteBlock = `<p id="login-note" class="hint login-note hidden" role="status" aria-live="polite"></p>`;
+  const loginNoteBlock = `<p id="login-note" class="hint notice login-note hidden" role="status" aria-live="polite"></p>`;
 
   // 两条托盘设置（单击打开 / 释放界面内存）在「托盘设置」块里，说明直接写在控件下方。
   const trayFields = `
@@ -133,7 +133,7 @@ export function buildHtml(info: AppInfo): string {
   // 启动 DSH 永远用 web 环境（核心库 launch::PROFILE_NAME），这里选的只是「管理目标」。
   const profilesBody = `
     ${colHead("环境与插件")}
-    <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
+    <p id="profiles-windows-only" class="hint notice profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
     <div id="profiles-content" class="profiles-content">
       <div class="env-row">
         <div id="profile-cards" class="env-cards"></div>
@@ -155,19 +155,19 @@ export function buildHtml(info: AppInfo): string {
     <div id="profile-plugins" class="plugin-panel">
       <div id="plugin-list" class="plugin-list"></div>
       <div id="plugin-empty" class="plugin-empty hidden">
-        <p class="hint">这个环境还没有壳管得了的插件（官方内置骨架包与桥接插件不在列表里）。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
+        <p class="hint notice">这个环境还没有壳管得了的插件（官方内置骨架包与桥接插件不在列表里）。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
         <div class="actions">
           <button id="btn-plugin-deps" class="ghost">去安装依赖</button>
         </div>
       </div>
       <p id="plugin-note" class="hint hidden"></p>
-      <p id="plugin-warning" class="hint plugin-warning hidden"></p>
+      <p id="plugin-warning" class="hint notice plugin-warning hidden"></p>
     </div>
   `;
 
   // 「网络与代理」块：下载源 + 代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
   const networkFieldsBody = `
-    <p id="network-windows-only" class="hint network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
+    <p id="network-windows-only" class="hint notice network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
     <div id="network-content" class="network-content">
     ${colHead("网络与代理")}
     <div class="fields">
