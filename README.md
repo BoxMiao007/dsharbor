@@ -19,12 +19,12 @@
 | 能力 | 说明 |
 |---|---|
 | 一键启动 | 四种启动方式：官方 npx / 系统全局命令 / 指定二进制路径 / 自定义命令；「官方 npx」可选**渠道**（稳定版 latest / 最新尝鲜版 next / 尝鲜版历史版本 rc / 内测版 alpha）与具体版本，面板里那行 `npx --yes …` 跟着实时变，版本列表从 npm 现查（失败就退回「稳定版」照常能启动）；「官方 npx」与「自定义命令」都有**运行环境**下拉，可直接选 `WSL - <发行版>` 在发行版内拉起（没装 Node.js 的发行版会在选项里标出来）；「指定程序路径」可直接点「浏览…」挑文件，选完立刻提示路径是否可用；「自定义命令」可以自己写整条启动命令（如 `npx @deepseek-ai/dsh@next web`），壳只在末尾补上 `--no-open` 与附加参数；启动前只有一个「启动 DSH」，起来之后同一个按钮变成「停止」、并多出「重启 DSH」 |
-| 运行自动检测 | 启动前自动探测目标地址（跟随 DSH 配置的绑定地址，回环或网卡 IP 都行）：已有 DSH Web 在跑（上次壳异常退出残留等）就不再重复拉起、直接显示「运行中」，不会被端口冲突报错卡住；检测到的不是本壳启动的 DSH 时，「停止 / 重启」会说明原因而不是悄悄失效 |
+| 运行自动检测 | 启动前自动探测目标地址（跟随 DSH 配置的绑定地址，回环或网卡 IP 都行）：已有 DSH Web 在跑（上次壳异常退出残留等）就不再重复拉起、直接进运行态（主按钮变「停止」并多出「重启 DSH」，PID 显示 `—`），不会被端口冲突报错卡住；检测到的不是本壳启动的 DSH 时，「停止 / 重启」会说明原因而不是悄悄失效 |
 | 登录链接自动到手 | 桥接插件（首选，现场铸造）+ 启动日志解析（兜底）；「应用内打开」弹出的窗口直接是登录态，不用手拼链接 |
-| 三种打开方式 | 工具条「打开方式」分体按钮：应用内打开（壳内 WebView2 窗口）/ 浏览器打开（系统默认浏览器）/ 复制登录链接（带 token 的完整链接写进剪贴板）；默认「应用内打开」并记住上次选择；DSH 窗口与主窗口相互独立 |
+| 三种打开方式 | 工具条右侧是「应用内打开」主按钮 + 小三角分体按钮：应用内打开（壳内 WebView2 窗口）/ 浏览器打开（系统默认浏览器）/ 复制登录链接（带 token 的完整链接写进剪贴板）；默认「应用内打开」并记住上次选择（选完方式文字与图标回填到主按钮，再点主按钮才执行）；DSH 窗口与主窗口相互独立 |
 | 统一日志 | 左栏有一项「日志」，点开右侧就是一整屏日志：DSH 进程输出与桥接 / 环境 / 缓存等操作输出都在同一个框里，不同批次间插 `--- 时间 ---`；右上角「清空日志」「复制日志」，不随切分区清空，只有清空或退出程序才清；滚到底自动追新、往上翻不抢滚动；**产生命令输出的操作（启动 / 停止 / 重启、桥接安装卸载、重装依赖、备份还原补丁层）不再把界面切走**，左栏「日志」上会挂一枚蓝色数字，告诉你攒了几行新输出，点进「日志」就自动归零 |
 | 环境与插件 | 「环境/插件」分区顶部是一排环境大按钮（`web` / `desktop` / `headless` / 自己建的都列出来），点一下即选中——选中的这个只是**插件、补丁层、依赖**的管理对象；**启动 DSH 恒用 `web` 环境**。每个按钮右上角的三点菜单里是重命名 / 复制 / 删除 / 安装依赖 / 打开目录，右侧一列三颗按钮是「新建空白环境」与「桥接插件」「补丁层」两个浮窗（浮窗里安装、卸载、回滚备份、备份还原补丁层），再往下一张卡是逐插件启停开关 |
-| 顶部状态栏 | 一条通栏的透明顶栏：左端加粗 `DSHarbor` + 小字「DSH Web 的桌面壳」，右端三颗窗口按钮，按住顶栏任意位置都能拖窗口；下面工具条左边两颗徽章（桥接插件是否装好：「桥接就绪」/「桥接未安装」，以及 DSH 版本），运行状态只看主按钮——蓝色「启动 DSH」与红色「停止」 |
+| 顶部状态栏 | 一条通栏的透明顶栏：左端加粗 `DSHarbor` + 小字「DSH Web 的桌面壳」，右端三颗窗口按钮，按住顶栏任意位置都能拖窗口；下面工具条左边是四样读数（桥接插件是否装好的徽章「桥接就绪」/「桥接未安装」、DSH 版本、PID、监听端口；窗口拉窄时先收 PID / 监听、再收版本，始终一排），右边是主操作按钮——运行状态只看主按钮：蓝色「启动 DSH」与红色「停止」。三颗主操作按钮同宽同高（127×34），文字在各自动作区里居中 |
 | 轻量模式 | 关闭窗口释放界面内存（延迟时长可在界面设置，默认立即），DSH 与托盘常驻，托盘一点窗口回来 |
 | 配置持久化 | 启动方式、渠道与版本、运行环境（Windows / WSL 发行版）、附加参数、端口改完即存（`%APPDATA%\DSHarbor`）；旧版本存的配置（含已下线的「通过 WSL 启动」）打开时自动升级，不丢设置 |
 | 端口覆盖 | 默认跟随 DSH 配置（界面显示当前生效值），也可自定义；端口框旁的「还原」按钮一键恢复默认（清空 = 继续跟随 DSH 配置）；不改动任何 DSH 文件。附加参数里写了 `--port` / `--host` 时，端口提示会说明「以它为准」 |
@@ -76,14 +76,17 @@ pnpm exec tauri dev
 
 ```powershell
 cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p dsharbor-core
 node --test plugins/dsharbor-bridge/test/bridge.test.js
+node --test test/frontend/*.test.mjs
 pnpm build
 pnpm pack:bridge
-cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 `pnpm build` 会清空 `dist` 但不会生成桥接插件包；缺了 `src-tauri/resources/*.tgz` 时 clippy 与打包会报 `glob pattern resources/*.tgz path not found`，所以打安装包前先跑 `pnpm pack:bridge`。
+
+`node --test test/frontend/*.test.mjs` 用 `puppeteer-core` 驱动本机 Edge 在假数据预览台上跑，量的是「用量尺寸 / 可见性 / 动画」这类浏览器里才说得清的接缝；缺 puppeteer-core 或 Edge 时整组 skip（不是静默通过）。路径可用 `DSHARBOR_PUPPETEER` / `DSHARBOR_BROWSER` 覆盖。
 
 `pnpm exec tauri build` 只在发版、验安装包、验托盘或自启动这类「装出来的东西」时才跑，日常改界面不必等它。
 
@@ -103,7 +106,11 @@ pnpm exec tauri build
 | `crates/dsharbor-core/` | 纯逻辑核心库（启动命令构造、token 解析、端口覆盖层、轻量模式状态机）——开发机可全自动测试 |
 | `plugins/dsharbor-bridge/` | DSH 桥接插件（随安装包以 tgz 分发） |
 | `src-tauri/` | Tauri 2 外壳（启动器、登录链接、轻量模式、托盘、桥接插件管理） |
-| `src/` | 前端界面（Vite 8 + TypeScript 7，无 UI 框架） |
+| `src/` | 前端界面（Vite 8 + TypeScript 7，无 UI 框架）：`main.ts` 是入口与全部交互逻辑，`ui/` 放类型、常量、配置项、图标与 HTML 骨架，`styles/` 放样式 |
+| `src/ui/` | 九个前端模块：`build-html.ts`（整页 HTML 骨架）、`types.ts`、`picker.ts`、`config.ts`、`spin.ts`、`icons.ts`、`markup.ts`、`theme.ts`、`prefs.ts` |
+| `src/styles/` | 12 个按功能分区的 CSS（`00-tokens` 令牌与变量 → `99-hidden` 工具类）；入口 `src/style.css` 只是一串**有顺序的** `@import`，层叠依赖声明顺序，新增样式按区插进对应文件，不要换顺序 |
+| `test/frontend/` | 前端界面接缝测试（`puppeteer-core` + 本机 Edge，在假数据预览台上跑） |
+| `scripts/` | 开发脚本：`mock-preview.mjs`（假数据预览台）、`ui-candidates.mjs`（界面候选稿预览台） |
 | `assets/` | 图标源：`icon-source.png`（主用）、`icon-source.svg`（备用）、`logo.png` |
 | `design/ui-candidates/` | 界面候选静态稿（`node scripts/ui-candidates.mjs` 起预览台逐个点开挑选） |
 | `docs/decisions.md` | 重大技术决策记录（每条含决策、原因、放弃了什么） |

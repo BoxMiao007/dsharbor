@@ -6,7 +6,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 - **`GLOSSARY.md`** at the repo root, or
 - **`GLOSSARY-MAP.md`** at the repo root if it exists: it points at one `GLOSSARY.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`**: read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+- **`docs/decisions.md`**（本仓库的决策记录，模板里的 `docs/adr/` 未启用）：读与你正要改的部分相关的那些条目——按日期分节，每条含决策、为什么、放弃了什么。历史条目里的行文可能已被后续条目标注为「已被取代」，以标注为准。
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
@@ -17,9 +17,7 @@ Single-context repo (most repos):
 ```
 /
 ├── GLOSSARY.md
-├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
+├── docs/decisions.md          ← 本仓库：按日期分节的决策表
 └── src/
 ```
 
@@ -38,6 +36,8 @@ Multi-context repo (presence of `GLOSSARY-MAP.md` at the root):
         └── docs/adr/
 ```
 
+本仓库是 single-context，且只有一份 `GLOSSARY.md` + 一份 `docs/decisions.md`；`docs/adr/` 与各 context 的 `GLOSSARY.md` 都不存在，不要去找。
+
 ## Use the glossary's vocabulary
 
 When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `GLOSSARY.md`. Don't drift to synonyms the glossary explicitly avoids.
@@ -46,6 +46,6 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 
 ## Flag ADR conflicts
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
+If your output contradicts an existing ADR（本仓库即 `docs/decisions.md` 里的一条决策）, surface it explicitly rather than silently overriding:
 
 > _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
