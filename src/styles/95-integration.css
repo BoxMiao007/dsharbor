@@ -1,31 +1,52 @@
 /* ---- 「集成」卡片：命令行集成 ---- */
 
-/* 开关行（基础层原先没有开关/勾选框样式）：整行可点，方框用 accent-color 跟主题蓝色走，
-   与启动方式的单选框保持同一套视觉。 */
-.switch-line {
+/* 开关行：说明文字在左、开关在右（与插件列表里的开关同一套视觉）。
+   整行不吃 hover，只有开关本身可点——这枚开关改的是 PATH，误触代价比插件开关大。 */
+.switch-row {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 8px;
   font-size: 13px;
   line-height: 1.6;
   color: var(--fg);
-  cursor: pointer;
-  user-select: none;
 }
 
-.switch-line input[type="checkbox"] {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  margin-top: 3px;
-  accent-color: var(--accent);
-  cursor: pointer;
+.switch-label {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.switch-line input[type="checkbox"]:disabled {
-  cursor: default;
-  opacity: 0.55;
+/* 开关自己的悬停气泡：开关只有 36px 宽、上面没有文字，光看开关猜不出它管什么。
+   用与 ⓘ 角标同一套观感的气泡，指向时在开关上方弹出说明。
+   右对齐（right:0）而不是居中：开关贴着卡片右内边距，居中会向右撑出卡片。 */
+.switch-row .switch::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: 300px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--tip-bg);
+  box-shadow: var(--shadow);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+  /* 与 ⓘ 气泡一样用 display:none：留在布局里会撑大内容区 scrollWidth。 */
+  display: none;
+}
+
+.switch-row .switch:hover::after,
+.switch-row .switch:focus-visible::after {
+  display: block;
 }
 
 /* 手动命令要能整行看清再选中复制：等宽字体、允许换行，不跟 PATH 一样缩成一条。 */
@@ -106,10 +127,20 @@
   word-break: break-all;
 }
 
+/* 动作区：默认只有一个按钮；点了把它换成「确定 + 取消」两个并排。 */
+.dsh-version-actions {
+  grid-area: action;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .dsh-version-uninstall {
   grid-area: action;
   align-self: center;
   padding: 5px 12px;
   font-size: 12.5px;
+  white-space: nowrap;
 }
 

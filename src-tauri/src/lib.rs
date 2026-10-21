@@ -437,6 +437,16 @@ async fn uninstall_dsh_global(runtime: launch::Runtime) -> Result<String, String
         .map_err(|err| format!("卸载全局 DSH 失败：{err}"))?
 }
 
+/// 删掉 npx 缓存里的某一份 DSH（`path` 必须是扫描结果里的那个 `_npx` 目录）。
+///
+/// async + spawn_blocking：递归删目录可能要清几万个文件，同步会堵主线程。
+#[tauri::command]
+async fn delete_dsh_npx(runtime: launch::Runtime, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || dsh_versions::remove_npx(&runtime, &path))
+        .await
+        .map_err(|err| format!("删除 npx 缓存中的 DSH 失败：{err}"))?
+}
+
 /// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
 ///
 /// async 命令：同步命令跑在主线程上，而读 target 环境配置在 WSL 模式下要起 wsl.exe
@@ -1600,7 +1610,8 @@ pub fn run() {
             cli_integration_state,
             set_cli_integration,
             installed_dsh_versions,
-            uninstall_dsh_global
+            uninstall_dsh_global,
+            delete_dsh_npx
         ])
         .build(tauri::generate_context!())
         .expect("构建 DSHarbor 外壳失败")

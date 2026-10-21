@@ -637,7 +637,7 @@ async function main(): Promise<void> {
     // 展示内容全部由后端算好（目录、垫片内容、手动命令、状态说明），界面只负责渲染，
     // 免得两边各算一套口径对不上。
     const cliSummary = $<HTMLSpanElement>("integrations-summary");
-    const cliToggle = $<HTMLInputElement>("cli-toggle");
+    const cliToggle = $<HTMLButtonElement>("cli-toggle");
     const cliBinDir = $<HTMLElement>("cli-bin-dir");
     const cliShimPath = $<HTMLElement>("cli-shim-path");
     const cliManual = $<HTMLElement>("cli-manual");
@@ -2669,7 +2669,7 @@ async function main(): Promise<void> {
       for (const el of cliWindowsOnly) {
         el.classList.toggle("hidden", !state.supported);
       }
-      cliToggle.checked = state.enabled;
+      cliToggle.setAttribute("aria-checked", state.enabled ? "true" : "false");
       cliToggle.disabled = cliBusy || !state.supported;
       cliBinDir.textContent = state.binDir;
       cliShimPath.textContent = state.shimPath;
@@ -2717,7 +2717,7 @@ async function main(): Promise<void> {
         // 写 PATH 失败时后端不会留下半成品，这里把界面也拨回去，避免看着「已接入」其实没接。
         cliError.textContent = String(err);
         cliError.classList.remove("hidden");
-        cliToggle.checked = prefs.cliIntegration;
+        cliToggle.setAttribute("aria-checked", prefs.cliIntegration ? "true" : "false");
       } finally {
         cliBusy = false;
         cliToggle.disabled = !cliSupported;
@@ -2742,8 +2742,10 @@ async function main(): Promise<void> {
       }
     }
 
-    cliToggle.addEventListener("change", () => {
-      void applyCliIntegration(cliToggle.checked);
+    // 开关是 button + role="switch"：状态在 aria-checked 上，点击时取反后提交。
+    cliToggle.addEventListener("click", () => {
+      const next = cliToggle.getAttribute("aria-checked") !== "true";
+      void applyCliIntegration(next);
     });
 
     btnCliDir.addEventListener("click", () => {
@@ -2760,7 +2762,8 @@ async function main(): Promise<void> {
 
     // ---- 集成面板：DSH 版本 ------------------------------------------------------
     // 后端扫出「本机装了哪几份 dsh」（npx 缓存 + npm 全局），界面只渲染列表；
-    // 卸载只针对 npm 全局那一份，npx 缓存交给 npm 自己回收（不在本壳的职责内）。
+    // 列表里每一份都能删：npm 全局那份跑 npm uninstall -g，npx 缓存那份直接删目录。
+    // 删除不可撤销，所以都要再点一次「确定」；确认按钮只在点开的那一行展开。
     let dshVersionsBusy = false;
 
     const DSH_SOURCE_LABELS: Record<string, string> = {
@@ -2815,20 +2818,7 @@ async function main(): Promise<void> {
         path.className = "dsh-version-path";
         path.textContent = entry.path;
 
-        row.append(main, path);
-
-        // 只有 npm 全局那份能在本壳里卸（npx 缓存不归我们删）。
-        if (entry.source === "npm") {
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "dsh-version-uninstall";
-          btn.textContent = "卸载";
-          btn.addEventListener("click", () => {
-            void uninstallDshGlobal(btn);
-          });
-          row.append(btn);
-        }
-
+        row.append(main, path, versionActions(entry));
         dshVersionsList.append(row);
       }
 
@@ -2837,19 +2827,67 @@ async function main(): Promise<void> {
       renderIntegrationsSummary();
     }
 
-    async function uninstallDshGlobal(button: HTMLButtonElement): Promise<void> {
+    /** 一行的动作区：先给一个「删除/卸载」，点了才换成二次确认（不可撤销的操作不一把梭）。 */
+    function versionActions(entry: InstalledDsh): HTMLElement {
+      const box = document.createElement("div");
+      box.className = "dsh-version-actions";
+      paintDeleteButton(box, entry);
+      return box;
+    }
+
+    function paintDeleteButton(box: HTMLElement, entry: InstalledDsh): void {
+      box.textContent = "";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "dsh-version-uninstall";
+      btn.textContent = entry.source === "npm" ? "卸载" : "删除";
+      btn.addEventListener("click", () => paintConfirm(box, entry));
+      box.append(btn);
+    }
+
+    function paintConfirm(box: HTMLElement, entry: InstalledDsh): void {
+      box.textContent = "";
+      const yes = document.createElement("button");
+      yes.type = "button";
+      yes.className = "dsh-version-uninstall danger";
+      yes.textContent = entry.source === "npm" ? "确定卸载" : "确定删除";
+      yes.addEventListener("click", () => {
+        void removeDshVersion(yes, entry);
+      });
+      const no = document.createElement("button");
+      no.type = "button";
+      no.className = "dsh-version-uninstall ghost";
+      no.textContent = "取消";
+      no.addEventListener("click", () => paintDeleteButton(box, entry));
+      box.append(yes, no);
+    }
+
+    /** 删一份：npm 全局走 `npm uninstall -g`，npx 缓存直接删对应目录。 */
+    async function removeDshVersion(button: HTMLButtonElement, entry: InstalledDsh): Promise<void> {
       if (dshVersionsBusy) return;
       dshVersionsBusy = true;
-      button.disabled = true;
       dshVersionsError.classList.add("hidden");
+      for (const item of dshVersionsList.querySelectorAll<HTMLButtonElement>("button")) {
+        item.disabled = true;
+      }
       try {
-        // 卸载成功不用弹提示条：列表重画后那一行没了，本身就是结果。
-        await invoke<string>("uninstall_dsh_global", { runtime: collectConfig().runtime });
+        // 成功不用弹提示条：列表重画后那一行没了，本身就是结果。
+        if (entry.source === "npm") {
+          await invoke<string>("uninstall_dsh_global", { runtime: collectConfig().runtime });
+        } else {
+          await invoke<string>("delete_dsh_npx", {
+            runtime: collectConfig().runtime,
+            path: entry.path,
+          });
+        }
         await refreshDshVersions();
       } catch (err) {
-        dshVersionsError.textContent = `卸载全局 DSH 失败：${err}`;
+        dshVersionsError.textContent = String(err);
         dshVersionsError.classList.remove("hidden");
         button.disabled = false;
+        for (const item of dshVersionsList.querySelectorAll<HTMLButtonElement>("button")) {
+          item.disabled = false;
+        }
       } finally {
         dshVersionsBusy = false;
       }

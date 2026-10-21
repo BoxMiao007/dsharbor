@@ -203,10 +203,10 @@ export function buildHtml(info: AppInfo): string {
   const cliBlockBody = `
     ${colHead("命令行集成", badgeLine("integrations-summary", "读取中…"))}
     <div class="cli-windows-only">
-      <label class="switch-line">
-        <input type="checkbox" id="cli-toggle" />
-        <span>把 <code>dsh</code> 命令接进终端</span>
-      </label>
+      <div class="switch-row">
+        <span class="switch-label" id="cli-toggle-label">把 <code>dsh</code> 命令接进终端</span>
+        <button class="switch" type="button" role="switch" id="cli-toggle" aria-checked="false" aria-labelledby="cli-toggle-label" data-tip="把 dsh 命令接进终端"><span class="switch-knob"></span></button>
+      </div>
       <div class="kv">
         <div class="kv-row"><span class="kv-key">垫片目录</span><span class="kv-value" id="cli-bin-dir">—</span></div>
         <div class="kv-row kv-row-action"><span class="kv-key">垫片文件</span><span class="kv-value" id="cli-shim-path">—</span><button id="btn-cli-dir" class="kv-action">打开目录</button></div>
@@ -235,18 +235,18 @@ export function buildHtml(info: AppInfo): string {
     </details>
   `;
 
-  // 「DSH 版本」块：只读报告本机装了哪些 dsh web，外加卸载 npm 全局装的那一份。
-  // 壳不再管理 npx 缓存（不统计占用、不清理），这里只回答「装了哪几份、装在哪、在不在用」。
+  // 「DSH 版本」块：列出本机装了哪些 dsh web，并允许删掉某一份。
+  // 壳不再管理 npx 缓存（不统计占用、不自动清理），这里只回答「装了哪几份、装在哪、在不在用」。
   const dshVersionsBody = `
     ${colHead("DSH 版本")}
     <p class="hint">本机装了哪些 dsh web：npx 缓存里的，与 <code>npm install -g</code> 装的。桌面版自带的 CLI 不算。</p>
     <div id="dsh-versions-list" class="version-list"><p class="hint">读取中…</p></div>
     <p id="dsh-versions-error" class="error hidden"></p>
     <details class="log-box">
-      <summary><span class="chev">▸</span>卸载与清理说明</summary>
+      <summary><span class="chev">▸</span>删除说明</summary>
       <div class="log-area">
-        <p class="hint">列表里「npm 全局」那一份可以在这里直接卸载（等同于 <code>npm uninstall -g @deepseek-ai/dsh</code>）；正被当前启动方式用着时会先提示，卸掉后要换一种启动方式。</p>
-        <p class="hint">npx 缓存里的那几份不用手动删：npm 自己会按时间回收，下次选对应版本启动时也不用重新下载。真要清，在终端跑 <code>npm cache clean --force</code>。</p>
+        <p class="hint">「npm 全局」那一份点「卸载」，等同于 <code>npm uninstall -g @deepseek-ai/dsh</code>；「npx 缓存」那几份点「删除」，直接删掉对应的缓存目录。两种都要再点一次「确定」，删掉后没法找回。</p>
+        <p class="hint">正被当前启动方式用着的那一份（标着「使用中」）删掉后要换一种启动方式，或者重新下一次。只想腾空间、又不想丢版本的话，留着即可：npx 那几份下次选对应版本启动时不用重新下载。</p>
       </div>
     </details>
   `;

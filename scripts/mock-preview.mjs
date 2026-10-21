@@ -426,6 +426,18 @@ window.__mockUnimplemented = [];
       }
       return "已卸载全局安装的 DSH。";
     },
+    // 删掉 npx 缓存里的某一份：按 path 从假数据里拿掉那一行。
+    delete_dsh_npx: (args) => {
+      seen("delete_dsh_npx");
+      const before = (S.installedDsh || []).length;
+      S.installedDsh = (S.installedDsh || []).filter(
+        (item) => !(item.source === "npx" && item.path === args?.path),
+      );
+      if (S.installedDsh.length === before) {
+        throw "这一份 npx 安装已经不在缓存里了，刷新一下列表。";
+      }
+      return "已删掉 npx 缓存里的那一份。";
+    },
     profile_port_hint: () => S.portHint,
     // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」；
     // S.profilesUnsupported 改成 true 可预览非 Windows 宿主（整卡收起、只说一句）。
