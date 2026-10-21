@@ -3,7 +3,7 @@
 import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN } from "./icons";
 import type { AppInfo } from "./types";
 import { CUSTOM_DEFAULT_COMMAND, TOGGLE_TEXT_REST, npxCommandOf } from "./config";
-import { panelSection, cell, mainCard, cellRow, colHead, badgeLine } from "./markup";
+import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, colHead, badgeLine } from "./markup";
 
 /** 版本徽章里的两个四角星图标（取自 DeepSeek Harness 官网，路径原样保留）。 */
 export const SPARKLE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -86,8 +86,8 @@ export function buildHtml(info: AppInfo): string {
       <div class="toolbar-drag" data-tauri-drag-region></div>
       <div class="toolbar-actions">
         <div class="actions actions-primary">
-          <!-- 初始即停止态纯文本，与 renderToggleButton 的输出一致，首帧无需等待。 -->
-          <button id="btn-toggle" class="primary" aria-label="${TOGGLE_TEXT_REST}"><span class="btn-text">${TOGGLE_TEXT_REST}</span></button>
+          <!-- 初始即停止态的逐字切换形态：首帧就用正确样式，等 render 前不会闪红底大字。 -->
+          <button id="btn-toggle" class="primary swap" aria-label="${TOGGLE_TEXT_REST}">${toggleSwapHtml()}</button>
           <button id="btn-restart" class="hidden"><span class="btn-text">重启 DSH</span><span class="btn-ico" aria-hidden="true">${ICON_RESTART}</span></button>
         </div>
         <div class="open-split">

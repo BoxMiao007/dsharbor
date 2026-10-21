@@ -13,7 +13,7 @@ import { Picker } from "./ui/picker";
 import type { PickerChoice } from "./ui/picker";
 import { THEME_KEY, readStoredTheme, applyMode } from "./ui/theme";
 import type { ThemeId } from "./ui/theme";
-import { escapeHtml } from "./ui/markup";
+import { escapeHtml, toggleSwapHtml } from "./ui/markup";
 import { applyRestartSpin, beginRestartSpin, endRestartSpin, updateRestartSpin, setStatusRefresher } from "./ui/spin";
 import { buildHtml } from "./ui/build-html";
 
@@ -1196,25 +1196,28 @@ async function main(): Promise<void> {
     let currentStatus: SessionStatus | null = null;
 
     /** 上次渲染的按钮形态：render 每秒跑一次，只在跨状态时重建 DOM。
-     * 初始就是「启动 DSH」纯文本（buildHtml 的初始标记），第一轮 render 不必重建。 */
-    let toggleMode: "rest" | "plain" | null = "rest";
+     * 初始就是 swap（buildHtml 的标记带 .swap），第一轮 render 不必重建。 */
+    let toggleMode: "swap" | "plain" | null = "swap";
 
     /**
-     * 渲染「启动 / 停止」按钮：停止态是纯文本「启动 DSH」（默认悬停高亮），
-     * 运行态带图标段。两种形态只在切换时重建一次。
+     * 渲染「启动 / 停止」按钮：停止态用两组文字做逐字切换（样式在 60-controls.css 的 #btn-toggle.swap），
+     * 运行态是普通纯文本按钮。两种形态只在切换时重建一次。
+     * （TOGGLE_TEXT_* / charsToSpans / 初始 swap 标记在模块级，buildHtml 也要用。）
      */
     function renderToggleButton(stopped: boolean): void {
-      const mode = stopped ? "rest" : "plain";
+      const mode = stopped ? "swap" : "plain";
       if (mode === toggleMode) return;
       toggleMode = mode;
       if (!stopped) {
+        btnToggle.classList.remove("swap");
         btnToggle.removeAttribute("aria-label");
         // 「停止」与其余三颗会话按钮一样带图标段（悬停展开效果由 CSS 统一处理）。
         btnToggle.innerHTML = `<span class="btn-text">停止</span><span class="btn-ico" aria-hidden="true">${ICON_STOP}</span>`;
         return;
       }
+      btnToggle.classList.add("swap");
       btnToggle.setAttribute("aria-label", TOGGLE_TEXT_REST);
-      btnToggle.innerHTML = `<span class="btn-text">${TOGGLE_TEXT_REST}</span>`;
+      btnToggle.innerHTML = toggleSwapHtml();
     }
 
     function render(status: SessionStatus): void {

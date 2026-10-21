@@ -51,8 +51,8 @@ button.primary:hover:not(:disabled) {
    常态 = 文字在右、图标占左端一个方格（边长 --btn-ico-size = 按钮高度）。
    「停止 / 重启 DSH」悬停 = 图标板漫过整颗按钮 + 文字被推出（终态规则见下），
    外加提亮与各自的图标反馈（停止闪动 / 重启转一圈）。
-   只给 .actions-primary 里有图标段的按钮；「启动 DSH」纯文本形态与「打开方式」组
-   不参与（打开组按维护者要求回归默认悬停）。 */
+   只给 .actions-primary 里有图标段的按钮；「启动 DSH」停止态是 .swap 逐字切换形态
+   （无图标段，见下方 swap 块），「打开方式」组也不参与（打开组按维护者要求回归默认悬停）。 */
 .toolbar-actions button {
   position: relative;
   overflow: hidden;
@@ -69,12 +69,13 @@ button.primary:hover:not(:disabled) {
   transition: transform var(--btn-sweep-ms) ease;
 }
 
-/* 图标段占左端一个方格（34px）：图标在左、文字在右，分隔线落在图标右侧。
-   左右内边距对称（都是 6px 间隙 + 方格）：按钮默认文字居中，对称后文字中心
-   才真正落在按钮中心，不被图标段的让位挤偏（维护者要求的「文字正确居中」）。 */
+/* 图标段占左端一个方格（34px）：图标在左、文字在右。
+   左内边距 = 6px 间隙 + 方格（图标板绝对定位盖在这段内边距上）；
+   右内边距只留 6px 呼吸——按钮宽度随内容走，若右边也让出 40px，
+   那 40px 是纯空白，图标+文字整体就贴向左边了（维护者指出的「文字偏左」）。 */
 .toolbar-actions button:has(.btn-ico) {
   padding-left: calc(6px + var(--btn-ico-size));
-  padding-right: calc(6px + var(--btn-ico-size));
+  padding-right: 6px;
 }
 
 .toolbar-actions button .btn-ico {
@@ -111,7 +112,7 @@ button.primary:hover:not(:disabled) {
    图标板从左端漫过整颗按钮（宽度全开、分隔线消失、图标随板居中，时长
    --btn-sweep-ms），文字被往右推出按钮外、被 overflow 裁掉（位移不是淡出）。
    推出量 = 文字自身宽度 + 64px，连最宽的「重启 DSH」也完全滑出右缘。
-   :has(.btn-ico) 挡住「启动 DSH」纯文本形态（无图标板可漫过，文字不能单飞）。 */
+   :has(.btn-ico) 挡住「启动 DSH」停止态（.swap 形态无图标板，文字走逐字切换）。 */
 .actions-primary button:is(:hover:not(:disabled), .is-restarting):has(.btn-ico) .btn-ico {
   width: 100%;
   border-right-color: transparent;
@@ -140,7 +141,7 @@ button.primary:hover:not(:disabled) {
    与「重启 DSH」的旋转同节奏（时长与延迟同用 :root 动效变量）。fill 不是可插值属性，
    按离散步进切换：实心 → 50% 处变空心 → 结束变回实心，看上去就是一次来回闪动；
    结束位 = 实心常态，不跳变。延迟同旋转（一轮动画前提前起势）。
-   只作用于运行态「停止」（带图标段）；「启动 DSH」纯文本形态没有图标，不受影响。 */
+   只作用于运行态「停止」（带图标段）；「启动 DSH」停止态没有图标段，不受影响。 */
 @keyframes btn-stop-flash {
   0%,
   100% {
@@ -176,7 +177,7 @@ button.primary:hover:not(:disabled) {
    悬停 = 高亮加回（维护者要求）：停止提亮到 #ff3636（Uiverse 参考的高亮红），
    重启用 brightness 轻提亮（两套主题通用，不硬编码色值）。 */
 
-/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、纯文本，无图标段）。 */
+/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、.swap 逐字切换形态，无图标段）。 */
 #btn-toggle:has(.btn-ico) {
   background: #e62222;
   border-color: #e62222;
@@ -200,10 +201,136 @@ button.primary:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
-/* 减少动态效果：关掉未读数字的弹动（数字照常变化，只是不弹——上拍列表仍按 90ms 一拍走）。 */
+/* 「启动 DSH」按钮停止态的悬停动效：两组文字逐字上下切换 + 轻抖动。
+   改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±0.5px。
+   只在停止态生效（标记带 .swap，见 src/ui/markup.ts 的 toggleSwapHtml）；
+   运行态的「停止」是带图标段的普通按钮，不走这套。 */
+#btn-toggle.swap .text-window {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  /* 窗口高度 = 一行文字高；行内文字上移 1.3em 后完全落在窗外，切字过程不露破绽。 */
+  height: 1.2em;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+#btn-toggle.swap .span-mother,
+#btn-toggle.swap .span-mother2 {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* 第一组参与布局（决定窗口宽度）；第二组绝对定位盖在同一窗口上。 */
+#btn-toggle.swap .span-mother {
+  position: relative;
+}
+
+#btn-toggle.swap .span-mother2 {
+  position: absolute;
+  inset: 0;
+}
+
+#btn-toggle.swap .span-mother span {
+  display: inline-block;
+  transform: translateY(0);
+}
+
+/* 第二组默认藏在窗口上方，悬停时逐字下滑进入。 */
+#btn-toggle.swap .span-mother2 span {
+  display: inline-block;
+  transform: translateY(-1.3em);
+}
+
+#btn-toggle.swap:hover .span-mother span,
+#btn-toggle.swap:focus-visible .span-mother span {
+  transform: translateY(1.3em);
+}
+
+#btn-toggle.swap:hover .span-mother2 span,
+#btn-toggle.swap:focus-visible .span-mother2 span {
+  transform: translateY(0);
+}
+
+/* 逐字递增延时，文字像波浪一样错开（沿用原效果的 0.2~0.7s）。 */
+#btn-toggle.swap .span-mother span:nth-child(1),
+#btn-toggle.swap .span-mother2 span:nth-child(1) {
+  transition: transform 0.2s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(2),
+#btn-toggle.swap .span-mother2 span:nth-child(2) {
+  transition: transform 0.3s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(3),
+#btn-toggle.swap .span-mother2 span:nth-child(3) {
+  transition: transform 0.4s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(4),
+#btn-toggle.swap .span-mother2 span:nth-child(4) {
+  transition: transform 0.5s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(5),
+#btn-toggle.swap .span-mother2 span:nth-child(5) {
+  transition: transform 0.6s;
+}
+
+#btn-toggle.swap .span-mother span:nth-child(6),
+#btn-toggle.swap .span-mother2 span:nth-child(6) {
+  transition: transform 0.7s;
+}
+
+#btn-toggle.swap:hover,
+#btn-toggle.swap:focus-visible {
+  animation: dsharbor-shake 0.2s linear infinite both;
+}
+
+@keyframes dsharbor-shake {
+  0% {
+    transform: translate(0);
+  }
+
+  20% {
+    transform: translate(-0.5px, 0.5px);
+  }
+
+  40% {
+    transform: translate(-0.5px, -0.5px);
+  }
+
+  60% {
+    transform: translate(0.5px, 0.5px);
+  }
+
+  80% {
+    transform: translate(0.5px, -0.5px);
+  }
+
+  100% {
+    transform: translate(0);
+  }
+}
+
+/* 减少动态效果：关掉抖动与未读数字的弹动、swap 切字压到最短
+   （数字照常变化，只是不弹——上拍列表仍按 90ms 一拍走）。 */
 @media (prefers-reduced-motion: reduce) {
   .ico-count.ico-count-bump {
     animation: none;
+  }
+
+  #btn-toggle.swap:hover,
+  #btn-toggle.swap:focus-visible {
+    animation: none;
+  }
+
+  #btn-toggle.swap .span-mother span,
+  #btn-toggle.swap .span-mother2 span {
+    transition-duration: 0.01ms !important;
   }
 }
 
