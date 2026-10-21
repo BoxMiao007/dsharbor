@@ -1851,10 +1851,11 @@ html::-webkit-scrollbar {
 /* 卡片里的子分组（补丁层 / 插件）：小卡（.cell）已经是「卡中卡」那一层，
    再往下就只花一条细线分区，不叠第三个边框。 */
 /* ---- 环境大按钮：一排并列的环境卡片（点卡片切管理目标，点三点开操作菜单） ---- */
-/* 一排环境 + 行末竖排两颗按钮。宽度不够时整行换行，不把环境卡片压扁。 */
+/* 一排环境 + 行末竖排三颗按钮。宽度不够时整行换行，不把环境卡片压扁。 */
 .env-row {
   display: flex;
-  align-items: stretch;
+  /* 不 stretch：行末按钮列比卡片高，stretch 会把卡片行一起拉高，卡片下方留一片空。 */
+  align-items: flex-start;
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -1864,6 +1865,9 @@ html::-webkit-scrollbar {
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
+  /* 折行后每一行各自贴合内容高度，同行的卡片仍然等高（对齐由 align-items 负责）。 */
+  align-content: flex-start;
+  align-items: stretch;
   gap: 10px;
 }
 
