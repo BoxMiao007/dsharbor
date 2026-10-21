@@ -191,8 +191,9 @@
   color: var(--danger);
 }
 
+/* 悬停给一层透明浅红底，让危险项在指针进来时更明确；置灰行不该有 hover 反馈。 */
 .env-menu button.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
 }
 
