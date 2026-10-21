@@ -18,15 +18,13 @@ export interface AppInfo {
   logs_dir: string;
 }
 
-/** npm dist-tag 渠道。rc / alpha 不是标签而是版本范围，靠下面的版本下拉定具体版本。 */
-export type Channel = "latest" | "next" | "rc" | "alpha";
-
 /** 运行环境：Windows 宿主，或某个 WSL 发行版里。与 Rust 侧 `launch::Runtime` 对应。 */
 export type LaunchRuntime = { kind: "default" } | { kind: "wsl"; distro: string };
 
-/** 与 Rust 侧 `launch::LaunchMode`（serde tag = kind）一一对应。 */
+/** 与 Rust 侧 `launch::LaunchMode`（serde tag = kind）一一对应。
+    npx 的 `version` 为 null = 官方命令（不写版本号，跟 npm 的 latest 标签走）。 */
 export type LaunchMode =
-  | { kind: "npx"; channel: Channel; version: string | null }
+  | { kind: "npx"; version: string | null }
   | { kind: "system" }
   | { kind: "binary"; path: string }
   | { kind: "custom"; command: string };
@@ -40,11 +38,11 @@ export interface LaunchConfig {
   port: number | null;
 }
 
-/** 与 Rust 侧 `registry::RegistryInfo` 对应：dist-tag 与按渠道分好组的版本（都从新到旧）。 */
+/** 与 Rust 侧 `registry::RegistryInfo` 对应：dist-tag 与全部已发布版本（从新到旧）。 */
 export interface RegistryInfo {
-  distTags: { latest: string | null; next: string | null; alpha: string | null };
-  rc: string[];
-  alpha: string[];
+  distTags: { latest: string | null };
+  /** npm 上发布过的全部版本，从新到旧；界面按「先 6 个 + 更多…」分页展示。 */
+  versions: string[];
 }
 
 /** 与 Rust 侧 `wsl::DistroInfo` 对应：发行版名 + 里面有没有 node/npm。 */

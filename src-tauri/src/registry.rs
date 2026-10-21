@@ -1,4 +1,4 @@
-//! 查 npm 上的 DSH 渠道 / 版本清单（配置界面的渠道下拉与版本下拉的数据源）。
+//! 查 npm 上的 DSH 版本清单（配置界面的版本下拉的数据源）。
 //!
 //! 分两层：解析与排序在核心库（`dsharbor_core::registry`，纯逻辑可测），
 //! 这里只负责「在哪个环境里执行 npm」和缓存。
@@ -6,7 +6,8 @@
 //! 缓存 10 分钟：`npm view` 每次要拉起 node + 一次网络往返（Windows 上约 1 秒，
 //! 经 wsl.exe 进发行版更慢），而界面在切运行环境、切启动方式时都会读一次；
 //! 缓存让这些切换不卡。代价是刚发布的版本最多晚 10 分钟才出现在下拉里，
-//! 对选版本这个场景完全可以接受——真需要的用户点「重新读取」即可。
+//! 对选版本这个场景完全可以接受——界面上的刷新按钮用 `force` 明确要求重查，
+//! 绕过这层缓存。
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
@@ -56,16 +57,20 @@ pub fn invalidate_all() {
 ///
 /// `env` 是这次要注入 npm 进程的全部环境变量（下载源 + 代理），由调用方用
 /// `net::plan_env` 算好——本函数不再自己拼，三条注入路径因此不会各写一套。
+/// `force` 为 true 时跳过新鲜缓存直接重查（界面的刷新按钮：刚发布的版本要立刻可见）。
 /// 查询失败时退回该运行环境上一次成功的快照（哪怕已过期）：断网时用户仍能
 /// 选回上次见过的版本，而不是面对一个空下拉。
 pub fn query(
     runtime: &Runtime,
     source: DownloadSource,
     env: &[(String, String)],
+    force: bool,
 ) -> Result<RegistryInfo, String> {
     let key = cache_key(runtime, source);
-    if let Some(info) = cache_get(&key) {
-        return Ok(info);
+    if !force {
+        if let Some(info) = cache_get(&key) {
+            return Ok(info);
+        }
     }
     match run_query(runtime, env) {
         Ok(info) => {
@@ -74,6 +79,7 @@ pub fn query(
         }
         Err(err) => match cache_get_any(&key) {
             // 过期的缓存比「一个版本都列不出来」有用：断网时用户仍能选回上次见过的版本。
+            // 刷新按钮也会走到这里：手动重查失败不该让下拉变空。
             Some(stale) => {
                 eprintln!("[dsharbor] 读取官方版本列表失败，退回缓存：{err}");
                 Ok(stale)

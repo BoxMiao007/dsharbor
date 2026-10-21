@@ -1,56 +1,30 @@
-//! npm 渠道版本查询的纯逻辑：解析 `npm view` 的 JSON、按渠道分组、按版本从新到旧排序。
+//! npm 版本清单查询的纯逻辑：解析 `npm view` 的 JSON、把版本号按从新到旧排序。
 //!
 //! 为什么放在核心库：真正跑 `npm view` 要拉起子进程（还可能经 wsl.exe 进发行版），
-//! 在开发机上不好稳定复现；而「哪几条版本属于 rc 渠道」「谁比谁新」是纯字符串与
-//! 版本号比较，放这里可以全自动测。外壳（src-tauri）只负责执行命令与缓存。
+//! 在开发机上不好稳定复现；而「谁比谁新」是纯字符串与版本号比较，放这里可以全自动测。
+//! 外壳（src-tauri）只负责执行命令与缓存。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::launch::{Channel, NPX_PACKAGE};
+use crate::launch::NPX_PACKAGE;
 
-/// npm 的 dist-tag 快照。只有 latest / next 靠标签定位版本：
-/// npm 上没有 rc 这个标签，rc / alpha 渠道由版本列表给出具体版本号。
+/// npm 的 dist-tag 快照。界面只需要 `latest`：版本下拉直接列全量版本，
+/// 不再按渠道分组，其余标签（next / alpha…）解析时忽略。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DistTags {
-    /// `latest` 标签指向的版本（稳定版）。
+    /// `latest` 标签指向的版本（也是 `npx @deepseek-ai/dsh` 不指定版本时跑的那个）。
     pub latest: Option<String>,
-    /// `next` 标签指向的版本（最新尝鲜版）。
-    pub next: Option<String>,
-    /// `alpha` 标签指向的版本；界面上不直接用，留着供排错。
-    pub alpha: Option<String>,
 }
 
-/// 界面要用的版本清单：标签 + 按渠道分好组的具体版本（都从新到旧）。
+/// 界面要用的版本清单：npm 上的全部版本（从新到旧）+ latest 标签。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegistryInfo {
     pub dist_tags: DistTags,
-    /// 尝鲜版历史版本（`-rc.N`）。
-    pub rc: Vec<String>,
-    /// 内测版（`-alpha.N`）。
-    pub alpha: Vec<String>,
-}
-
-impl RegistryInfo {
-    /// 指定渠道的版本列表（标签型渠道返回空：界面用徽章而不是下拉）。
-    pub fn versions_of(&self, channel: Channel) -> &[String] {
-        match channel {
-            Channel::Rc => &self.rc,
-            Channel::Alpha => &self.alpha,
-            Channel::Latest | Channel::Next => &[],
-        }
-    }
-
-    /// 标签型渠道当前指向的版本。
-    pub fn tag_version(&self, channel: Channel) -> Option<&str> {
-        match channel {
-            Channel::Latest => self.dist_tags.latest.as_deref(),
-            Channel::Next => self.dist_tags.next.as_deref(),
-            Channel::Rc | Channel::Alpha => None,
-        }
-    }
+    /// 全部版本（含预发布版），已按从新到旧排序。
+    pub versions: Vec<String>,
 }
 
 /// 查询参数：一次拿到标签与全部版本。
@@ -81,7 +55,7 @@ pub fn parse(json: &str) -> Result<RegistryInfo, String> {
             };
             let dist_tags = match object.get("dist-tags") {
                 Some(value) => dist_tags_from(value)?,
-                // 标签缺失不算致命：版本下拉照样能用，标签型渠道显示 `—`。
+                // 标签缺失不算致命：全量版本照样能列，界面显示 `—` 即可。
                 None => DistTags::default(),
             };
             Ok(build(dist_tags, versions))
@@ -96,9 +70,8 @@ pub fn parse(json: &str) -> Result<RegistryInfo, String> {
 
 fn build(dist_tags: DistTags, versions: Vec<String>) -> RegistryInfo {
     RegistryInfo {
-        rc: group(&versions, Channel::Rc),
-        alpha: group(&versions, Channel::Alpha),
         dist_tags,
+        versions,
     }
 }
 
@@ -118,7 +91,7 @@ fn versions_from(value: &Value) -> Result<Vec<String>, String> {
     Ok(versions)
 }
 
-/// 从 JSON 值里取 dist-tags；缺哪个标签就留 None（新包可能还没有 alpha）。
+/// 从 JSON 值里取 dist-tags；别的键（next / alpha…）一律忽略。
 fn dist_tags_from(value: &Value) -> Result<DistTags, String> {
     let object = value
         .as_object()
@@ -132,28 +105,13 @@ fn dist_tags_from(value: &Value) -> Result<DistTags, String> {
     };
     Ok(DistTags {
         latest: read("latest"),
-        next: read("next"),
-        alpha: read("alpha"),
     })
 }
 
-/// 按渠道给版本分组。`-rc.N` / `-alpha.N` 之外的版本不列：
-/// latest / next 用标签定位，这两条渠道不给版本下拉，列出来也没有入口。
-fn group(versions: &[String], channel: Channel) -> Vec<String> {
-    let marker = match channel {
-        Channel::Rc => "-rc.",
-        Channel::Alpha => "-alpha.",
-        Channel::Latest | Channel::Next => return Vec::new(),
-    };
-    versions
-        .iter()
-        .filter(|version| version.contains(marker))
-        .cloned()
-        .collect()
-}
-
-/// 版本号形态（与 `launch::validate_version` 同一套字符）：只含字母数字与 `. - + _`。
-fn is_version_like(text: &str) -> bool {
+/// 版本号形态（与 `launch::validate_version` 同一套字符）：只含字母数字与 `. - + _`，
+/// 且首字符是数字。npx 缓存的 spec 后缀解析（`npx_cache::spec_version`）也要用它判断
+/// 后缀到底是版本号还是 dist-tag，所以是 crate 级可见。
+pub(crate) fn is_version_like(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 64
         && text.starts_with(|c: char| c.is_ascii_digit())
@@ -163,7 +121,9 @@ fn is_version_like(text: &str) -> bool {
 }
 
 /// 从新到旧排序。非 semver 形态的版本（解析失败）排到最后，保持原相对顺序。
-fn sort_newest_first(versions: &mut [String]) {
+///
+/// 公开给外壳用：npx 缓存里扫出来的版本号也要按同一套规则排。
+pub fn sort_newest_first(versions: &mut [String]) {
     versions.sort_by(|a, b| match (semver_key(a), semver_key(b)) {
         (Some(left), Some(right)) => right.cmp(&left),
         (Some(_), None) => std::cmp::Ordering::Less,
@@ -264,6 +224,7 @@ mod tests {
     use super::*;
 
     /// 实机 `npm view @deepseek-ai/dsh dist-tags versions --json` 的形状（截取）。
+    /// dist-tags 里仍带着 next / alpha 这类别的标签，正好用来盯「只认 latest」。
     const COMBINED: &str = r#"{
         "dist-tags": {"latest":"0.2.0-rc.2","alpha":"0.2.1-alpha.5","next":"0.2.1-rc.2"},
         "versions": ["0.0.1-rc.1","0.2.1-alpha.3","0.2.0-rc.2","0.2.1-alpha.4","0.2.1-rc.1","0.2.1-rc.2","0.2.1-alpha.5"]
@@ -273,17 +234,29 @@ mod tests {
     fn parses_real_npm_output() {
         let info = parse(COMBINED).unwrap();
         assert_eq!(info.dist_tags.latest.as_deref(), Some("0.2.0-rc.2"));
-        assert_eq!(info.dist_tags.next.as_deref(), Some("0.2.1-rc.2"));
-        assert_eq!(info.dist_tags.alpha.as_deref(), Some("0.2.1-alpha.5"));
-        // 从新到旧。
+        // 全量版本，从新到旧；预发布版与正版一起列（版本下拉不再按渠道分组）。
         assert_eq!(
-            info.rc,
-            vec!["0.2.1-rc.2", "0.2.1-rc.1", "0.2.0-rc.2", "0.0.1-rc.1"]
+            info.versions,
+            vec![
+                "0.2.1-rc.2",
+                "0.2.1-rc.1",
+                "0.2.1-alpha.5",
+                "0.2.1-alpha.4",
+                "0.2.1-alpha.3",
+                "0.2.0-rc.2",
+                "0.0.1-rc.1"
+            ]
         );
-        assert_eq!(
-            info.alpha,
-            vec!["0.2.1-alpha.5", "0.2.1-alpha.4", "0.2.1-alpha.3"]
-        );
+    }
+
+    #[test]
+    fn ignores_dist_tags_other_than_latest() {
+        // npm 仍然返回 next / alpha 等标签，解析时只认 latest。
+        let info = parse(COMBINED).unwrap();
+        let json = serde_json::to_string(&info).unwrap();
+        assert_eq!(info.dist_tags.latest.as_deref(), Some("0.2.0-rc.2"));
+        assert!(!json.contains(r#""next""#), "{json}");
+        assert!(!json.contains(r#""alpha""#), "{json}");
     }
 
     #[test]
@@ -292,7 +265,7 @@ mod tests {
         let info = parse(r#"{"versions":["0.9.0-rc.1","0.10.0-rc.1","0.2.0-rc.10","0.2.0-rc.2"]}"#)
             .unwrap();
         assert_eq!(
-            info.rc,
+            info.versions,
             vec!["0.10.0-rc.1", "0.9.0-rc.1", "0.2.0-rc.10", "0.2.0-rc.2"]
         );
     }
@@ -306,10 +279,9 @@ mod tests {
         ];
         sort_newest_first(&mut versions);
         assert_eq!(versions, vec!["0.2.0", "0.2.0-rc.2", "0.1.9"]);
-        // 正版不进 rc / alpha 列表（渠道靠标签，不用下拉）。
+        // 正版与预发布版都在同一个列表里（旧实现把它们分成 rc / alpha 两组）。
         let info = parse(r#"{"versions":["0.2.0","0.2.0-rc.2"]}"#).unwrap();
-        assert_eq!(info.rc, vec!["0.2.0-rc.2"]);
-        assert!(info.alpha.is_empty());
+        assert_eq!(info.versions, vec!["0.2.0", "0.2.0-rc.2"]);
     }
 
     #[test]
@@ -317,7 +289,7 @@ mod tests {
         // npm 在只有一个版本时输出字符串而不是数组。
         let info =
             parse(r#"{"dist-tags":{"latest":"0.0.1-rc.1"},"versions":"0.0.1-rc.1"}"#).unwrap();
-        assert_eq!(info.rc, vec!["0.0.1-rc.1"]);
+        assert_eq!(info.versions, vec!["0.0.1-rc.1"]);
         assert_eq!(info.dist_tags.latest.as_deref(), Some("0.0.1-rc.1"));
     }
 
@@ -325,21 +297,20 @@ mod tests {
     fn accepts_bare_version_list() {
         // 兜底：万一输出里只有版本数组（没有外层对象）。
         let info = parse(r#"["0.2.0-rc.2"]"#).unwrap();
-        assert_eq!(info.rc, vec!["0.2.0-rc.2"]);
+        assert_eq!(info.versions, vec!["0.2.0-rc.2"]);
         assert_eq!(info.dist_tags, DistTags::default());
     }
 
     #[test]
     fn missing_dist_tags_are_tolerated() {
-        // 新包可能还没有 alpha 标签；缺标签不能让整次查询失败。
+        // 缺标签不能让整次查询失败：全量版本照样能列。
         let info =
             parse(r#"{"dist-tags":{"latest":"0.2.0-rc.2"},"versions":["0.2.0-rc.2"]}"#).unwrap();
         assert_eq!(info.dist_tags.latest.as_deref(), Some("0.2.0-rc.2"));
-        assert_eq!(info.dist_tags.next, None);
-        assert_eq!(info.dist_tags.alpha, None);
         // 连 dist-tags 键都没有时也不失败。
         let info = parse(r#"{"versions":["0.2.0-rc.2"]}"#).unwrap();
         assert_eq!(info.dist_tags, DistTags::default());
+        assert_eq!(info.versions, vec!["0.2.0-rc.2"]);
     }
 
     #[test]
@@ -357,32 +328,31 @@ mod tests {
     fn drops_entries_that_are_not_versions() {
         // 防御：非版本号形态的字符串不能进命令行。
         let info = parse(r#"{"versions":["0.2.0-rc.2","rm -rf /","",null]}"#).unwrap();
-        assert_eq!(info.rc, vec!["0.2.0-rc.2"]);
+        assert_eq!(info.versions, vec!["0.2.0-rc.2"]);
         // 标签里也做同样过滤。
         let info = parse(r#"{"dist-tags":{"latest":"1.0 && reboot"},"versions":[]}"#).unwrap();
         assert_eq!(info.dist_tags.latest, None);
     }
 
     #[test]
-    fn versions_of_and_tag_version_split_by_channel() {
+    fn latest_tag_and_full_version_list() {
         let info = parse(COMBINED).unwrap();
-        assert_eq!(info.versions_of(Channel::Rc).len(), 4);
-        assert_eq!(info.versions_of(Channel::Alpha).len(), 3);
-        assert!(info.versions_of(Channel::Latest).is_empty());
-        assert!(info.versions_of(Channel::Next).is_empty());
-        assert_eq!(info.tag_version(Channel::Latest), Some("0.2.0-rc.2"));
-        assert_eq!(info.tag_version(Channel::Next), Some("0.2.1-rc.2"));
-        assert_eq!(info.tag_version(Channel::Rc), None);
-        assert_eq!(info.tag_version(Channel::Alpha), None);
+        // 界面首项「自动最新版本」要显示 latest 指向哪一版，其余项用全量版本列表。
+        assert_eq!(info.dist_tags.latest.as_deref(), Some("0.2.0-rc.2"));
+        assert_eq!(info.versions.len(), 7);
+        // 下拉按新到旧展示，第一条就是列表里最新的那一版。
+        assert_eq!(
+            info.versions.first().map(String::as_str),
+            Some("0.2.1-rc.2")
+        );
     }
 
     #[test]
     fn serializes_as_camel_case_for_frontend() {
         let json = serde_json::to_string(&parse(COMBINED).unwrap()).unwrap();
         assert!(json.contains(r#""distTags""#), "{json}");
-        assert!(json.contains(r#""rc""#), "{json}");
-        assert!(json.contains(r#""alpha""#), "{json}");
-        // 前端按 camelCase 读 label 之外的字段，这里只关心 distTags 的键名。
+        assert!(json.contains(r#""versions""#), "{json}");
+        // 前端按 camelCase 读，这里只关心 distTags 的键名。
         assert!(json.contains(r#""latest""#), "{json}");
     }
 

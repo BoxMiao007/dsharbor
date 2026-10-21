@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 /// npx 的固定前缀。
 /// `--yes`：npx 首次下载包时会交互确认；壳的子进程没有终端，不加会直接卡住。
 pub const NPX_PREFIX: &str = "npx --yes";
-/// DSH 包名。渠道 / 版本以 npm 规格的形式接在后面（`@deepseek-ai/dsh@next`）。
+/// DSH 包名。选了具体版本时以 npm 规格的形式接在后面（`@deepseek-ai/dsh@0.2.1-rc.2`）；
+/// 不选版本就不加后缀，npx 跟 npm 的 latest 标签。
 pub const NPX_PACKAGE: &str = "@deepseek-ai/dsh";
 /// 默认环境名。
 ///
@@ -58,26 +59,16 @@ pub enum Runtime {
     Wsl { distro: String },
 }
 
-/// npm 渠道。
-/// latest / next 是 npm 的 dist-tag，直接跟标签即可；rc / alpha 不是标签而是
-/// 版本范围（npm 上没有 rc 标签），这两条渠道必须由版本下拉给出具体版本号。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Channel {
-    Latest,
-    Next,
-    Rc,
-    Alpha,
-}
-
 /// 启动方式（对应配置界面上的四个选项）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LaunchMode {
     /// 官方 npx 命令（未全局安装 DSH 时最省事）。
-    /// `version` 只对 Rc / Alpha 有意义：Latest / Next 跟的是 dist-tag。
+    ///
+    /// `version: None` 就是官方命令 `npx --yes @deepseek-ai/dsh <环境名>`，跑 npm 的
+    /// latest；`Some("0.2.1-rc.2")` 才钉死某一版。界面上是一个版本下拉：首项「自动最新
+    /// 版本」对应 None，其余项是 npm 上查到的具体版本。
     Npx {
-        channel: Channel,
         #[serde(default)]
         version: Option<String>,
     },
@@ -85,16 +76,16 @@ pub enum LaunchMode {
     System,
     /// 指定可执行文件/脚本的绝对路径。
     Binary { path: String },
-    /// 自定义命令：整条启动命令行由用户自己写（例如 `npx @deepseek-ai/dsh@next web`）。
-    /// 适合官方 npx / 系统命令两种内置写法覆盖不到的场景（指定版本标签、包管理器
-    /// 不同、包装脚本等）。壳仍会在末尾追加附加参数与 `--no-open`。
+    /// 自定义命令：整条启动命令行由用户自己写（例如 `npx @deepseek-ai/dsh@0.2.1-rc.2 web`）。
+    /// 适合官方 npx / 系统命令两种内置写法覆盖不到的场景（包管理器不同、包装脚本等）。
+    /// 壳仍会在末尾追加附加参数与 `--no-open`。
     Custom { command: String },
 }
 
 /// 完整启动配置。
 ///
 /// 反序列化走 `LaunchConfigRaw`：旧版本存下来的配置里有已经删掉的
-/// `kind:"wsl"` 启动方式、也没有 `channel` / `runtime` 字段，迁移规则集中在
+/// `kind:"wsl"` 启动方式、也没有 `runtime` 字段，迁移规则集中在
 /// `From<LaunchConfigRaw>` 一处，读到旧配置就自动升级成新形态（不主动回写磁盘，
 /// 下一次正常保存自然写成新结构）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,9 +121,9 @@ struct LaunchConfigRaw {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum LaunchModeRaw {
+    /// 旧 JSON 里可能还带 `"channel":"rc"` 这类键。渠道已被版本下拉取代，这里不再声明
+    /// 对应字段——serde 默认忽略未知键，旧配置照样能读出来，只在文档注释里留个记号。
     Npx {
-        #[serde(default)]
-        channel: Option<Channel>,
         #[serde(default)]
         version: Option<String>,
     },
@@ -154,24 +145,21 @@ impl From<LaunchConfigRaw> for LaunchConfig {
     fn from(raw: LaunchConfigRaw) -> Self {
         let mut runtime = raw.runtime.unwrap_or_default();
         let mode = match raw.mode {
-            // 旧配置没有 channel：当年这个选项的行为就是 npx 的 latest。
-            LaunchModeRaw::Npx { channel, version } => LaunchMode::Npx {
-                channel: channel.unwrap_or(Channel::Latest),
-                version,
-            },
+            // 版本号原样保留：旧配置里 channel=rc/alpha 配上具体版本号时，那个版本号
+            // 就是当年真正要跑的东西，不联网、不改口径，直接变成 version。
+            // 没有版本号（channel 为 latest / next 或整个键缺失）就是 None，
+            // 等价于「自动最新版本」。
+            LaunchModeRaw::Npx { version } => LaunchMode::Npx { version },
             LaunchModeRaw::System => LaunchMode::System,
             LaunchModeRaw::Binary { path } => LaunchMode::Binary { path },
             LaunchModeRaw::Custom { command } => LaunchMode::Custom { command },
             LaunchModeRaw::Wsl { distro, inner } => {
                 // 旧的「通过 WSL 启动」= 运行环境 + 一条发行版内部命令。
-                // 内部命令还是官方默认值就还原成「官方 npx（latest）」（这样用户
-                // 还能正常改渠道），否则按自定义命令原样保留。
+                // 内部命令还是官方默认值就还原成「官方 npx（不指定版本）」（这样用户
+                // 还能正常改版本），否则按自定义命令原样保留。
                 runtime = Runtime::Wsl { distro };
                 if inner.trim() == LEGACY_WSL_INNER {
-                    LaunchMode::Npx {
-                        channel: Channel::Latest,
-                        version: None,
-                    }
+                    LaunchMode::Npx { version: None }
                 } else {
                     LaunchMode::Custom { command: inner }
                 }
@@ -337,17 +325,11 @@ pub fn validate(config: &LaunchConfig) -> Result<(), String> {
         return Err("端口必须是 1-65535 的整数（留空表示跟随 DSH 配置）".into());
     }
     match &config.mode {
-        LaunchMode::Npx { channel, version } => {
-            match (channel, version) {
-                (Channel::Latest | Channel::Next, Some(_)) => {
-                    return Err("稳定版与最新尝鲜版跟的是 npm 标签，不能另指定版本号".into())
-                }
-                (Channel::Rc | Channel::Alpha, Some(version)) => validate_version(version)?,
-                (Channel::Rc | Channel::Alpha, None) => {
-                    return Err("这条渠道要先选一个具体版本号".into())
-                }
-                (Channel::Latest | Channel::Next, None) => {}
-            };
+        LaunchMode::Npx { version } => {
+            // 不指定版本就是官方的自动最新版，没有可校验的东西。
+            if let Some(version) = version {
+                validate_version(version)?;
+            }
             // 运行环境只对 npx / 自定义命令有意义；其余两种界面不给选，
             // 但读到一份带了 WSL 运行环境的旧配置时仍要能跑。
             if let Runtime::Wsl { distro } = &config.runtime {
@@ -437,23 +419,18 @@ pub fn build_spawn_plan(config: &LaunchConfig, profile: &str) -> Result<SpawnPla
     build_spawn_plan_with_launcher_args(config, profile, &[])
 }
 
-/// 官方 npx 命令的包规格：跟 dist-tag 的渠道不加后缀，rc/alpha 跟具体版本号。
-pub fn npx_spec(channel: Channel, version: Option<&str>) -> String {
-    let suffix = match channel {
-        Channel::Latest => String::new(),
-        Channel::Next => "@next".to_string(),
-        Channel::Rc | Channel::Alpha => match version {
-            Some(version) => format!("@{version}"),
-            // 没选版本时给个占位，让界面能提前展示命令形态；校验会拦下来。
-            None => "@<版本>".to_string(),
-        },
-    };
-    format!("{NPX_PACKAGE}{suffix}")
+/// 官方 npx 命令的包规格：不指定版本就是裸包名（npx 跟 npm 的 latest 标签），
+/// 指定了就钉死那一版。
+pub fn npx_spec(version: Option<&str>) -> String {
+    match version {
+        Some(version) if !version.is_empty() => format!("{NPX_PACKAGE}@{version}"),
+        _ => NPX_PACKAGE.to_string(),
+    }
 }
 
 /// 完整 npx 启动命令（含环境名位置参数）。
-pub fn npx_web_command(channel: Channel, version: Option<&str>, profile: &str) -> String {
-    format!("{NPX_PREFIX} {} {profile}", npx_spec(channel, version))
+pub fn npx_web_command(version: Option<&str>, profile: &str) -> String {
+    format!("{NPX_PREFIX} {} {profile}", npx_spec(version))
 }
 
 /// 目标环境内要执行的东西：一整行 shell 命令行，或一个直接拉起的程序。
@@ -542,8 +519,8 @@ pub fn build_spawn_plan_with_launcher_args(
     }
     let extra = &extra;
     let base = match &config.mode {
-        LaunchMode::Npx { channel, version } => {
-            let mut tokens = split_line(&npx_web_command(*channel, version.as_deref(), profile));
+        LaunchMode::Npx { version } => {
+            let mut tokens = split_line(&npx_web_command(version.as_deref(), profile));
             tokens.extend(extra.iter().cloned());
             BasePlan::line(&tokens)
         }
@@ -642,12 +619,9 @@ pub fn build_plugin_plan(
         PluginOp::InstallDeps => args.push("install".into()),
     }
     Ok(match &config.mode {
-        LaunchMode::Npx { channel, version } => {
-            // 插件必须装到与启动同一个包/版本上：npx@next 启动时插件也要装进 next。
-            let mut tokens = split_line(&format!(
-                "{NPX_PREFIX} {}",
-                npx_spec(*channel, version.as_deref())
-            ));
+        LaunchMode::Npx { version } => {
+            // 插件必须装到与启动同一个版本上：按某个版本启动时插件也要装进那一版。
+            let mut tokens = split_line(&format!("{NPX_PREFIX} {}", npx_spec(version.as_deref())));
             tokens.extend(args);
             wrap_plan(&config.runtime, BasePlan::line(&tokens))
         }
@@ -676,7 +650,7 @@ pub fn build_plugin_plan(
 /// 自定义命令与 WSL 内部命令都遵循 DSH 的 `<启动器> <环境名> [参数]` 写法
 /// （界面上的默认值与示例都是），所以把末尾那个环境名换成 `plugin --profile <名字>`
 /// 就能复用同一个启动器：
-/// 版本标签（`@next`）、包管理器、发行版内的 PATH 全部保持不变。
+/// 版本后缀（`@0.2.1-rc.2`）、包管理器、发行版内的 PATH 全部保持不变。
 fn plugin_prefix(inner: &str, profile: &str) -> Vec<String> {
     let mut tokens = split_line(inner);
     if tokens.last().map(|token| token == profile).unwrap_or(false) {
@@ -781,9 +755,8 @@ mod tests {
         }
     }
 
-    fn npx(channel: Channel, version: Option<&str>) -> LaunchMode {
+    fn npx(version: Option<&str>) -> LaunchMode {
         LaunchMode::Npx {
-            channel,
             version: version.map(str::to_string),
         }
     }
@@ -801,8 +774,9 @@ mod tests {
     }
 
     #[test]
-    fn npx_latest_plan() {
-        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), PROFILE_NAME).unwrap();
+    fn npx_without_version_follows_the_latest_tag() {
+        // 不选版本 = 官方命令原样，npx 自己跟 npm 的 latest 标签。
+        let plan = build_spawn_plan(&cfg(npx(None), &[]), PROFILE_NAME).unwrap();
         assert_eq!(
             plan,
             SpawnPlan::ShellLine {
@@ -813,24 +787,8 @@ mod tests {
     }
 
     #[test]
-    fn npx_next_uses_dist_tag() {
-        let plan = build_spawn_plan(&cfg(npx(Channel::Next, None), &[]), PROFILE_NAME).unwrap();
-        assert_eq!(
-            plan,
-            SpawnPlan::ShellLine {
-                line: "npx --yes @deepseek-ai/dsh@next web --no-open".into(),
-                wrap: ShellWrap::Cmd
-            }
-        );
-    }
-
-    #[test]
-    fn npx_rc_pins_exact_version() {
-        let plan = build_spawn_plan(
-            &cfg(npx(Channel::Rc, Some("0.2.1-rc.2")), &[]),
-            PROFILE_NAME,
-        )
-        .unwrap();
+    fn npx_pins_the_selected_version() {
+        let plan = build_spawn_plan(&cfg(npx(Some("0.2.1-rc.2")), &[]), PROFILE_NAME).unwrap();
         assert_eq!(
             plan,
             SpawnPlan::ShellLine {
@@ -841,45 +799,45 @@ mod tests {
     }
 
     #[test]
-    fn npx_channel_version_rules() {
-        // rc/alpha 没有对应 dist-tag，必须带版本号；latest/next 反过来不许带。
-        assert!(validate(&cfg(npx(Channel::Rc, None), &[])).is_err());
-        assert!(validate(&cfg(npx(Channel::Alpha, None), &[])).is_err());
-        assert!(validate(&cfg(npx(Channel::Latest, Some("0.2.0-rc.2")), &[])).is_err());
-        assert!(validate(&cfg(npx(Channel::Next, Some("0.2.1-rc.2")), &[])).is_err());
-        assert!(validate(&cfg(npx(Channel::Alpha, Some("0.2.1-alpha.5")), &[])).is_ok());
+    fn npx_version_is_optional_but_validated_when_present() {
+        // 不选版本永远合法：那个分支就是「自动最新版本」。
+        assert!(validate(&cfg(npx(None), &[])).is_ok());
+        // 选了版本才校验：预发布版号也要能过。
+        assert!(validate(&cfg(npx(Some("0.2.1-alpha.5")), &[])).is_ok());
+        assert!(validate(&cfg(npx(Some("0.2.0-rc.2")), &[])).is_ok());
     }
 
     #[test]
     fn npx_version_rejects_injection() {
         for bad in ["1.0; rm -rf /", "1.0 && x", "a b", "0.1.0\nwhoami"] {
             assert!(
-                build_spawn_plan(&cfg(npx(Channel::Rc, Some(bad)), &[]), PROFILE_NAME).is_err(),
+                build_spawn_plan(&cfg(npx(Some(bad)), &[]), PROFILE_NAME).is_err(),
                 "应被拒绝: {bad:?}"
             );
         }
         // 空版本号也不行（否则拼出 `@` 结尾的无意义规格）。
-        assert!(build_spawn_plan(&cfg(npx(Channel::Rc, Some("")), &[]), PROFILE_NAME).is_err());
+        assert!(build_spawn_plan(&cfg(npx(Some("")), &[]), PROFILE_NAME).is_err());
     }
 
     #[test]
     fn npx_spec_and_command_for_ui() {
-        assert_eq!(npx_spec(Channel::Latest, None), "@deepseek-ai/dsh");
-        assert_eq!(npx_spec(Channel::Next, None), "@deepseek-ai/dsh@next");
+        assert_eq!(npx_spec(None), "@deepseek-ai/dsh");
+        assert_eq!(npx_spec(Some("")), "@deepseek-ai/dsh");
+        assert_eq!(npx_spec(Some("0.2.1-rc.2")), "@deepseek-ai/dsh@0.2.1-rc.2");
         assert_eq!(
-            npx_spec(Channel::Rc, Some("0.2.1-rc.2")),
-            "@deepseek-ai/dsh@0.2.1-rc.2"
+            npx_web_command(None, PROFILE_NAME),
+            "npx --yes @deepseek-ai/dsh web"
         );
         assert_eq!(
-            npx_web_command(Channel::Latest, None, PROFILE_NAME),
-            "npx --yes @deepseek-ai/dsh web"
+            npx_web_command(Some("0.2.1-rc.2"), PROFILE_NAME),
+            "npx --yes @deepseek-ai/dsh@0.2.1-rc.2 web"
         );
     }
 
     #[test]
     fn npx_with_extra_args() {
         let plan = build_spawn_plan(
-            &cfg(npx(Channel::Latest, None), &["--port", "3081", "--no-open"]),
+            &cfg(npx(None), &["--port", "3081", "--no-open"]),
             PROFILE_NAME,
         )
         .unwrap();
@@ -1048,7 +1006,7 @@ mod tests {
 
     #[test]
     fn wsl_runtime_wraps_npx_line() {
-        let mut config = cfg(npx(Channel::Latest, None), &[]);
+        let mut config = cfg(npx(None), &[]);
         config.runtime = wsl("Ubuntu-24.04");
         let plan = build_spawn_plan(&config, PROFILE_NAME).unwrap();
         assert_eq!(
@@ -1080,9 +1038,9 @@ mod tests {
     }
 
     #[test]
-    fn wsl_runtime_keeps_channel() {
-        // 渠道与运行环境正交：发行版里也能跑 next / 固定版本。
-        let mut config = cfg(npx(Channel::Rc, Some("0.2.1-rc.2")), &[]);
+    fn wsl_runtime_keeps_the_selected_version() {
+        // 版本与运行环境正交：发行版里也能钉死某一版。
+        let mut config = cfg(npx(Some("0.2.1-rc.2")), &[]);
         config.runtime = wsl("Ubuntu");
         match build_spawn_plan(&config, PROFILE_NAME).unwrap() {
             SpawnPlan::Wsl { inner, .. } => {
@@ -1146,7 +1104,7 @@ mod tests {
         }
 
         for mode in [
-            npx(Channel::Latest, None),
+            npx(None),
             LaunchMode::Custom {
                 command: "dsh web".into(),
             },
@@ -1175,7 +1133,7 @@ mod tests {
             "a\\b",
             "a\tb",
         ] {
-            let err = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[bad]), PROFILE_NAME);
+            let err = build_spawn_plan(&cfg(npx(None), &[bad]), PROFILE_NAME);
             assert!(err.is_err(), "注入样例应被拒绝: {bad:?}");
         }
     }
@@ -1184,7 +1142,7 @@ mod tests {
     fn rejects_malformed_args() {
         for bad in ["", " leading", "trailing ", "中文参数"] {
             assert!(
-                build_spawn_plan(&cfg(npx(Channel::Latest, None), &[bad]), PROFILE_NAME).is_err(),
+                build_spawn_plan(&cfg(npx(None), &[bad]), PROFILE_NAME).is_err(),
                 "应被拒绝: {bad:?}"
             );
         }
@@ -1192,8 +1150,7 @@ mod tests {
 
     #[test]
     fn arg_with_inner_space_is_quoted() {
-        let plan =
-            build_spawn_plan(&cfg(npx(Channel::Latest, None), &["a b"]), PROFILE_NAME).unwrap();
+        let plan = build_spawn_plan(&cfg(npx(None), &["a b"]), PROFILE_NAME).unwrap();
         match plan {
             SpawnPlan::ShellLine { line, .. } => {
                 assert_eq!(line, "npx --yes @deepseek-ai/dsh web \"a b\" --no-open")
@@ -1205,17 +1162,13 @@ mod tests {
     #[test]
     fn no_open_is_appended_once() {
         // 默认追加 --no-open（不弹系统浏览器）。
-        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), PROFILE_NAME).unwrap();
+        let plan = build_spawn_plan(&cfg(npx(None), &[]), PROFILE_NAME).unwrap();
         match plan {
             SpawnPlan::ShellLine { line, .. } => assert!(line.ends_with(" --no-open"), "{line}"),
             other => panic!("unexpected plan: {other:?}"),
         }
         // 用户自己写了 --no-open 时不重复。
-        let plan = build_spawn_plan(
-            &cfg(npx(Channel::Latest, None), &["--no-open"]),
-            PROFILE_NAME,
-        )
-        .unwrap();
+        let plan = build_spawn_plan(&cfg(npx(None), &["--no-open"]), PROFILE_NAME).unwrap();
         match plan {
             SpawnPlan::ShellLine { line, .. } => {
                 assert_eq!(line.matches("--no-open").count(), 1, "{line}")
@@ -1292,14 +1245,8 @@ mod tests {
 
     #[test]
     fn rejects_bad_distro() {
-        assert!(build_spawn_plan(
-            &wsl_cfg(npx(Channel::Latest, None), &[], "a b"),
-            PROFILE_NAME
-        )
-        .is_err());
-        assert!(
-            build_spawn_plan(&wsl_cfg(npx(Channel::Latest, None), &[], ""), PROFILE_NAME).is_err()
-        );
+        assert!(build_spawn_plan(&wsl_cfg(npx(None), &[], "a b"), PROFILE_NAME).is_err());
+        assert!(build_spawn_plan(&wsl_cfg(npx(None), &[], ""), PROFILE_NAME).is_err());
         // 自定义命令为空同样被拦（与运行环境无关）。
         assert!(build_spawn_plan(
             &wsl_cfg(
@@ -1328,7 +1275,7 @@ mod tests {
     #[test]
     fn launch_plan_carries_env() {
         let plan = build_launch_plan(
-            &cfg(npx(Channel::Latest, None), &[]),
+            &cfg(npx(None), &[]),
             PROFILE_NAME,
             &[("DSHARBOR_BRIDGE_NONCE".into(), "ab12".into())],
             &[],
@@ -1347,7 +1294,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_env() {
-        let config = cfg(npx(Channel::Latest, None), &[]);
+        let config = cfg(npx(None), &[]);
         assert!(build_launch_plan(
             &config,
             PROFILE_NAME,
@@ -1363,7 +1310,7 @@ mod tests {
     #[test]
     fn launcher_args_precede_user_args() {
         let plan = build_spawn_plan_with_launcher_args(
-            &cfg(npx(Channel::Latest, None), &["--no-open"]),
+            &cfg(npx(None), &["--no-open"]),
             PROFILE_NAME,
             &["--patch".into(), "C:\\x\\port-overlay.yml".into()],
         )
@@ -1381,7 +1328,7 @@ mod tests {
     #[test]
     fn launcher_args_wsl_placement() {
         let plan = build_spawn_plan_with_launcher_args(
-            &wsl_cfg(npx(Channel::Latest, None), &["--no-open"], "Ubuntu-24.04"),
+            &wsl_cfg(npx(None), &["--no-open"], "Ubuntu-24.04"),
             PROFILE_NAME,
             &["--patch".into(), "/mnt/c/x/port-overlay.yml".into()],
         )
@@ -1401,7 +1348,7 @@ mod tests {
         for bad in ["a;b", "a&b", "a\"b", "$(x)", "a`b"] {
             assert!(
                 build_spawn_plan_with_launcher_args(
-                    &cfg(npx(Channel::Latest, None), &[]),
+                    &cfg(npx(None), &[]),
                     PROFILE_NAME,
                     &[bad.into()]
                 )
@@ -1411,7 +1358,7 @@ mod tests {
         }
         // 路径里的反斜杠与空格是允许的（Windows 路径必须能过）。
         assert!(build_spawn_plan_with_launcher_args(
-            &cfg(npx(Channel::Latest, None), &[]),
+            &cfg(npx(None), &[]),
             PROFILE_NAME,
             &["--patch".into(), "C:\\Program Files\\x.yml".into()]
         )
@@ -1420,7 +1367,7 @@ mod tests {
 
     #[test]
     fn port_is_validated() {
-        let mut config = cfg(npx(Channel::Latest, None), &[]);
+        let mut config = cfg(npx(None), &[]);
         config.port = Some(0);
         assert!(validate(&config).is_err());
         config.port = Some(1);
@@ -1431,7 +1378,7 @@ mod tests {
 
     #[test]
     fn port_round_trips_through_serialization() {
-        let mut config = cfg(npx(Channel::Latest, None), &["--no-open"]);
+        let mut config = cfg(npx(None), &["--no-open"]);
         config.port = Some(3099);
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"port\":3099"));
@@ -1444,8 +1391,8 @@ mod tests {
     }
 
     #[test]
-    fn runtime_and_channel_round_trip_through_serde() {
-        let mut config = cfg(npx(Channel::Alpha, Some("0.2.1-alpha.5")), &[]);
+    fn runtime_and_version_round_trip_through_serde() {
+        let mut config = cfg(npx(Some("0.2.1-alpha.5")), &[]);
         config.runtime = wsl("Ubuntu-24.04");
         let json = serde_json::to_string(&config).unwrap();
         // 前端按 camelCase 读；runtime 是独立一层，不再藏在 mode 里。
@@ -1454,33 +1401,43 @@ mod tests {
             "{json}"
         );
         assert!(
-            json.contains(r#""mode":{"kind":"npx","channel":"alpha","version":"0.2.1-alpha.5"}"#),
+            json.contains(r#""mode":{"kind":"npx","version":"0.2.1-alpha.5"}"#),
             "{json}"
         );
         assert_eq!(serde_json::from_str::<LaunchConfig>(&json).unwrap(), config);
-        // latest 不写 version 时也是合法输入。
-        let parsed: LaunchConfig =
-            serde_json::from_str(r#"{"mode":{"kind":"npx","channel":"latest"}}"#).unwrap();
-        assert_eq!(parsed.mode, npx(Channel::Latest, None));
+        // 不选版本（界面上的「自动最新版本」）也是合法输入。
+        let parsed: LaunchConfig = serde_json::from_str(r#"{"mode":{"kind":"npx"}}"#).unwrap();
+        assert_eq!(parsed.mode, npx(None));
         assert_eq!(parsed.runtime, Runtime::Default);
     }
 
     #[test]
     fn migrates_legacy_configs() {
-        // v0.3.x 存的配置没有 runtime / channel：补上默认值。
+        // v0.3.x 存的配置没有 runtime / version：补上默认值。
         let legacy: LaunchConfig =
             serde_json::from_str(r#"{"mode":{"kind":"npx"},"extraArgs":["--port","3099"]}"#)
                 .unwrap();
-        assert_eq!(legacy.mode, npx(Channel::Latest, None));
+        assert_eq!(legacy.mode, npx(None));
         assert_eq!(legacy.runtime, Runtime::Default);
         assert_eq!(legacy.extra_args, vec!["--port", "3099"]);
+
+        // 渠道已下线：旧配置里带 channel 时那个键被忽略（以前正是渠道决定版本，
+        // 现在由 version 表达），版本身份原样保留，不联网、不改行为。
+        let legacy: LaunchConfig = serde_json::from_str(
+            r#"{"mode":{"kind":"npx","channel":"rc","version":"0.2.1-rc.2"}}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.mode, npx(Some("0.2.1-rc.2")));
+        let legacy: LaunchConfig =
+            serde_json::from_str(r#"{"mode":{"kind":"npx","channel":"alpha"}}"#).unwrap();
+        assert_eq!(legacy.mode, npx(None));
 
         // 旧的「通过 WSL 启动」+ 官方默认内部命令 → 官方 npx（latest）+ WSL 运行环境。
         let legacy: LaunchConfig = serde_json::from_str(&format!(
             r#"{{"mode":{{"kind":"wsl","distro":"Ubuntu","inner":"{LEGACY_WSL_INNER}"}}}}"#
         ))
         .unwrap();
-        assert_eq!(legacy.mode, npx(Channel::Latest, None));
+        assert_eq!(legacy.mode, npx(None));
         assert_eq!(legacy.runtime, wsl("Ubuntu"));
         // 迁移结果必须是可直接启动的：拼出来的就是发行版里跑 npx latest。
         assert_eq!(
@@ -1539,7 +1496,7 @@ mod tests {
     #[test]
     fn plugin_install_npx_plan() {
         let plan = build_plugin_plan(
-            &cfg(npx(Channel::Latest, None), &[]),
+            &cfg(npx(None), &[]),
             PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:/tmp/dsharbor-bridge-0.1.0.tgz".into(),
@@ -1607,7 +1564,7 @@ mod tests {
     #[test]
     fn plugin_install_wsl_drops_web_subcommand() {
         let plan = build_plugin_plan(
-            &wsl_cfg(npx(Channel::Latest, None), &[], "Ubuntu-24.04"),
+            &wsl_cfg(npx(None), &[], "Ubuntu-24.04"),
             PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:/mnt/c/Users/x/dsharbor-bridge-0.1.0.tgz".into(),
@@ -1624,22 +1581,20 @@ mod tests {
     }
 
     #[test]
-    fn plugin_install_follows_channel_and_version() {
-        // 插件必须装到与启动同一个包上：npx@next / 固定 rc 版本时插件也要跟。
-        for (channel, version, expected) in [
+    fn plugin_install_follows_the_selected_version() {
+        // 插件必须装到与启动同一个包上：不选版本跟 latest，选了版本就跟那一版。
+        for (version, expected) in [
             (
-                Channel::Next,
                 None,
-                "npx --yes @deepseek-ai/dsh@next plugin --profile web remove dsharbor-bridge",
+                "npx --yes @deepseek-ai/dsh plugin --profile web remove dsharbor-bridge",
             ),
             (
-                Channel::Rc,
                 Some("0.2.1-rc.2"),
                 "npx --yes @deepseek-ai/dsh@0.2.1-rc.2 plugin --profile web remove dsharbor-bridge",
             ),
         ] {
             let plan = build_plugin_plan(
-                &cfg(npx(channel, version), &[]),
+                &cfg(npx(version), &[]),
                 PROFILE_NAME,
                 &PluginOp::Uninstall {
                     name: "dsharbor-bridge".into(),
@@ -1686,7 +1641,7 @@ mod tests {
         for bad in ["file:a;reboot", "file:a&b", "file:a`b", "file:a$b"] {
             assert!(
                 build_plugin_plan(
-                    &cfg(npx(Channel::Latest, None), &[]),
+                    &cfg(npx(None), &[]),
                     PROFILE_NAME,
                     &PluginOp::Install {
                         package: bad.into()
@@ -1703,7 +1658,7 @@ mod tests {
         // 回归（v0.1.0 实机缺陷）：安装目录含空格（D:\Program Files\DSHarbor）时，
         // pnpm 会把 `file:D:\Program` 当包名去 registry 查 → 404，安装必失败。
         let err = build_plugin_plan(
-            &cfg(npx(Channel::Latest, None), &[]),
+            &cfg(npx(None), &[]),
             PROFILE_NAME,
             &PluginOp::Install {
                 package: "file:D:\\Program Files\\DSHarbor\\resources\\dsharbor-bridge-0.1.0.tgz"
@@ -1778,7 +1733,7 @@ mod tests {
     #[test]
     fn npx_command_follows_the_selected_environment() {
         // `web` 是位置参数形式的环境选择器：换个环境名就换一整份环境。
-        let plan = build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), "lab").unwrap();
+        let plan = build_spawn_plan(&cfg(npx(None), &[]), "lab").unwrap();
         assert_eq!(
             plan,
             SpawnPlan::ShellLine {
@@ -1787,8 +1742,12 @@ mod tests {
             }
         );
         assert_eq!(
-            npx_web_command(Channel::Next, None, "lab"),
-            "npx --yes @deepseek-ai/dsh@next lab"
+            npx_web_command(None, "lab"),
+            "npx --yes @deepseek-ai/dsh lab"
+        );
+        assert_eq!(
+            npx_web_command(Some("0.2.1-rc.2"), "lab"),
+            "npx --yes @deepseek-ai/dsh@0.2.1-rc.2 lab"
         );
     }
 
@@ -1848,7 +1807,7 @@ mod tests {
         // 静默回退成默认环境会让用户以为切了、其实没切。
         for bad in ["", "a b", "-x", "../etc"] {
             assert!(
-                build_spawn_plan(&cfg(npx(Channel::Latest, None), &[]), bad).is_err(),
+                build_spawn_plan(&cfg(npx(None), &[]), bad).is_err(),
                 "应被拒绝: {bad:?}"
             );
         }
@@ -1857,7 +1816,7 @@ mod tests {
     #[test]
     fn plugin_plan_targets_the_selected_environment() {
         let plan = build_plugin_plan(
-            &cfg(npx(Channel::Latest, None), &[]),
+            &cfg(npx(None), &[]),
             "lab",
             &PluginOp::Install {
                 package: "file:/tmp/x.tgz".into(),
@@ -1916,7 +1875,7 @@ mod tests {
     #[test]
     fn plugin_plan_rejects_an_invalid_environment_name() {
         assert!(build_plugin_plan(
-            &cfg(npx(Channel::Latest, None), &[]),
+            &cfg(npx(None), &[]),
             "a;b",
             &PluginOp::Uninstall {
                 name: "dsharbor-bridge".into(),

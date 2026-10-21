@@ -49,13 +49,18 @@ const state = {
   ],
   /** 官方版本列表（`query_dsh_versions`）：改成 null 可预览读取失败 / 断网时的分支。 */
   registry: {
-    distTags: { latest: "0.2.0-rc.2", next: "0.2.1-rc.2", alpha: "0.2.1-alpha.5" },
-    rc: ["0.2.1-rc.2", "0.2.1-rc.1", "0.2.0-rc.2", "0.2.0-rc.1"],
-    alpha: ["0.2.1-alpha.5", "0.2.1-alpha.4", "0.2.1-alpha.3"],
+    distTags: { latest: "0.2.1-rc.2" },
+    versions: [
+      "0.2.1-rc.2", "0.2.1-rc.1", "0.2.1-alpha.5", "0.2.1-alpha.4", "0.2.1-alpha.3",
+      "0.2.0-rc.2", "0.2.0-rc.1", "0.2.0-alpha.2", "0.2.0-alpha.1", "0.1.9",
+      "0.1.8", "0.1.7", "0.1.6", "0.1.5", "0.1.4", "0.1.3", "0.1.2", "0.1.1", "0.1.0",
+    ],
   },
+  /** 本机 npx 缓存里已有的版本（`npx_cached_versions`）：「已缓存」徽章按它挂。 */
+  npxCachedVersions: ["0.2.1-rc.1", "0.2.0-rc.2"],
   /** 已保存的启动配置：改它并刷新页面就能预览各种保存/回填分支（如存了已下架的版本）。 */
   savedLaunch: {
-    mode: { kind: "npx", channel: "latest", version: null },
+    mode: { kind: "npx", version: null },
     runtime: { kind: "default" },
     extraArgs: [],
     port: null,
@@ -225,7 +230,7 @@ window.__mockUnimplemented = [];
     else if (kind === "binary") target = '"' + ((mode && mode.path) || "D:\\\\tools\\\\dsh.cmd") + '"';
     else if (kind === "custom") target = (mode && mode.command) || "node D:\\\\tools\\\\dsh.js";
     else {
-      const suffix = mode && mode.channel === "next" ? "@next" : mode && mode.version ? "@" + mode.version : "";
+      const suffix = mode && mode.version ? "@" + mode.version : "";
       target = "npx --yes @deepseek-ai/dsh" + suffix;
     }
     return "@echo off\\r\\n" + target + " %*\\r\\n";
@@ -707,12 +712,17 @@ window.__mockUnimplemented = [];
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,
-    // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 重新读取按钮」。
+    // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 刷新按钮转圈」。
     // 下载源记进 calls（键名形如 query_dsh_versions:official），预览时一眼能看出这次请求带的是哪个源。
     query_dsh_versions: (a) => {
-      seen("query_dsh_versions:" + (a && a.source ? a.source : "?"));
+      seen("query_dsh_versions:" + (a && a.source ? a.source : "?") + (a && a.force ? ":force" : ""));
       if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
       return S.registry;
+    },
+    // 本机 npx 缓存里现有的版本：「已缓存」徽章的数据源（预览里固定给一组假版本）。
+    npx_cached_versions: () => {
+      seen("npx_cached_versions");
+      return S.npxCachedVersions || [];
     },
 
     // 自检：结论与失败原因都从 __MOCK_STATE__.selfCheck 来（改它能预览三种文案），

@@ -5,7 +5,7 @@
 //! 这类壳行为偏好同样要活过重开与卸载，统一存一个 JSON。
 //! 兼容旧格式：此前该文件顶层直接就是 `LaunchConfig`，加载时自动迁移。
 
-use dsharbor_core::launch::{Channel, LaunchConfig, LaunchMode, Runtime};
+use dsharbor_core::launch::{LaunchConfig, LaunchMode, Runtime};
 use dsharbor_core::prefs::ShellPrefs;
 use serde::{Deserialize, Serialize};
 
@@ -79,10 +79,8 @@ impl Default for ShellConfig {
     fn default() -> Self {
         Self {
             launch: LaunchConfig {
-                mode: LaunchMode::Npx {
-                    channel: Channel::Latest,
-                    version: None,
-                },
+                // 默认「官方 npx 命令」+ 自动最新版本（不指定版本号）。
+                mode: LaunchMode::Npx { version: None },
                 runtime: Runtime::Default,
                 extra_args: Vec::new(),
                 port: None,

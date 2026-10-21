@@ -101,13 +101,14 @@
   color: var(--fg);
 }
 
-/* 横向三点（cx 5/12/19）：横向排列时上下留白天然更大，收一点尺寸才不显得空。 */
+/* 横向三点（cx 5/12/19）：横向排列时上下留白天然更大，收一点尺寸才不显得空。
+   实心（维护者要求）：半透明底 + 描边环在 15px 下只剩一圈细线，与旁边实心的加号、
+   圆头开关不像同一套图标。 */
 .env-more svg {
   width: 15px;
   height: 15px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
+  fill: currentColor;
+  stroke: none;
 }
 
 /* 行末一列三颗按钮：新建空白环境 / 桥接插件 / 补丁层，后两颗各自弹浮窗。

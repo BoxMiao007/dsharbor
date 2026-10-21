@@ -1,7 +1,7 @@
-/* 配置类常量与推导：下载源/代理/渠道选择项、npx 命令拼装、唯一 profile 名与启动按钮文案 —— 自 main.ts 原样搬出（2026-10 模块化拆分），声明加 export，其余未改。 */
+/* 配置类常量与推导：下载源/代理选择项、npx 命令拼装、版本下拉的分页口径、唯一 profile 名与启动按钮文案 —— 自 main.ts 原样搬出（2026-10 模块化拆分），声明加 export，其余未改。 */
 
 import type { PickerChoice } from "./picker";
-import type { Channel, DownloadSource, RegistryInfo } from "./types";
+import type { DownloadSource } from "./types";
 
 /** 下载源候选：标签用界面上的原文，value 与 Rust 侧 `DownloadSource::as_str()` 一致。 */
 export const DOWNLOAD_SOURCE_CHOICES: PickerChoice[] = [
@@ -29,46 +29,31 @@ export const PROXY_MODE_CHOICES: PickerChoice[] = [
   { value: "off", label: "不走代理" },
 ];
 
-/** 渠道候选：中文名在前、npm 标签在后；圆点靠 CSS 画（emoji 在 WebView2 里会渲染成黑白方块）。 */
-export const CHANNEL_CHOICES: PickerChoice[] = [
-  { value: "latest", label: "稳定版（latest）", dot: "latest" },
-  { value: "next", label: "最新尝鲜版（next）", dot: "next" },
-  { value: "rc", label: "尝鲜版历史版本（rc）", dot: "rc" },
-  { value: "alpha", label: "内测版（alpha）", dot: "alpha" },
-];
-
 /** 运行环境下拉的「默认」项：value 与 Rust 侧 Runtime::Default 的语义名一致。 */
 export const RUNTIME_DEFAULT = "default";
 
-/** 渠道徽章：latest / next 显示 dist-tag 指的版本，rc / alpha 换成版本下拉。 */
-export const BADGE_CHANNELS: Channel[] = ["latest", "next"];
-
 /**
- * 取某个渠道该给哪些版本：rc / alpha 由后端按后缀分好组，这里只做兜底排序后的原样展示。
- * 返回空数组表示「还没读到」（渠道本身合法，不是错误）。
+ * 版本下拉首项的 value：空串 = 「自动最新版本」。
+ *
+ * 空串在配置里表示「不写死版本号」（`npx --yes @deepseek-ai/dsh web`，跟 npm 的
+ * latest 标签走）；它与「还没选过」不是一回事——后者由 Picker 自己的 selected 初值区分。
  */
-export function channelVersions(registry: RegistryInfo | null, channel: Channel): string[] {
-  if (!registry) {
-    return [];
-  }
-  return channel === "rc" ? registry.rc : channel === "alpha" ? registry.alpha : [];
-}
+export const AUTO_VERSION = "";
 
-/** 徽章里的版本号：latest / next 读 dist-tag；没读到就显示 —。 */
-export function channelTagVersion(registry: RegistryInfo | null, channel: Channel): string | null {
-  if (!registry || !BADGE_CHANNELS.includes(channel)) {
-    return null;
-  }
-  return channel === "latest" ? registry.distTags.latest : registry.distTags.next;
-}
+/** 首项的显示文字（收起时也用它）：与「最新」徽章不是一回事，别合并。 */
+export const VERSION_AUTO_LABEL = "自动最新版本";
+
+/** 版本下拉先列几个具体版本，其余收进末尾的「更多…」；点一次「更多…」再放 10 个。 */
+export const VERSION_INITIAL_COUNT = 6;
+export const VERSION_PAGE_SIZE = 10;
 
 /**
  * 官方 npx 命令的拼装（只用于界面上的实时预览；真正下发的命令由 Rust 侧 `build_spawn_plan` 拼）。
+ * `version` 为 null = 首项「自动最新版本」，不带版本号。
  * 保留 `--yes`：壳的子进程没有终端，npx 首次下载时的交互确认会直接把启动卡住。
  */
-export function npxCommandOf(channel: Channel, version: string | null): string {
-  const suffix = channel === "latest" ? "" : channel === "next" ? "@next" : version ? `@${version}` : "@<版本>";
-  return `npx --yes @deepseek-ai/dsh${suffix} web --no-open`;
+export function npxCommandOf(version: string | null): string {
+  return `npx --yes @deepseek-ai/dsh${version ? `@${version}` : ""} web --no-open`;
 }
 
 /**
@@ -88,3 +73,7 @@ export const START_PROFILE = "web";
 /** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
 export const TOGGLE_TEXT_REST = "启动 DSH";
 export const TOGGLE_TEXT_HOVER = "开始运行";
+
+/** 运行态两颗圆钮的气泡文案（也是 aria-label）：纯图标按钮没有可见文字，必须补上。 */
+export const TOOLTIP_STOP = "停止 DSH";
+export const TOOLTIP_RESTART = "重启 DSH";

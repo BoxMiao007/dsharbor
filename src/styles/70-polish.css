@@ -44,7 +44,9 @@
   white-space: nowrap;
 }
 
-/* 渠道圆点：用 CSS 画而不是 emoji（渲染成彩色 emoji 在 WebView2 里会变成黑白方块）。 */
+/* 行首圆点：用 CSS 画而不是 emoji（渲染成彩色 emoji 在 WebView2 里会变成黑白方块）。
+   目前没有调用方在用了（原来给「渠道」下拉的四个渠道上色，渠道改成版本后没了），
+   留着是因为它是 Picker 的通用能力，配色交给调用方自己加 .picker-dot-<名> 规则。 */
 .picker-dot {
   flex: none;
   width: 8px;
@@ -52,20 +54,37 @@
   border-radius: 50%;
 }
 
-.picker-dot-latest {
-  background: #6ccb5f;
+/* 行尾小徽章（最新 / 已装 / 已缓存 / 手动）：比选项文字再小一号的胶囊。
+   顺序与配色都在调用方定死，同一行反复渲染长得一样。 */
+.picker-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  background: var(--elev);
 }
 
-.picker-dot-next {
-  background: #f2c94c;
+.picker-badge-latest {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
-.picker-dot-rc {
-  background: #4cc2ff;
+.picker-badge-installed {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
 }
 
-.picker-dot-alpha {
-  background: #f2994a;
+.picker-badge-cached {
+  color: var(--fg-dim);
+  background: var(--elev);
+}
+
+/* 官方列表里已经没有、但配置里仍然记着的版本：提醒它是手写的，不是当前可选版本。 */
+.picker-badge-manual {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
 }
 
 .picker-chev {
@@ -151,9 +170,21 @@
 }
 
 .picker-option .text {
+  /* 撑满中间：行尾的徽章才能贴到右边，不会被长短不一的版本号推来推去。 */
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 「更多…（还剩 N 个）」是动作行不是候选项：配色点一下会做事的暗示，光标仍是手型。 */
+.picker-option.is-action {
+  color: var(--accent);
+}
+
+.picker-option.is-action:hover {
+  background: var(--accent-soft);
 }
 
 /* 视口滚动条直接藏掉（不再占宽），改成自绘的滚动指示条（.scroll-track / .scroll-thumb）：

@@ -113,17 +113,14 @@ pub fn validate_dir(dir: &str) -> Result<(), String> {
 
 /// 垫片里表达「运行哪个包」的那一段命令行（不含 `%*` / `"$@"`）。
 ///
-/// * 官方 npx：`npx --yes @deepseek-ai/dsh[<渠道/版本后缀>]`
+/// * 官方 npx：`npx --yes @deepseek-ai/dsh[<版本后缀>]`（不加后缀就是 npm 的 latest）
 /// * 系统全局命令：`system_exe`，即壳探测到的 `dsh` 可执行文件绝对路径。**不写成裸
 ///   `dsh`**——垫片自己就叫 `dsh`，裸名会绕回自己（系统里没装 dsh 时直接无限递归）。
 /// * 指定程序路径：`"<path>"`
 /// * 自定义命令：原样透传
 pub fn shim_target(mode: &LaunchMode, system_exe: Option<&str>) -> Result<String, String> {
     match mode {
-        LaunchMode::Npx { channel, version } => Ok(format!(
-            "{NPX_PREFIX} {}",
-            npx_spec(*channel, version.as_deref())
-        )),
+        LaunchMode::Npx { version } => Ok(format!("{NPX_PREFIX} {}", npx_spec(version.as_deref()))),
         LaunchMode::System => {
             let exe = system_exe.map(str::trim).unwrap_or_default();
             if exe.is_empty() {
@@ -309,7 +306,6 @@ pub fn path_entry_index(path_value: &str, dir: &str, sep: char) -> Option<usize>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::launch::Channel;
 
     const SEP: char = ';';
 
@@ -444,10 +440,7 @@ mod tests {
 
     #[test]
     fn windows_shim_for_npx_keeps_percent_star() {
-        let mode = LaunchMode::Npx {
-            channel: Channel::Latest,
-            version: None,
-        };
+        let mode = LaunchMode::Npx { version: None };
         let text = windows_shim(&mode, None).unwrap();
         assert_eq!(text, "@echo off\r\nnpx --yes @deepseek-ai/dsh %*\r\n");
         // 只表达到包：不带壳自己的环境名位置参数与选项。
@@ -459,22 +452,19 @@ mod tests {
     }
 
     #[test]
-    fn windows_shim_specializes_npx_channel() {
-        let next = LaunchMode::Npx {
-            channel: Channel::Next,
-            version: None,
-        };
-        assert!(windows_shim(&next, None)
-            .unwrap()
-            .contains("@deepseek-ai/dsh@next %*"));
-
-        let rc = LaunchMode::Npx {
-            channel: Channel::Rc,
+    fn windows_shim_specializes_the_pinned_version() {
+        // 垫片跟的是「启动方式」：选了版本就钉死那一版，不选就是 latest。
+        let pinned = LaunchMode::Npx {
             version: Some("0.2.1-rc.2".to_string()),
         };
-        assert!(windows_shim(&rc, None)
+        assert!(windows_shim(&pinned, None)
             .unwrap()
             .contains("@deepseek-ai/dsh@0.2.1-rc.2 %*"));
+
+        let latest = LaunchMode::Npx { version: None };
+        assert!(windows_shim(&latest, None)
+            .unwrap()
+            .contains("@deepseek-ai/dsh %*"));
     }
 
     #[test]
@@ -551,10 +541,7 @@ mod tests {
 
     #[test]
     fn posix_shim_for_npx_uses_exec_and_dollar_at() {
-        let mode = LaunchMode::Npx {
-            channel: Channel::Latest,
-            version: None,
-        };
+        let mode = LaunchMode::Npx { version: None };
         assert_eq!(
             posix_shim(&mode, None).unwrap(),
             "#!/bin/sh\nexec npx --yes @deepseek-ai/dsh \"$@\"\n"

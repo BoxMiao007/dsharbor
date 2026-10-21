@@ -6,11 +6,11 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./style.css";
 import { PANELS, ICON_SUN, ICON_MOON, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
 import { isStarting } from "./ui/types";
-import type { AppInfo, Channel, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, CacheState, CleanupResult, AutoCleanupReport } from "./ui/types";
+import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, CacheState, CleanupResult, AutoCleanupReport } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
-import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, CHANNEL_CHOICES, RUNTIME_DEFAULT, BADGE_CHANNELS, channelVersions, channelTagVersion, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST } from "./ui/config";
+import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOOLTIP_STOP } from "./ui/config";
 import { Picker } from "./ui/picker";
-import type { PickerChoice } from "./ui/picker";
+import type { PickerBadge, PickerChoice } from "./ui/picker";
 import { THEME_KEY, readStoredTheme, applyMode } from "./ui/theme";
 import type { ThemeId } from "./ui/theme";
 import { escapeHtml, toggleSwapHtml } from "./ui/markup";
@@ -79,9 +79,8 @@ async function main(): Promise<void> {
     const binaryError = $<HTMLParagraphElement>("binary-error");
     const customCommand = $<HTMLInputElement>("custom-command");
     const npxCommandPreview = $<HTMLElement>("npx-command-preview");
-    const npxVersionRoot = $<HTMLElement>("npx-version-picker");
-    const npxChannelBadge = $<HTMLSpanElement>("npx-channel-badge");
     const npxVersionsHint = $<HTMLDivElement>("npx-versions-hint");
+    const npxVersionsRefresh = $<HTMLButtonElement>("npx-versions-refresh");
     const portInput = $<HTMLInputElement>("port");
     const portReset = $<HTMLButtonElement>("port-reset");
     const portInfoEl = $<HTMLSpanElement>("port-info");
@@ -123,8 +122,17 @@ async function main(): Promise<void> {
     let registry: RegistryInfo | null = null;
     let registryError: string | null = null;
     let registryLoading = false;
-    /** 保存过但还没等版本列表回来回填的具体版本。 */
-    let pendingVersion: string | null = null;
+    /**
+     * 当前选中的版本号；null = 首项「自动最新版本」（不写死版本号）。
+     *
+     * 它是唯一真源，不是从下拉框的 DOM 值反推：换运行环境、刷新列表、读取失败降级
+     * 都会重铺候选，从 DOM 反推的话这几种情况都会把用户选好的版本悄悄退回首项。
+     */
+    let selectedVersion: string | null = null;
+    /** 本机 npx 缓存里已有的版本；每次展开版本下拉现扫一次。 */
+    let cachedVersions: string[] = [];
+    /** 版本下拉当前放出几个具体版本（不含首项与末尾的「更多…」）。 */
+    let versionShown = VERSION_INITIAL_COUNT;
 
     const runtimeValue = (value: LaunchRuntime): string =>
       value.kind === "wsl" ? `wsl:${value.distro}` : RUNTIME_DEFAULT;
@@ -179,13 +187,11 @@ async function main(): Promise<void> {
       void refreshPortHint();
       void refreshBridgeState();
       // 先清掉上一个环境的清单，否则换发行版后到新清单回来之前，版本下拉里
-      // 还挂着另一个环境（另一个 npm registry 视图）的版本号。
-      // 当前选中的具体版本先存进 pendingVersion，新清单回来后 loadRegistry 会回填。
-      if (!BADGE_CHANNELS.includes(currentChannel())) {
-        pendingVersion = npxVersionPicker.value.trim() || null;
-      }
+      // 还挂着另一个环境（另一个 npm registry 视图）的版本号与「已缓存」标记。
+      // selectedVersion 不跟着清：用户选的版本号仍然适用，新列表回来后照旧选中它。
       registry = null;
       registryError = null;
+      cachedVersions = [];
       void loadRegistry();
     }
 
@@ -194,30 +200,79 @@ async function main(): Promise<void> {
     const customRuntimePicker = new Picker("custom-runtime-picker", onRuntimeChange);
     customRuntimePicker.setChoices([{ value: RUNTIME_DEFAULT, label: "默认" }]);
 
-    const currentChannel = (): Channel => {
-      const value = npxChannelPicker.value;
-      return value === "next" || value === "rc" || value === "alpha" ? value : "latest";
-    };
+    /** 当前选定的具体版本；null = 首项「自动最新版本」（不写死版本号）。 */
+    const currentVersion = (): string | null => selectedVersion;
 
-    /** 当前选定的具体版本；latest / next 靠 dist-tag 定位，不存版本号。 */
-    const currentVersion = (): string | null =>
-      BADGE_CHANNELS.includes(currentChannel()) ? null : npxVersionPicker.value.trim() || null;
+    /** npm 的 latest 标签当前指向的版本；还没读到列表时为 null。 */
+    const latestVersion = (): string | null => registry?.distTags.latest ?? null;
 
-    /** 版本候选；保存过/选过但官方列表已经没有的版本仍然列出来，标一句「已不在官方列表」。 */
-    function versionChoices(channel: Channel): PickerChoice[] {
-      const versions = channelVersions(registry, channel);
-      if (registryLoading && versions.length === 0) {
-        return [{ value: "", label: "（正在读取版本列表…）", disabled: true }];
+    /**
+     * 版本行尾的徽章。顺序固定（最新 → 已装 → 已缓存），同一行反复渲染长得一样。
+     * 「已装」与「已缓存」不并列：已选中的那一行说「已装」就够了，再说一遍缓存是同一件事。
+     */
+    function versionBadges(version: string): PickerBadge[] {
+      const badges: PickerBadge[] = [];
+      if (version === latestVersion()) {
+        badges.push({ text: "最新", tone: "latest" });
       }
-      const choices: PickerChoice[] = versions.map((version) => ({ value: version, label: version }));
-      const kept = pendingVersion ?? (npxVersionPicker.value.trim() || null);
-      if (kept !== null && !versions.includes(kept)) {
-        choices.push({ value: kept, label: `${kept}（已不在官方列表）` });
+      if (version === selectedVersion) {
+        badges.push({ text: "已装", tone: "installed" });
+      } else if (cachedVersions.includes(version)) {
+        badges.push({ text: "已缓存", tone: "cached" });
+      }
+      return badges;
+    }
+
+    /** 版本候选：首项「自动最新版本」+ 具体版本（先 6 个）+ 末尾「更多…」。 */
+    function versionChoices(): PickerChoice[] {
+      const latest = latestVersion();
+      const choices: PickerChoice[] = [
+        {
+          value: AUTO_VERSION,
+          label: VERSION_AUTO_LABEL,
+          // 首项挂的是「latest 标签当前指向哪个版本号」——让人看见「自动」这次会用哪个；
+          // 它不是一个具体版本，所以不挂「已缓存」（缓存里存的是确切版本号）。
+          badges: latest ? [{ text: latest, tone: "latest" }] : [],
+        },
+      ];
+      const versions = registry?.versions ?? [];
+      if (versions.length === 0) {
+        choices.push({
+          value: "(pending)",
+          label: registryLoading ? "（正在读取版本列表…）" : "（没读到官方版本列表）",
+          disabled: true,
+        });
+        return choices;
+      }
+      // 选过 / 存过但官方已经下架的版本仍然列出来，否则一重开壳就把这个选择悄悄改掉。
+      if (selectedVersion !== null && !versions.includes(selectedVersion)) {
+        choices.push({
+          value: selectedVersion,
+          label: selectedVersion,
+          badges: [{ text: "手动", tone: "manual" }],
+        });
+      }
+      for (const version of versions.slice(0, versionShown)) {
+        choices.push({ value: version, label: version, badges: versionBadges(version) });
+      }
+      const rest = versions.length - versionShown;
+      if (rest > 0) {
+        choices.push({
+          value: "(more)",
+          label: `更多…（还剩 ${rest} 个）`,
+          // 动作行：点一下只在弹层里再加 10 个，不改变选中值、也不收起弹层
+          //（收起就得重新展开一遍才能接着点）。
+          action: () => {
+            versionShown += VERSION_PAGE_SIZE;
+            renderVersionUI();
+            npxVersionPicker.relayout();
+          },
+        });
       }
       return choices;
     }
 
-    function registryHint(channel: Channel): string {
+    function registryHint(): string {
       if (registryLoading) {
         return "正在读取官方版本列表…";
       }
@@ -226,38 +281,44 @@ async function main(): Promise<void> {
           const distro = runtime.distro;
           const info = distroInfos?.find((item) => item.distro === distro);
           if (info && !info.hasNode) {
-            return `${distro} 里没有 node/npm，读不到版本列表；要先在该发行版里装 Node.js。稳定版（latest）同理也需要。`;
+            return `${distro} 里没有 node/npm，读不到版本列表；要先在该发行版里装 Node.js。「自动最新版本」同理也需要。`;
           }
         }
-        return "读不到官方版本列表（npm view 失败或断网）。稳定版（latest）仍可直接启动。";
+        return "读不到官方版本列表（npm view 失败或断网）；「自动最新版本」仍可直接启动，也可以点右边的刷新按钮重试。";
       }
-      if (!BADGE_CHANNELS.includes(channel) && channelVersions(registry, channel).length === 0) {
-        return "官方列表里还没有这一渠道的版本。";
+      if ((registry?.versions.length ?? 0) === 0) {
+        return "官方还没有发布过任何版本。";
       }
       return "";
     }
 
-    function renderChannelUI(): void {
-      const channel = currentChannel();
-      const isBadge = BADGE_CHANNELS.includes(channel);
-      npxChannelBadge.classList.toggle("hidden", !isBadge);
-      npxVersionRoot.classList.toggle("hidden", isBadge);
-      if (isBadge) {
-        const version = channelTagVersion(registry, channel);
-        npxChannelBadge.textContent = version ?? "—";
-        npxChannelBadge.title = version
-          ? `npm 的 ${channel} 标签当前指向 ${version}`
-          : "还没读到 npm 标签信息";
-      } else {
-        npxVersionPicker.setChoices(versionChoices(channel));
+    /** 版本下拉、命令预览、提示行与刷新按钮的状态一处刷齐。 */
+    function renderVersionUI(): void {
+      npxVersionPicker.setChoices(versionChoices());
+      npxVersionPicker.setValue(selectedVersion ?? AUTO_VERSION);
+      npxCommandPreview.textContent = npxCommandOf(selectedVersion);
+      const hint = registryHint();
+      npxVersionsHint.textContent = hint;
+      npxVersionsHint.classList.toggle("hidden", hint === "");
+      // 读不到列表时这句要像错误一样显眼，读得到时就是普通灰字。
+      npxVersionsHint.classList.toggle("is-warn", registryError !== null && !registryLoading);
+      // 读列表期间刷新按钮转圈并禁用：连点会让每次强制查询都真发一次 npm view。
+      npxVersionsRefresh.disabled = registryLoading;
+      npxVersionsRefresh.classList.toggle("is-spinning", registryLoading);
+    }
+
+    /** 现扫一次本机 npx 缓存里已有的版本，好把「已缓存」徽章挂到正确的行上。 */
+    async function refreshCachedVersions(): Promise<void> {
+      try {
+        cachedVersions = await invoke<string[]>("npx_cached_versions", { runtime });
+      } catch (err) {
+        // 缓存目录读不到只影响那枚徽章，不影响选版本；不打扰用户，日志里留痕。
+        console.error("读取 npx 缓存版本失败:", err);
+        cachedVersions = [];
       }
-      npxCommandPreview.textContent = npxCommandOf(channel, currentVersion());
-      const hint = registryHint(channel);
-      npxVersionsHint.classList.toggle("hidden", hint === "" && registryError === null);
-      npxVersionsHint.innerHTML =
-        registryError === null
-          ? escapeHtml(hint)
-          : `${escapeHtml(hint)} <button type="button" id="npx-versions-retry" class="port-reset" title="重新执行 npm view 读取版本列表">重新读取</button>`;
+      // 徽章是在 versionChoices() 里算的，扫回来必须重铺一遍候选；只调 relayout() 不会重算徽章。
+      npxVersionPicker.setChoices(versionChoices());
+      npxVersionPicker.relayout();
     }
 
     async function loadDistros(): Promise<void> {
@@ -272,12 +333,17 @@ async function main(): Promise<void> {
       syncRuntimePickers();
     }
 
-    async function loadRegistry(): Promise<void> {
+    /** 读官方版本列表；`force` 为真时让后端绕过 10 分钟缓存，真跑一次 npm view。 */
+    async function loadRegistry(force = false): Promise<void> {
       registryLoading = true;
       registryError = null;
-      renderChannelUI();
+      renderVersionUI();
       try {
-        registry = await invoke<RegistryInfo>("query_dsh_versions", { runtime, source: prefs.downloadSource });
+        registry = await invoke<RegistryInfo>("query_dsh_versions", {
+          runtime,
+          source: prefs.downloadSource,
+          force,
+        });
       } catch (err) {
         registry = null;
         registryError = String(err);
@@ -285,44 +351,25 @@ async function main(): Promise<void> {
       } finally {
         registryLoading = false;
       }
-      // 保存过的具体版本要等列表回来才能回填（否则 setChoices 会把它退回第一项）。
-      if (pendingVersion !== null) {
-        const channel = currentChannel();
-        if (!BADGE_CHANNELS.includes(channel)) {
-          npxVersionPicker.setChoices(versionChoices(channel));
-          npxVersionPicker.setValue(pendingVersion);
-        }
-        pendingVersion = null;
-      }
-      renderChannelUI();
+      // 换了一批候选，分页从头算：上一次展开过「更多…」不该让新列表一上来就全摊开。
+      versionShown = VERSION_INITIAL_COUNT;
+      renderVersionUI();
     }
 
-    const npxChannelPicker = new Picker("npx-channel-picker", () => {
-      const channel = currentChannel();
-      if (!BADGE_CHANNELS.includes(channel)) {
-        const versions = channelVersions(registry, channel);
-        npxVersionPicker.setChoices(versionChoices(channel));
-        // 换到版本渠道时默认选最新的那个。
-        if (versions.length > 0) {
-          npxVersionPicker.setValue(versions[0]);
-        }
-      }
-      renderChannelUI();
-      void persistConfigQuiet();
-      // 渠道（稳定版 / next / 具体版本）直接写在垫片里，换完就重写。
-      void syncCliShim();
-    });
-    npxChannelPicker.setChoices(CHANNEL_CHOICES);
-    const npxVersionPicker = new Picker("npx-version-picker", () => {
-      renderChannelUI();
+    const npxVersionPicker = new Picker("npx-version-picker", (value) => {
+      selectedVersion = value === AUTO_VERSION ? null : value;
+      renderVersionUI();
       void persistConfigQuiet();
       void syncCliShim();
     });
+    // 缓存在 npx 那边随时会变（每次启动都可能新增一份），所以每次展开都现扫一次，
+    // 而不是进面板时扫一次然后长期沿用。
+    npxVersionPicker.onOpen = () => void refreshCachedVersions();
     npxVersionPicker.setChoices([]);
-    npxVersionsHint.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement | null)?.id === "npx-versions-retry") {
-        void loadRegistry();
-      }
+    // 手动刷新：强制绕过后端缓存，结果回来前按钮转圈、下拉框里显示「正在读取…」。
+    npxVersionsRefresh.addEventListener("click", () => {
+      versionShown = VERSION_INITIAL_COUNT;
+      void loadRegistry(true);
     });
     // 左栏底部那颗浅/深切换：图标画的是「点下去会变成什么」，切换只改 <html data-mode>，
     // 界面不重建，正在填的字段与滚动位置都保住。
@@ -843,6 +890,11 @@ async function main(): Promise<void> {
 
     /** 端口输入的即时校验；为空 = 不覆盖（合法）。 */
     function portFieldError(): string | null {
+      // type=number 会把成不了数的输入吞掉（.value 直接变成空串，比如 "1e"）。
+      // 只按空串判断会被当成「留空 = 跟随 DSH 配置」而静默存盘，所以先问一次 validity。
+      if (portInput.validity.badInput) {
+        return "端口必须是 1-65535 的整数（留空表示跟随 DSH 配置）";
+      }
       const raw = portInput.value.trim();
       if (raw === "") {
         return null;
@@ -996,7 +1048,7 @@ async function main(): Promise<void> {
         case "custom":
           return { ...base, mode: { kind: "custom", command: customCommand.value.trim() } };
         default:
-          return { ...base, mode: { kind: "npx", channel: currentChannel(), version: currentVersion() } };
+          return { ...base, mode: { kind: "npx", version: currentVersion() } };
       }
     }
 
@@ -1065,6 +1117,18 @@ async function main(): Promise<void> {
     // 端口：输入即刷新提示与「还原」按钮（不含程序化赋值）；失焦再刷新一次保证同步。
     portInput.addEventListener("input", renderPortHint);
     portInput.addEventListener("change", renderPortHint);
+    // 滚轮掠过不得改值：number 输入框会把落在它身上的滚轮当步进用，用户想滚面板却把端口滚没了。
+    // 拦掉默认行为，并在没聚焦时顺手失焦兜底（聚焦时可能是想用上下键调，别抢）。
+    portInput.addEventListener(
+      "wheel",
+      (event) => {
+        event.preventDefault();
+        if (document.activeElement !== portInput) {
+          portInput.blur();
+        }
+      },
+      { passive: false },
+    );
     // 「还原」：清空输入框并派发 input/change，走与手打完全相同的自动保存路径。
     portReset.addEventListener("click", () => {
       portInput.value = "";
@@ -1197,25 +1261,29 @@ async function main(): Promise<void> {
 
     /** 上次渲染的按钮形态：render 每秒跑一次，只在跨状态时重建 DOM。
      * 初始就是 swap（buildHtml 的标记带 .swap），第一轮 render 不必重建。 */
-    let toggleMode: "swap" | "plain" | null = "swap";
+    let toggleMode: "swap" | "round" | null = "swap";
 
     /**
-     * 渲染「启动 / 停止」按钮：停止态用两组文字做逐字切换（样式在 60-controls.css 的 #btn-toggle.swap），
-     * 运行态是普通纯文本按钮。两种形态只在切换时重建一次。
-     * （TOGGLE_TEXT_* / charsToSpans / 初始 swap 标记在模块级，buildHtml 也要用。）
+     * 渲染「启动 / 停止」按钮：停止态是蓝底长条「启动 DSH」+ 两组文字逐字切换
+     * （样式在 60-controls.css 的 #btn-toggle.swap）；运行态是红底**圆形图标钮**
+     * （维护者要求：与「重启 DSH」同形，去掉长条形态）。两种形态只在跨状态时重建一次。
      */
     function renderToggleButton(stopped: boolean): void {
-      const mode = stopped ? "swap" : "plain";
+      const mode = stopped ? "swap" : "round";
       if (mode === toggleMode) return;
       toggleMode = mode;
       if (!stopped) {
         btnToggle.classList.remove("swap");
-        btnToggle.removeAttribute("aria-label");
-        // 「停止」与其余三颗会话按钮一样带图标段（悬停展开效果由 CSS 统一处理）。
-        btnToggle.innerHTML = `<span class="btn-text">停止</span><span class="btn-ico" aria-hidden="true">${ICON_STOP}</span>`;
+        btnToggle.classList.add("round");
+        // 圆形钮里只有图标，没有可见文字：名字与气泡只能靠 title / aria-label。
+        btnToggle.title = TOOLTIP_STOP;
+        btnToggle.setAttribute("aria-label", TOOLTIP_STOP);
+        btnToggle.innerHTML = ICON_STOP;
         return;
       }
+      btnToggle.classList.remove("round");
       btnToggle.classList.add("swap");
+      btnToggle.removeAttribute("title");
       btnToggle.setAttribute("aria-label", TOGGLE_TEXT_REST);
       btnToggle.innerHTML = toggleSwapHtml();
     }
@@ -1615,13 +1683,20 @@ async function main(): Promise<void> {
     }
 
     /** 插件卡的徽章跟着选中的环境走：一眼看出开关作用在哪个环境、启用了几项。
-     *  plugins 数的是 dsh.profile.bundles 里登记的插件（启动时实际挂载的那些），
-     *  所以文案写「已启用 N 个插件」，与下方开关列表的启停语义一致。 */
+     *  计数与下面的列表同口径（只数壳管得了的那些插件），否则徽章报 16、列表只有 12 行，
+     *  看上去像有插件丢了；清单还没回来时宁可说「正在读取」也不报 0。 */
     function renderPluginSummary(): void {
       const target = profileOf(prefs.profile);
-      const count = target ? `已启用 ${target.plugins} 个插件` : "未选中环境";
-      pluginSummary.textContent = `${target?.name ?? "—"} · ${count}`;
-      pluginSummary.className = `badge ${target && target.depsInstalled ? "badge-running" : "badge-stopped"} panel-badge`;
+      if (!target) {
+        pluginSummary.textContent = "未选中环境";
+        pluginSummary.className = "badge badge-stopped panel-badge";
+        return;
+      }
+      const rows = manageablePlugins();
+      const on = rows.filter((item) => item.enabled).length;
+      const count = pluginLoaded ? `已启用 ${on}/${rows.length} 个插件` : "正在读取插件清单…";
+      pluginSummary.textContent = `${target.name} · ${count}`;
+      pluginSummary.className = `badge ${target.depsInstalled ? "badge-running" : "badge-stopped"} panel-badge`;
     }
 
     function setProfileNote(text: string | null): void {
@@ -2304,36 +2379,62 @@ async function main(): Promise<void> {
     let pluginBusy = false;
 
     /**
-     * 插件清单：一行一个插件，开/关一个复选框。
+     * 插件清单：一行一个插件，右端一枚**总开关**（开/关整个插件）。
      *
-     * 三件必须一眼看到的事：桥接插件要标出来（关掉它登录链接只能靠日志）；
-     * 禁用表达写在补丁层里某处的要说明来源（用户手写的不等于壳生成的）；
-     * 读不到挂载点的内置骨架包开关置灰（壳不往补丁层塞 DSH 不认识的 id）。
+     * 只列壳管得了的插件：官方内置的骨架包没有挂载点、写不进补丁层，桥接插件归
+     * 「桥接插件」浮窗管——这两类列在这里也点不动，所以干脆不列（维护者要求）。
      */
+    function manageablePlugins(): PluginItem[] {
+      return pluginItems.filter((item) => item.switchable && !item.bridge);
+    }
+
+    /** 行提示：说清这枚开关管的是整个插件，并列出它写进补丁层的那些挂载点。 */
+    function pluginRowTitle(item: PluginItem): string {
+      const points = item.entries.length > 0 ? item.entries.join("、") : "（读不到挂载点）";
+      const manual = item.manual
+        ? "补丁层里这一项的禁用表达是手写的，拨开关会把它改成壳写的形式；"
+        : "";
+      return ` title="${escapeHtml(`总开关：停用整个「${item.name}」。它挂在 ${points}。${manual}改完要重启 DSH 才生效。`)}"`;
+    }
+
+    function pluginRowHtml(item: PluginItem): string {
+      // 只留「桥接」这一枚身份标签：开关本身已经说明启用与否，再写一遍「已启用/已停用」
+      // 是同一件事说两次；「手写禁用」这点信息收进行提示，不占位。
+      const marks = item.bridge ? `<span class="plugin-tag plugin-tag-bridge">桥接</span>` : "";
+      const label = item.enabled ? "停用" : "启用";
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${pluginRowTitle(item)}><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"><span class="switch-knob"></span></button></div>`;
+    }
+
     function renderPluginList(): void {
-      const hasItems = pluginItems.length > 0;
-      pluginEmpty.classList.toggle("hidden", hasItems || !pluginLoaded);
-      pluginList.innerHTML = pluginItems
-        .map((item) => {
-          // 只留「桥接」这一枚身份标签：开关本身已经说明启用与否，再写一遍「已启用/已停用」
-          // 是同一件事说两次；「手写禁用」（补丁层里被人手改过）这点信息收进 title，不占位。
-          const marks = item.bridge ? `<span class="plugin-tag plugin-tag-bridge">桥接</span>` : "";
-          const disabled = pluginBusy || !item.switchable ? " disabled" : "";
-          const title = item.switchable
-            ? item.manual
-              ? ` title="补丁层里被手写禁用过；拨开关会重写成这里的状态"`
-              : ""
-            : ` title="官方内置的骨架包，没有可禁用的挂载点"`;
-          const label = item.enabled ? "停用" : "启用";
-          return `<div class="plugin-row${item.enabled ? "" : " is-off"}"${title}><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${disabled}><span class="switch-knob"></span></button></div>`;
-        })
-        .join("");
+      const rows = manageablePlugins();
+      pluginEmpty.classList.toggle("hidden", rows.length > 0 || !pluginLoaded);
+      // 整表重铺会重建每一行，先把滚动位置记下来再放回去，否则列表看着像跳了一下。
+      const scrollTop = pluginList.scrollTop;
+      pluginList.innerHTML = rows.map(pluginRowHtml).join("");
+      pluginList.scrollTop = scrollTop;
       for (const box of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin]")) {
         box.addEventListener("click", () => {
           const next = box.getAttribute("aria-checked") !== "true";
           void togglePlugin(box.dataset.plugin ?? "", next);
         });
       }
+    }
+
+    /**
+     * 只重画一行的开关状态，不动别的行也不重建列表。
+     *
+     * 点开关时整表重建过一次（乐观更新）再重建一次（后端回话），两次之间开关会闪、
+     * 面板滚动位置也会丢——维护者要求「点开关时列表不得跳动」，所以改成只碰这一行。
+     */
+    function paintPluginRow(name: string, enabled: boolean, busy: boolean): void {
+      const row = pluginList.querySelector<HTMLElement>(`[data-row="${name}"]`);
+      const box = row?.querySelector<HTMLButtonElement>(".switch");
+      if (!row || !box) {
+        return;
+      }
+      row.classList.toggle("is-off", !enabled);
+      box.setAttribute("aria-checked", enabled ? "true" : "false");
+      box.disabled = busy;
     }
 
     /** 插件卡跟着当前管理的环境走；换环境才拉一次清单。 */
@@ -2372,6 +2473,8 @@ async function main(): Promise<void> {
         pluginItems = list;
         pluginLoaded = true;
         renderPluginList();
+        // 徽章的计数与列表同口径：清单回来要把「正在读取…」换成真实数字。
+        renderPluginSummary();
       } catch (err) {
         if (prefs.profile === name) {
           setPluginNote(`读取插件清单失败：${String(err)}`);
@@ -2380,7 +2483,8 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 开关一个插件。
+     * 开关一个插件的**总开关**（不是它内部的某个子项：后端会把该插件挂在补丁层里的
+     * 全部挂载点一起翻过来）。
      *
      * 后端在写文件前会自己先备份一次补丁层，成功时把备份路径与刷新后的清单一起带回来；
      * 关掉桥接插件时还会带一句「登录链接只能靠日志兜底」的提醒。
@@ -2393,7 +2497,10 @@ async function main(): Promise<void> {
       pluginBusy = true;
       setPluginNote(null);
       setPluginWarning(null);
-      syncPluginPanel();
+      // 乐观更新：先把被点的这一行拨过去并锁住它，等后端回话再对齐。
+      // 这里刻意不重建整张列表——重建会让开关闪一下，面板的滚动位置也会丢。
+      paintPluginRow(name, enabled, true);
+      let ok = false;
       try {
         const outcome = await invoke<ToggleOutcome>("plugin_toggle", {
           config: collectConfig(),
@@ -2403,23 +2510,36 @@ async function main(): Promise<void> {
         });
         pluginItems = outcome.items;
         pluginLoaded = true;
+        pluginLoadedFor = target;
         setPluginWarning(outcome.warning);
         setPluginNote(
           enabled
-            ? `已打开「${name}」，重启 DSH 后生效。`
-            : `已关闭「${name}」，重启 DSH 后生效；重新打开不需要重新下载。`,
+            ? `已打开「${name}」的总开关，重启 DSH 后生效。`
+            : `已关闭「${name}」的总开关，重启 DSH 后生效；重新打开不需要重新下载。`,
         );
         logAction(outcome.message);
         // 开关前刚自动备份过，备份清单跟着刷新一次，免得用户还要再点一下才能看到。
         patchLoadedFor = null;
+        ok = true;
       } catch (err) {
         setPluginNote(`切换插件开关失败：${String(err)}`);
         logAction(`切换插件开关失败：${String(err)}`);
-        // 失败时那个复选框已经跟着鼠标点过去了，重拉一次清单把它掰回真实状态。
+        // 失败时开关已经被点过去了，先把它拨回真实状态，再让下面重铺一次与后端对齐。
+        paintPluginRow(name, !enabled, false);
         pluginLoadedFor = null;
       } finally {
         pluginBusy = false;
-        syncPluginPanel();
+        if (ok) {
+          // 用后端回来的真实状态收尾（个别插件可能写不进去，回的清单才是准的）。
+          const item = pluginItems.find((entry) => entry.name === name);
+          if (item) {
+            paintPluginRow(name, item.enabled, false);
+          } else {
+            renderPluginList();
+          }
+        } else {
+          renderPluginList();
+        }
         renderPluginSummary();
       }
     }
@@ -2861,9 +2981,8 @@ async function main(): Promise<void> {
       runtime = launch.runtime ?? { kind: "default" };
       syncRuntimePickers();
       if (launch.mode.kind === "npx") {
-        npxChannelPicker.setValue(launch.mode.channel ?? "latest");
-        // 具体版本要等版本列表回来再回填，否则会被 setChoices 退回第一项。
-        pendingVersion = launch.mode.version ?? null;
+        // 版本是唯一真源：候选还没读回来也先记着，loadRegistry 会按它把下拉选回去。
+        selectedVersion = launch.mode.version ?? null;
       }
       extraInput.value = launch.extraArgs.join(" ");
       if (launch.port !== null && launch.port !== undefined) {
@@ -2875,7 +2994,7 @@ async function main(): Promise<void> {
       lightDelayPicker.setValue(LIGHT_DELAY_CHOICES.some((choice) => choice.value === lightDelay) ? lightDelay : "0");
       syncModeFields();
       renderPortHint();
-      renderChannelUI();
+      renderVersionUI();
       // 下载源与代理：读回来的值可能不是界面上的默认项，回填下拉、地址框与摘要。
       downloadSourcePicker.setValue(prefs.downloadSource);
       proxyModePicker.setValue(prefs.proxyMode);

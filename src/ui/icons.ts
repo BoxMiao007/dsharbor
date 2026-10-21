@@ -65,8 +65,19 @@ export const ICON_DSH_SITE = `<img src="${iconDs}" alt="" draggable="false" />`;
  */
 export const ICON_GITHUB = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" stroke="none" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z" /></svg>`;
 /** 环境大按钮后面的横向三点：展开重命名 / 复制 / 删除 / 安装依赖 / 打开目录。
-    横排而非竖排：竖排三点在窄卡片右上角会被读成「拖拽把手」。 */
-export const ICON_MORE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>`;
+    横排而非竖排：竖排三点在窄卡片右上角会被读成「拖拽把手」。
+    实心（fill 由 80-env-cards.css 给 currentColor）：空心环在 15px 下只剩一圈细线，
+    与旁边实心的加号、开关圆头不像同一套图标。 */
+export const ICON_MORE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>`;
+
+/** 版本列表右侧方钮：一圈带箭头的回转，配「重新获取官方版本列表」气泡。 */
+export const ICON_REFRESH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1" /><path d="M20.5 4.4V10H15" /></svg>`;
+
+/** 「指定程序路径」方钮里的文件夹：点开系统「打开文件」框。 */
+export const ICON_FOLDER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7a2 2 0 0 1 2-2h3.4l1.9 2.4H18.8a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z" /></svg>`;
+
+/** 端口「还原」方钮：向左回转的箭头（与版本列表的刷新图标区分开，两颗不重样）。 */
+export const ICON_REVERT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 9.2h11.6a4.6 4.6 0 0 1 0 9.2H9" /><path d="m8.6 4.6-4.4 4.6 4.4 4.6" /></svg>`;
 /** 浮窗右上角的关闭叉（比三颗窗口按钮的 ICON_CLOSE 大一圈，用 24 视框）。 */
 export const ICON_MODAL_CLOSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" /></svg>`;
 /** 打开方式两段式按钮右侧那颗小三角。 */

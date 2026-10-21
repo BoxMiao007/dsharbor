@@ -8,12 +8,16 @@
 //! set cache` 或 `.npmrc` 改过（换到大盘、放进项目目录）。写死会让「占用」显示 0 而实际
 //! 有一堆目录没管，也会把清理按钮做成假的。问不到时才退回平台默认位置，并在界面上说明。
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, UNIX_EPOCH};
 
-use dsharbor_core::launch::LaunchConfig;
+use dsharbor_core::launch::{self, LaunchConfig, Runtime};
 use dsharbor_core::npx_cache;
 use serde::Serialize;
+
+use crate::launcher::{apply_no_window, spawn_line_reader};
 
 /// `npm config get cache` 正常几十毫秒；npx 冷启动时会先在壳里跑一次，给足余量。
 const NPM_TIMEOUT: Duration = Duration::from_secs(30);
@@ -456,6 +460,268 @@ fn describe_io_error(err: &std::io::Error) -> String {
     text
 }
 
+/// npx 缓存里已经缓存过的本包版本号（界面的「已缓存」徽章）。
+///
+/// 为什么要有这个：选版本下拉列的是 npm 上的全部版本，但哪些版本不用等下载
+/// 只有本地知道——`_npx/<hash>` 目录就是 npx 按 spec 下载下来的那份依赖。
+///
+/// 只在 Windows 宿主上扫：非 Windows 宿主上 npx 缓存盘面本来就不支持
+/// （同 `scan`），这里返回空列表而不是报错——「一个都没缓存」是能算出来的
+/// 诚实答案，界面也不必为此分平台。
+pub fn cached_versions(runtime: &Runtime) -> Result<Vec<String>, String> {
+    if !cfg!(windows) {
+        return Ok(Vec::new());
+    }
+    let entries = match runtime {
+        Runtime::Default => host_entries()?,
+        Runtime::Wsl { distro } => wsl_entries(distro)?,
+    };
+    Ok(npx_cache::cached_versions(entries.iter().map(
+        |(resolved, specs)| (resolved.as_deref(), specs.as_slice()),
+    )))
+}
+
+/// 一份 `_npx` 目录读出来的 `(解析到的版本, manifest 里的 spec 列表)`。
+type CacheEntry = (Option<String>, Vec<String>);
+
+/// 宿主 npm 缓存里每份 `_npx` 目录的 `(解析到的版本, manifest 里的 spec 列表)`。
+///
+/// 顺序固定：先读 `node_modules/@deepseek-ai/dsh/package.json` 的 version（真实解析到
+/// 的那一版），读不到才退回目录 manifest 的 `_npx.packages` 后缀。反过来的话，
+/// 老目录 manifest 里记着的 spec（比如装完后又被换过版本）会盖掉真正在盘上的版本。
+fn host_entries() -> Result<Vec<CacheEntry>, String> {
+    let resolution = resolve_root();
+    let root = resolution.root.ok_or_else(|| {
+        format!(
+            "找不到 npm 缓存目录：{}",
+            resolution
+                .warning
+                .unwrap_or_else(|| "npm 没有给出缓存位置".to_string())
+        )
+    })?;
+    let npx_dir = root.join(npx_cache::NPX_DIR_NAME);
+    if !npx_dir.is_dir() {
+        // 还没跑过 npx：这就是「一个版本都没缓存」，不是错误。
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    let listing = std::fs::read_dir(&npx_dir)
+        .map_err(|err| format!("读取 npx 缓存目录失败（{}）：{err}", npx_dir.display()))?;
+    for item in listing.flatten() {
+        let path = item.path();
+        // 与扫缓存占用同一套口径：只认真目录，符号链接 / junction 跳过。
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        entries.push(entry_of(&path));
+    }
+    Ok(entries)
+}
+
+/// 一份缓存目录的两个版本来源（都读不到就是 `(None, 空)`，由核心库判为「不是我们的」）。
+fn entry_of(dir: &Path) -> (Option<String>, Vec<String>) {
+    let resolved = read_version_file(
+        &dir.join("node_modules")
+            .join(launch::NPX_PACKAGE)
+            .join("package.json"),
+    );
+    let specs = read_manifest(&dir.join("package.json")).packages;
+    (resolved, specs)
+}
+
+/// 读某个包的 `package.json` 取 `version` 字段；读不到 / 写坏都返回 None。
+fn read_version_file(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value.get("version")?.as_str().map(str::to_string)
+}
+
+/// 在发行版内部扫同一套东西：`bash -s` 从 stdin 读脚本，输出一段 JSON。
+///
+/// 为什么不照 `registry::build_command` 那样把整条命令塞进单个 argv：那个脚本只有
+/// `npm view …` 这一行固定字面量，而这支脚本要嵌进缓存根与包名——wsl.exe 会吃掉
+/// argv 里的引号，再在外面裹一层引号就是注入面。改成把脚本写进子进程的 stdin
+/// （`bash -s`），argv 里只剩 `bash -s` 两个固定字面量，含空格和引号的路径也安全。
+fn wsl_entries(distro: &str) -> Result<Vec<CacheEntry>, String> {
+    let mut command = Command::new("wsl.exe");
+    command.args(["-d", distro, "--"]);
+    // PATH 用发行版里的干净 PATH：Windows 的 PATH 混进去会让 node 找不到依赖。
+    match crate::wsl::clean_path(distro) {
+        Ok(path) => {
+            command.arg("env");
+            command.arg(format!("PATH={path}"));
+        }
+        Err(err) => eprintln!("[dsharbor] 读取 WSL PATH 失败，直接执行：{err}"),
+    }
+    command.args(["bash", "-s"]);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_no_window(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("在 WSL 发行版 {distro} 里执行失败：{err}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(wsl_script().as_bytes())
+            .map_err(|err| format!("把扫描脚本送进 WSL 发行版 {distro} 失败：{err}"))?;
+    }
+    // 关掉 stdin：`bash -s` 读到 EOF 才会结束。
+    drop(child.stdin.take());
+
+    let buffer = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let push = {
+        let buffer = buffer.clone();
+        move |line: String| {
+            if let Ok(mut guard) = buffer.lock() {
+                guard.push_str(&line);
+                guard.push('\n');
+            }
+        }
+    };
+    if let Some(stdout) = child.stdout.take() {
+        spawn_line_reader(stdout, push.clone());
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_line_reader(stderr, push);
+    }
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if started.elapsed() > NPM_TIMEOUT {
+                    let _ = child.kill();
+                    return Err(format!(
+                        "在 WSL 发行版 {distro} 里读取 npx 缓存超时（{} 秒未结束）",
+                        NPM_TIMEOUT.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(120));
+            }
+            Err(err) => return Err(format!("等待 WSL 命令结束失败：{err}")),
+        }
+    };
+    // 输出线程还在处理管道里最后几行，稍等片刻再取结果。
+    std::thread::sleep(Duration::from_millis(150));
+    let text = buffer.lock().map(|guard| guard.clone()).unwrap_or_default();
+    if !status.success() {
+        return Err(format!(
+            "在 WSL 发行版 {distro} 里读取 npx 缓存失败（退出码 {}）：{}",
+            status.code().unwrap_or(-1),
+            text.trim()
+        ));
+    }
+    parse_wsl_entries(&text)
+}
+
+/// 解析 WSL 侧脚本吐出的 JSON（`{"specs":[…],"resolved":[…]}`，两个数组按下标对应）。
+fn parse_wsl_entries(text: &str) -> Result<Vec<CacheEntry>, String> {
+    // 发行版里的登录脚本可能先吐 MOTD，所以整段里找第一个 `{` 起的 JSON。
+    let start = text.find('{').ok_or_else(|| {
+        format!(
+            "WSL 里没有返回缓存清单（输出：{}）",
+            text.trim().chars().take(200).collect::<String>()
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(text[start..].trim()).map_err(|err| {
+        format!(
+            "WSL 返回的缓存清单不是合法 JSON（{err}）：{}",
+            text.trim().chars().take(200).collect::<String>()
+        )
+    })?;
+    let strings = |key: &str| -> Vec<String> {
+        value
+            .get(key)
+            .and_then(|item| item.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| item.as_str().unwrap_or_default().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let specs = strings("specs");
+    let resolved = strings("resolved");
+    // 两个数组按下标对应：脚本对每个目录都写一项（读不到就是空串），
+    // 所以长度对不上说明输出被截断了，这时宁可不报「已缓存」也别错位。
+    if specs.len() != resolved.len() {
+        return Err(format!(
+            "WSL 返回的缓存清单不完整（spec {} 条 / 解析结果 {} 条）",
+            specs.len(),
+            resolved.len()
+        ));
+    }
+    Ok(specs
+        .into_iter()
+        .zip(resolved)
+        .map(|(spec, resolved)| {
+            let resolved = if resolved.is_empty() {
+                None
+            } else {
+                Some(resolved)
+            };
+            let specs = if spec.is_empty() {
+                Vec::new()
+            } else {
+                vec![spec]
+            };
+            (resolved, specs)
+        })
+        .collect())
+}
+
+/// 在发行版里扫 `_npx` 的脚本：打印 `{specs, resolved}`。
+///
+/// 为什么用 node 而不是用 shell 拼 grep/sed：`package.json` 是 JSON，用 shell
+/// 正则去抠字段会在转义上出错；node 本来就在 npm 的环境里，一定可用。
+/// 脚本里单引号只出现在 `'utf8'`、`'./'` 这类固定字面量上，拼进 Rust 的字符串
+/// 不含任何插值，路径与包名都写死在字面量里。
+///
+/// 占位符用 `replace` 而不是 `format!`：下面这段 JS 里遍布 `{` `}`，逐个写成
+/// `{{` `}}` 既难读又容易漏（漏一个要么编译不过，要么被 `format!` 当插值吃掉）。
+fn wsl_script() -> String {
+    const TEMPLATE: &str = r#"ROOT="$(npm config get cache 2>/dev/null)"
+if [ -z "$ROOT" ]; then echo "npm 没有输出缓存路径" >&2; exit 3; fi
+if [ ! -d "$ROOT/__NPX_DIR__" ]; then printf '{"specs":[],"resolved":[]}'; exit 0; fi
+cd "$ROOT/__NPX_DIR__" || exit 4
+exec node -e '
+const fs = require("fs");
+const path = require("path");
+const specs = [];
+const resolved = [];
+for (const name of fs.readdirSync(".")) {
+  let stat;
+  try { stat = fs.lstatSync(name); } catch (err) { continue; }
+  if (!stat.isDirectory()) continue;
+  const manifest = path.join(name, "package.json");
+  let entries = [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifest, "utf8"));
+    if (parsed && parsed._npx && Array.isArray(parsed._npx.packages)) entries = parsed._npx.packages;
+  } catch (err) { entries = []; }
+  let version = "";
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(name, "node_modules", "__PACKAGE__", "package.json"), "utf8")).version || "";
+  } catch (err) { version = ""; }
+  for (const entry of entries) {
+    specs.push(typeof entry === "string" ? entry : "");
+    resolved.push(version);
+  }
+}
+process.stdout.write(JSON.stringify({ specs, resolved }));
+'
+"#;
+    TEMPLATE
+        .replace("__NPX_DIR__", npx_cache::NPX_DIR_NAME)
+        .replace("__PACKAGE__", launch::NPX_PACKAGE)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,7 +751,7 @@ mod tests {
 
     // ---- 用临时目录跑整条链路（扫 → 清 → 再扫） ----
 
-    use dsharbor_core::launch::{Channel, LaunchMode, Runtime};
+    use dsharbor_core::launch::{LaunchMode, Runtime};
 
     fn temp_root(tag: &str) -> PathBuf {
         let root =
@@ -493,6 +759,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("_npx")).unwrap();
         root
+    }
+
+    /// 在 `_npx` 下造一条「缓存过的本包版本」：目录 manifest 记 spec，
+    /// `resolved` 有值时再写一份 `node_modules/@deepseek-ai/dsh/package.json`。
+    fn make_cached(root: &Path, name: &str, spec: &str, resolved: Option<&str>) {
+        let dir = root.join("_npx").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            serde_json::json!({ "_npx": { "packages": [spec] } }).to_string(),
+        )
+        .unwrap();
+        if let Some(version) = resolved {
+            let package = dir.join("node_modules").join("@deepseek-ai").join("dsh");
+            std::fs::create_dir_all(&package).unwrap();
+            std::fs::write(
+                package.join("package.json"),
+                serde_json::json!({ "name": "@deepseek-ai/dsh", "version": version }).to_string(),
+            )
+            .unwrap();
+        }
     }
 
     /// 在 `_npx` 下造一份缓存目录（`packages` 写进 `_npx.packages`，`size` 字节的填充文件）。
@@ -514,10 +801,7 @@ mod tests {
 
     fn npx_latest() -> LaunchConfig {
         LaunchConfig {
-            mode: LaunchMode::Npx {
-                channel: Channel::Latest,
-                version: None,
-            },
+            mode: LaunchMode::Npx { version: None },
             runtime: Runtime::Default,
             extra_args: Vec::new(),
             port: None,
@@ -659,5 +943,100 @@ mod tests {
         // 不存在的路径算 0，不 panic。
         assert_eq!(dir_bytes(&root.join("nope")), 0);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- npx 缓存里已缓存的本包版本（界面「已缓存」徽章） ----
+
+    /// 用临时缓存根跑整条链路。
+    ///
+    /// 靠 `npm_config_cache` 把 `npm config get cache` 引到临时目录，而不是给
+    /// `resolve_root` 开后门：这样被测的还是真实的「问 npm → 扫目录」那条路。
+    /// 串行跑：`npm_config_cache` 是进程级环境变量，与别的用例并发会互相看见对方的根。
+    #[test]
+    #[cfg(windows)]
+    fn cached_versions_lists_only_our_own_resolved_versions() {
+        let root = temp_root("cached-versions");
+        make_cached(&root, "auto-latest", "@deepseek-ai/dsh", Some("0.2.0"));
+        make_cached(
+            &root,
+            "pinned-old",
+            "@deepseek-ai/dsh@0.2.1-rc.2",
+            Some("0.2.1-rc.2"),
+        );
+        // spec 与真正解析到的版本不一致：按盘上那份算（0.3.0），不按 spec。
+        make_cached(
+            &root,
+            "resolved-wins",
+            "@deepseek-ai/dsh@0.2.1-rc.2",
+            Some("0.3.0"),
+        );
+        // 只有 manifest 没有解析结果：退回 spec 后缀。
+        make_cached(&root, "spec-only", "@deepseek-ai/dsh@0.1.9", None);
+        // 别人的包、只有 dist-tag 的目录，都不算「本包已缓存」。
+        make_cached(&root, "other-package", "lodash@4.17.21", Some("4.17.21"));
+        make_cached(&root, "tag-only", "@deepseek-ai/dsh@next", None);
+        // 半成品目录（npx 正在跑的时候常见）：不能让它把整条命令搞崩。
+        std::fs::create_dir_all(root.join("_npx").join("half-baked")).unwrap();
+
+        let previous = std::env::var("npm_config_cache").ok();
+        std::env::set_var("npm_config_cache", &root);
+        let versions = cached_versions(&Runtime::Default);
+        match previous {
+            Some(value) => std::env::set_var("npm_config_cache", value),
+            None => std::env::remove_var("npm_config_cache"),
+        }
+
+        assert_eq!(
+            versions.unwrap(),
+            vec!["0.3.0", "0.2.1-rc.2", "0.2.0", "0.1.9"],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cached_versions_is_empty_when_nothing_was_ever_cached() {
+        let root = temp_root("cached-empty");
+        // `_npx` 在但没有本包目录：空列表，不是错误。
+        make_cached(&root, "other-package", "lodash@4.17.21", None);
+        let previous = std::env::var("npm_config_cache").ok();
+        std::env::set_var("npm_config_cache", &root);
+        let versions = cached_versions(&Runtime::Default);
+        match previous {
+            Some(value) => std::env::set_var("npm_config_cache", value),
+            None => std::env::remove_var("npm_config_cache"),
+        }
+        assert!(versions.unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn wsl_output_is_parsed_into_spec_and_resolved_pairs() {
+        let json = r#"{"specs":["@deepseek-ai/dsh@0.2.1-rc.2","@deepseek-ai/dsh"],"resolved":["0.2.1-rc.2",""]}"#;
+        let entries = parse_wsl_entries(json).unwrap();
+        assert_eq!(
+            entries,
+            vec![
+                (
+                    Some("0.2.1-rc.2".to_string()),
+                    vec!["@deepseek-ai/dsh@0.2.1-rc.2".to_string()]
+                ),
+                (None, vec!["@deepseek-ai/dsh".to_string()]),
+            ]
+        );
+        // 登录脚本先吐 MOTD 时，只用第一个 `{` 起的 JSON。
+        let noisy = format!("Welcome to Ubuntu\n{json}\n");
+        assert_eq!(parse_wsl_entries(&noisy).unwrap(), entries);
+    }
+
+    #[test]
+    fn broken_wsl_output_says_what_went_wrong_instead_of_reporting_versions() {
+        let truncated = r#"{"specs":["@deepseek-ai/dsh@0.2.1-rc.2"],"resolved":[]}"#;
+        let err = parse_wsl_entries(truncated).unwrap_err();
+        assert!(err.contains("不完整"), "{err}");
+        let err = parse_wsl_entries("没有任何 JSON").unwrap_err();
+        assert!(err.contains("没有返回缓存清单"), "{err}");
+        let err = parse_wsl_entries("{ not json").unwrap_err();
+        assert!(err.contains("不是合法 JSON"), "{err}");
     }
 }

@@ -2,13 +2,27 @@
 
 import { escapeHtml } from "./markup";
 
+/** 行内小徽章：显示在选项文字右边（「最新 / 已装 / 已缓存 / 手动」）。 */
+export interface PickerBadge {
+  text: string;
+  /** 只决定配色，与语义绑死，不跟具体文案走。 */
+  tone: "latest" | "installed" | "cached" | "manual";
+}
+
 export interface PickerChoice {
   value: string;
   label: string;
-  /** 行首的彩色圆点（渠道用），值同时是 CSS 类名后缀。 */
+  /** 行首的彩色圆点，值同时是 CSS 类名后缀。 */
   dot?: string;
   /** 占位提示项（如「正在读取…」）：可见但点不动，键盘也会跳过。 */
   disabled?: boolean;
+  /** 行尾小徽章，按数组顺序排（调用方保证顺序固定，避免同一行两次渲染看起来不一样）。 */
+  badges?: PickerBadge[];
+  /**
+   * 动作行（如列表末尾的「更多…」）：点一下执行这里的事，**不改选中值也不收起弹层**。
+   * 「更多」要能被反复点，收起弹层就等于每次都得重新展开一遍。
+   */
+  action?: () => void;
 }
 
 /**
@@ -26,6 +40,11 @@ export class Picker {
   private activeIndex = -1;
   private readonly onChange: (value: string) => void;
   private readonly onDocumentPointerDown: (event: PointerEvent) => void;
+  /**
+   * 每次展开弹层前调一次。版本下拉用它现扫一遍 npx 缓存，好把「已缓存」徽章
+   * 挂到正确的行上；回调是异步的，扫完自己调 `relayout()` 让新徽章落到界面里。
+   */
+  onOpen: (() => void) | null = null;
 
   constructor(rootId: string, onChange: (value: string) => void) {
     this.onChange = onChange;
@@ -82,7 +101,7 @@ export class Picker {
   private renderLabel(): void {
     const current = this.choices.find((choice) => choice.value === this.selected);
     this.label.innerHTML = current
-      ? `${Picker.dotHtml(current)}<span class="picker-label-text">${escapeHtml(current.label)}</span>`
+      ? `${Picker.dotHtml(current)}<span class="picker-label-text">${escapeHtml(current.label)}</span>${Picker.badgesHtml(current, true)}`
       : "（未选择）";
   }
 
@@ -91,11 +110,24 @@ export class Picker {
     return choice.dot ? `<span class="picker-dot picker-dot-${choice.dot}"></span>` : "";
   }
 
+  /** 行尾小徽章。`compact` 是收起状态（按钮里那一行），只留一枚，免得框内挤成一团。 */
+  private static badgesHtml(choice: PickerChoice, compact = false): string {
+    const badges = choice.badges ?? [];
+    const shown = compact ? badges.slice(0, 1) : badges;
+    return shown
+      .map(
+        (badge) =>
+          `<span class="picker-badge picker-badge-${badge.tone}">${escapeHtml(badge.text)}</span>`,
+      )
+      .join("");
+  }
+
   private renderOptions(): void {
     this.list.innerHTML = this.choices
       .map((choice, index) => {
         const selected = choice.value === this.selected;
-        return `<li class="picker-option${index === this.activeIndex ? " active" : ""}${choice.disabled ? " disabled" : ""}" role="option" data-index="${index}" aria-selected="${selected}" aria-disabled="${choice.disabled === true}"><span class="tick">${selected ? "✓" : ""}</span>${Picker.dotHtml(choice)}<span class="text">${escapeHtml(choice.label)}</span></li>`;
+        const isAction = choice.action !== undefined;
+        return `<li class="picker-option${index === this.activeIndex ? " active" : ""}${choice.disabled ? " disabled" : ""}${isAction ? " is-action" : ""}" role="option" data-index="${index}" aria-selected="${selected}" aria-disabled="${choice.disabled === true}"><span class="tick">${selected ? "✓" : ""}</span>${Picker.dotHtml(choice)}<span class="text">${escapeHtml(choice.label)}</span>${Picker.badgesHtml(choice)}</li>`;
       })
       .join("");
     for (const option of Array.from(this.list.querySelectorAll<HTMLElement>(".picker-option"))) {
@@ -123,20 +155,24 @@ export class Picker {
     this.renderOptions();
     this.list.classList.remove("hidden");
     this.button.setAttribute("aria-expanded", "true");
-    // 绝对定位的弹层会把文档净高撑大，页面跟着上下跳（维护者要求下拉框展开不得撑大界面）：
-    // 下方空间不够就向上翻转，并把高度压到翻转方向能放下的范围里，保证弹层始终在视口内。
-    // 界面改版后面板本身是滚动容器（.panel { overflow-y: auto }），会比视口先剪掉弹层，
-    // 所以可用空间要跟裁剪祖先取交集，不能只看窗口高度。
-    const rect = this.button.getBoundingClientRect();
-    const bounds = this.clipBounds();
-    const gap = 6;
-    const below = bounds.bottom - rect.bottom - gap - 8;
-    const above = rect.top - bounds.top - gap - 8;
-    const wanted = Math.min(this.list.scrollHeight, 260);
-    const flipUp = below < wanted && above > below;
-    this.list.classList.toggle("up", flipUp);
-    this.list.style.maxHeight = `${Math.max(120, Math.round(Math.min(wanted, flipUp ? above : below)))}px`;
-    this.list.querySelector<HTMLElement>('.picker-option[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    this.applyGeometry(true);
+    this.onOpen?.();
+  }
+
+  /**
+   * 候选变了以后重新铺一遍弹层（点过「更多…」、缓存徽章扫回来都走这里）。
+   * 必须重算高度：旧的 max-height 是按旧行数算的，多出来的行会被直接裁掉。
+   */
+  relayout(): void {
+    if (!this.isOpen()) {
+      return;
+    }
+    // 重铺 innerHTML 会把弹层的滚动位置打回顶部：点「更多…」时刚加的行、缓存徽章扫回来时
+    // 正在看的那几行都会跳走，所以先记下来再放回去。
+    const scrollTop = this.list.scrollTop;
+    this.renderOptions();
+    this.applyGeometry(false);
+    this.list.scrollTop = scrollTop;
   }
 
   /** 弹层能占的上下边界：视口，再与最近的滚动/隐藏祖先求交。 */
@@ -155,6 +191,29 @@ export class Picker {
     return { top, bottom };
   }
 
+  /** 量一次可用空间并钉死弹层几何；`scrollToSelected` 只在刚展开时为真。 */
+  private applyGeometry(scrollToSelected: boolean): void {
+    // 绝对定位的弹层会把文档净高撑大，页面跟着上下跳（维护者要求下拉框展开不得撑大界面）：
+    // 下方空间不够就向上翻转，并把高度压到翻转方向能放下的范围里，保证弹层始终在视口内。
+    // 界面改版后面板本身是滚动容器（.panel { overflow-y: auto }），会比视口先剪掉弹层，
+    // 所以可用空间要跟裁剪祖先取交集，不能只看窗口高度。
+    const rect = this.button.getBoundingClientRect();
+    const bounds = this.clipBounds();
+    const gap = 6;
+    const below = bounds.bottom - rect.bottom - gap - 8;
+    const above = rect.top - bounds.top - gap - 8;
+    const wanted = Math.min(this.list.scrollHeight, 260);
+    const flipUp = below < wanted && above > below;
+    this.list.classList.toggle("up", flipUp);
+    this.list.style.maxHeight = `${Math.max(120, Math.round(Math.min(wanted, flipUp ? above : below)))}px`;
+    if (scrollToSelected) {
+      // 「更多…」是就地加行，这时候再把列表滚回当前值，用户刚点的那一行会跳走。
+      this.list
+        .querySelector<HTMLElement>('.picker-option[aria-selected="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  }
+
   private close(): void {
     this.list.classList.add("hidden");
     this.button.setAttribute("aria-expanded", "false");
@@ -164,6 +223,11 @@ export class Picker {
   private commit(index: number): void {
     const choice = this.choices[index];
     if (!choice || choice.disabled) {
+      return;
+    }
+    // 动作行（「更多…」）：只做事，不动选中值也不收弹层——收起就得重新展开一遍才能接着点。
+    if (choice.action) {
+      choice.action();
       return;
     }
     const changed = choice.value !== this.selected;

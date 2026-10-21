@@ -137,40 +137,47 @@ button.primary:hover:not(:disabled) {
   transform: scale(0.8);
 }
 
-/* 悬停漫过与「重启 DSH」点击后的持续转动（.is-restarting）共用同一组终态值：
-   图标板从左端漫过整颗按钮（宽度全开、分隔线消失、图标随板居中，时长
-   --btn-sweep-ms），文字被往右推出按钮外、被 overflow 裁掉（位移不是淡出）。
-   推出量 = 文字自身宽度 + 64px，连最宽的「重启 DSH」也完全滑出右缘。
-   :has(.btn-ico) 挡住「启动 DSH」停止态（.swap 形态无图标板，文字走逐字切换）。 */
-.actions-primary button:is(:hover:not(:disabled), .is-restarting):has(.btn-ico) .btn-ico {
-  width: 100%;
-  border-right-color: transparent;
+/* 悬停漫过那一套（图标板漫过整颗按钮 + 文字被往右推出）随「停止 / 重启 DSH」改成
+   圆形图标钮一起删掉了：圆钮里没有文字段，没有可漫过的东西。图标自身的反馈还在——
+   停止是实心/空心闪动、重启是转一圈，见下面两颗圆钮各自的规则。 */
+
+/* 圆形图标钮：直径 = 按钮高度（--btn-h = 34px），纯图标、圆形底色，没有文字段。
+   「停止」只在运行态是圆钮（停止态仍是 .swap 逐字切换的长条），「重启 DSH」出场即圆钮。
+   用 ID 选择器：普通元素选择器与 :where() 都压不过 button 的 padding 简写。 */
+#btn-toggle.round,
+#btn-restart {
+  display: grid;
+  place-items: center;
+  width: var(--btn-h);
+  min-width: var(--btn-h);
+  padding: 0;
+  border-radius: 50%;
 }
 
-.actions-primary button:is(:hover:not(:disabled), .is-restarting):has(.btn-ico) .btn-text {
-  transform: translateX(calc(100% + 64px));
+#btn-toggle.round svg,
+#btn-restart svg {
+  width: 18px;
+  height: 18px;
 }
 
-/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 = 一轮时长 − 提前起势量
-   （500ms − 200ms = 300ms）；一次性动画，结束位 = 静止位
-   （360deg），不会在退出悬停时跳变。点击后进入持续转动（.is-restarting）时交给下面那套规则，
-   这里排除掉，免得两套 animation 抢同一个属性。 */
-@keyframes btn-restart-spin {
-  to {
-    transform: rotate(360deg);
-  }
+/* 「停止」图标是实心方块：圆钮底色是亮的红，图标走 currentColor（白）。 */
+#btn-toggle.round svg {
+  fill: currentColor;
+  stroke: none;
 }
 
-#btn-restart:hover:not(:disabled):not(.is-restarting) .btn-ico svg {
-  animation: btn-restart-spin var(--btn-sweep-ms) ease
-    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
+#btn-restart svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--btn-hl-ms);
 }
 
-/* 「停止」图标：实心方块（维护者要求），悬停时在实心与空心之间闪动一次——
-   与「重启 DSH」的旋转同节奏（时长与延迟同用 :root 动效变量）。fill 不是可插值属性，
-   按离散步进切换：实心 → 50% 处变空心 → 结束变回实心，看上去就是一次来回闪动；
-   结束位 = 实心常态，不跳变。延迟同旋转（一轮动画前提前起势）。
-   只作用于运行态「停止」（带图标段）；「启动 DSH」停止态没有图标段，不受影响。 */
+/* 「停止」图标：悬停时在实心与空心之间闪动一次——与「重启 DSH」的旋转同节奏
+   （时长与延迟同用 :root 动效变量）。fill 不是可插值属性，按离散步进切换：
+   实心 → 50% 处变空心 → 结束变回实心，看上去就是一次来回闪动；结束位 = 实心常态，不跳变。 */
 @keyframes btn-stop-flash {
   0%,
   100% {
@@ -181,40 +188,48 @@ button.primary:hover:not(:disabled) {
   }
 }
 
-#btn-toggle:has(.btn-ico) .btn-ico svg {
-  fill: currentColor;
-}
-
-#btn-toggle:has(.btn-ico):hover:not(:disabled) .btn-ico svg {
+#btn-toggle.round:hover:not(:disabled) svg {
   animation: btn-stop-flash var(--btn-sweep-ms) ease
     calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
 }
 
-/* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁在悬停终态——
-   与鼠标是否还停在按钮上无关——图标按 --spin-ms 无限转，与「启动中」徽章的加载圈同速。
-   锁定的终态值就是上面悬停那组合并后的规则（:is(:hover, .is-restarting)），只此一份。
+/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 = 一轮时长 − 提前起势量
+   （500ms − 200ms = 300ms）；一次性动画，结束位 = 静止位（360deg），退出悬停时不跳变。
+   点击后进入持续转动（.is-restarting）交给下面那套规则，这里排除掉，免得两套 animation
+   抢同一个属性。 */
+@keyframes btn-restart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#btn-restart:hover:not(:disabled):not(.is-restarting) svg {
+  animation: btn-restart-spin var(--btn-sweep-ms) ease
+    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
+}
+
+/* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁上，与鼠标是否
+   还停在按钮上无关——图标按 --spin-ms 无限转，与「启动中」徽章的加载圈同速。
    什么时候收工由 src/main.ts 定（徽章离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
-   收工后这里的类一去掉就交回悬停规则。
-   类名在重建界面（切主题）后会由 render 重新贴上，转动跨重建连续。 */
-#btn-restart.is-restarting .btn-ico svg {
+   收工后这里的类一去掉就交回悬停规则。 */
+#btn-restart.is-restarting svg {
   animation: btn-restart-spin var(--spin-ms) linear infinite;
 }
 
 /* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
-   停止 = 红底白字（#e62222，2026-10-17 晚从 #ff0000 调整），重启 = 黄底深字——黄底白字对比度只有约 1.9:1，读不清。
-   分隔线用深一档的同底色，让右端的图标分段落在这两颗亮色按钮上。
+   停止 = 红底白图标（#e62222，2026-10-17 晚从 #ff0000 调整），重启 = 黄底深图标——
+   黄底白图标对比度只有约 1.9:1，读不清。
    悬停 = 高亮加回（维护者要求）：停止提亮到 #ff3636（Uiverse 参考的高亮红），
    重启用 brightness 轻提亮（两套主题通用，不硬编码色值）。 */
 
-/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、.swap 逐字切换形态，无图标段）。 */
-#btn-toggle:has(.btn-ico) {
+/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、.swap 逐字切换形态）。 */
+#btn-toggle.round {
   background: #e62222;
   border-color: #e62222;
   color: #fff;
-  --btn-ico-line: rgba(0, 0, 0, 0.22);
 }
 
-#btn-toggle:has(.btn-ico):hover:not(:disabled) {
+#btn-toggle.round:hover:not(:disabled) {
   background: #ff3636;
   border-color: #ff3636;
 }
@@ -223,7 +238,6 @@ button.primary:hover:not(:disabled) {
   background: #f5ae51;
   border-color: #f5ae51;
   color: #1b2536;
-  --btn-ico-line: rgba(0, 0, 0, 0.18);
 }
 
 #btn-restart:hover:not(:disabled) {
@@ -429,25 +443,38 @@ button.primary:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 
-/* 端口「还原」按钮（原来是显示当前状态的徽章）：点一下清空端口输入框 = 回到
-   「跟随 DSH 配置」；框里本来就空时禁用（disabled 的半透明由通用 button:disabled 给）。
-   「指定程序路径」的「浏览…」共用这套小按钮外观。 */
-.port-reset,
-.path-browse {
+/* 方钮：正方形圆角、只放一枚图标，边长与工具条按钮同高（--btn-h = 34px）。
+   「指定程序路径」的浏览、「监听端口」的还原、「官方 npx 命令」的刷新版本列表共用这一套；
+   图标钮没有可见文字，名字与操作说明一律走 title + aria-label（与顶栏两颗圆钮同一个做法）。 */
+.square-btn {
   flex: none;
-  white-space: nowrap;
-  height: var(--badge-height);
-  padding: 0 var(--badge-padding-x);
-  border-radius: 999px;
-  font-size: var(--badge-font-size);
-  line-height: 1;
-  font-weight: 600;
+  display: grid;
+  place-items: center;
+  width: var(--btn-h);
+  min-width: var(--btn-h);
+  height: var(--btn-h);
+  padding: 0;
+  border-radius: 10px;
   color: var(--fg-dim);
 }
 
-.port-reset:hover:not(:disabled),
-.path-browse:hover:not(:disabled) {
+.square-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.square-btn:hover:not(:disabled) {
   color: var(--fg);
+}
+
+/* 正在重新获取版本列表时持续转圈：与「启动中」徽章、「重启 DSH」点击后同速（--spin-ms）。 */
+.square-btn.is-spinning svg {
+  animation: btn-restart-spin var(--spin-ms) linear infinite;
 }
 
 /* 「指定程序路径」行：输入框 + 「浏览…」按钮同一行。输入框在上方的 #binary-path
@@ -586,8 +613,10 @@ p.hint.error {
 }
 
 /* 输入框与自绘下拉框共用同一套外观（原生 select 的弹层由系统绘制、圆角管不到，
-   所以下拉框改成自绘：见下方 .picker） */
+   所以下拉框改成自绘：见下方 .picker）。
+   number 也走这一套：端口框唯一的区别是自带上下步进图标（见 .port-row 那一段）。 */
 input[type="text"],
+input[type="number"],
 .picker-btn {
   padding: 8px 10px;
   /* 圆角取官网输入控件的取值（--ds-radius-input: 10px）；下拉框与输入框一起改，
@@ -602,6 +631,7 @@ input[type="text"],
 }
 
 input[type="text"]:focus,
+input[type="number"]:focus,
 .picker-btn:focus-visible {
   outline: none;
   border-color: var(--accent);
@@ -610,7 +640,8 @@ input[type="text"]:focus,
 /* 短输入框固定 260px、左对齐（原来撑满整行）。260px 取自 .picker 里的最长选项
    「官方 npx 命令（首次较慢）」这类 13px 文字 + 内边距 + 箭头后的余量
    （候选 I 的 design/ui-candidates/i-native.html:100 用 min-width: 232px，这里放宽到 260px）。 */
-input[type="text"] {
+input[type="text"],
+input[type="number"] {
   width: 260px;
 }
 
@@ -635,10 +666,40 @@ input[type="text"] {
 }
 
 /* 端口框：放得下时固定 260px（和「附加参数」对齐），放不下时收窄。 */
-.port-row > input[type="text"] {
+.port-row > input[type="text"],
+.port-row > input[type="number"] {
   flex: 0 1 260px;
   width: 260px;
   min-width: 0;
+}
+
+/* 端口框的原生步进图标：只在鼠标悬停到框上（或键盘聚焦进框）时显形，平时整颗透明。
+   用 opacity 而不是 display —— 显隐不能让框里的可用宽度变化，否则文字会左右挪。
+   Chromium（WebView2 与预览用的 Edge）一直给这颗图标留着位置，正合适。 */
+.port-row input[type="number"]::-webkit-inner-spin-button,
+.port-row input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.port-row input[type="number"]:hover::-webkit-inner-spin-button,
+.port-row input[type="number"]:hover::-webkit-outer-spin-button,
+.port-row input[type="number"]:focus::-webkit-inner-spin-button,
+.port-row input[type="number"]:focus::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+/* 「官方 npx 命令」里的命令预览：标签在上、命令在下，与这一项其它字段同一套竖排。
+   它只属于这一项（别的启动方式不跑这条命令），所以跟着这一项的参数走。 */
+.preview-line {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 读不到版本列表时那行提示要像错误一样显眼（黄字），读得到时是普通灰字。 */
+.hint.is-warn {
+  color: var(--warn);
 }
 
 .hint {

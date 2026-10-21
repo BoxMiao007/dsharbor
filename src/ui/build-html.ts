@@ -1,8 +1,8 @@
 /* 整页静态骨架 buildHtml：由 AppInfo 渲染左栏与右栏全部初始 DOM（id 不变，绑定代码共用） —— 自 main.ts 原样搬出（2026-10 模块化拆分），声明加 export，其余未改。 */
 
-import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN } from "./icons";
+import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_FOLDER, ICON_REVERT } from "./icons";
 import type { AppInfo } from "./types";
-import { CUSTOM_DEFAULT_COMMAND, TOGGLE_TEXT_REST, npxCommandOf } from "./config";
+import { CUSTOM_DEFAULT_COMMAND, TOGGLE_TEXT_REST, TOOLTIP_RESTART, npxCommandOf } from "./config";
 import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, colHead, badgeLine } from "./markup";
 
 /** 版本徽章里的两个四角星图标（取自 DeepSeek Harness 官网，路径原样保留）。 */
@@ -88,7 +88,7 @@ export function buildHtml(info: AppInfo): string {
         <div class="actions actions-primary">
           <!-- 初始即停止态的逐字切换形态：首帧就用正确样式，等 render 前不会闪红底大字。 -->
           <button id="btn-toggle" class="primary swap" aria-label="${TOGGLE_TEXT_REST}">${toggleSwapHtml()}</button>
-          <button id="btn-restart" class="hidden"><span class="btn-text">重启 DSH</span><span class="btn-ico" aria-hidden="true">${ICON_RESTART}</span></button>
+          <button id="btn-restart" class="round hidden" type="button" title="${TOOLTIP_RESTART}" aria-label="${TOOLTIP_RESTART}">${ICON_RESTART}</button>
         </div>
         <div class="open-split">
           <button id="btn-open" class="btn-open" type="button" disabled>
@@ -150,11 +150,11 @@ export function buildHtml(info: AppInfo): string {
   // 插件管理卡：跟着「选中的环境」走。开关改的是补丁层里的禁用表达，不卸载插件包。
   const pluginBody = `
     ${colHead("插件", badgeLine("plugin-summary", "读取中…"))}
-    <p class="hint">开关改的是补丁层里的禁用表达，<b>不会卸载插件包</b>：关掉后重启 DSH 才不再加载它，重新打开也不需要重新下载。每次开关前会自动备份一份补丁层（每个环境保留最近 5 份）；改完要重启 DSH 才生效，所以操作前请先停止 DSH。</p>
+    <p class="hint">一行一个插件的<b>总开关</b>；开关改的是补丁层里的禁用表达，<b>不会卸载插件包</b>：关掉后重启 DSH 才不再加载它，重新打开也不需要重新下载。只列壳管得了的插件——官方内置的骨架包（没有可禁用的挂载点）与桥接插件（归「桥接插件」浮窗管）不在这里出现。每次开关前会自动备份一份补丁层（每个环境保留最近 5 份）；改完要重启 DSH 才生效，所以操作前请先停止 DSH。</p>
     <div id="profile-plugins" class="plugin-panel">
       <div id="plugin-list" class="plugin-list"></div>
       <div id="plugin-empty" class="plugin-empty hidden">
-        <p class="hint">这个环境还没有装任何插件。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
+        <p class="hint">这个环境还没有壳管得了的插件（官方内置骨架包与桥接插件不在列表里）。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
         <div class="actions">
           <button id="btn-plugin-deps" class="ghost">去安装依赖</button>
         </div>
@@ -272,13 +272,13 @@ export function buildHtml(info: AppInfo): string {
       <div id="npx-fields" class="fields hidden">
         <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行，桥接插件也装到那个发行版里。">!</span></span>
         <div class="picker" id="npx-runtime-picker"></div>
-        <span class="field-label">渠道 <span class="info-dot" role="img" tabindex="0" aria-label="渠道说明" data-tip="稳定版 / 最新尝鲜版对应 npm 的 latest / next 标签，右侧徽章显示标签当前指向的版本；尝鲜版历史版本 / 内测版是版本范围，需要再选一个具体版本。">!</span></span>
+        <span class="field-label">版本 <span class="info-dot" role="img" tabindex="0" aria-label="版本说明" data-tip="首项「自动最新版本」不带版本号，跟 npm 的 latest 标签走，官方发新版后自动用上；下面按新到旧列出官方发布过的版本，「更多…」每次再放 10 个。标「已缓存」的版本本机 npx 缓存里已经有了，选它启动不用重新下载。">!</span></span>
         <div class="control-line">
-          <div class="picker" id="npx-channel-picker"></div>
-          <span id="npx-channel-badge" class="badge badge-version"></span>
-          <div class="picker hidden" id="npx-version-picker"></div>
+          <div class="picker" id="npx-version-picker"></div>
+          <button type="button" id="npx-versions-refresh" class="square-btn" title="重新获取官方版本列表" aria-label="重新获取官方版本列表">${ICON_REFRESH}</button>
         </div>
         <div id="npx-versions-hint" class="hint hidden"></div>
+        <div class="preview-line"><span class="field-label">命令预览</span><code id="npx-command-preview" class="command-preview">${npxCommandOf(null)}</code></div>
       </div>
     </div>
     <div class="mode-group">
@@ -301,7 +301,7 @@ export function buildHtml(info: AppInfo): string {
       <div id="binary-fields" class="fields hidden">
         <div class="path-row">
           <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" />
-          <button type="button" id="binary-browse" class="path-browse" title="选择 dsh.exe / dsh.cmd / dsh.bat">浏览…</button>
+          <button type="button" id="binary-browse" class="square-btn" title="浏览程序路径" aria-label="浏览程序路径">${ICON_FOLDER}</button>
         </div>
         <p id="binary-error" class="error field-error hidden"></p>
       </div>
@@ -323,9 +323,9 @@ export function buildHtml(info: AppInfo): string {
     </div>
   `;
 
-  const portControl = `<input id="port" type="text" inputmode="numeric" placeholder="例如 3099" />`;
-  // 命令预览：跟着渠道 / 版本 / 运行环境实时刷新的那条真实命令，单独一张小卡接在启动方式下面。
-  const commandPreviewBody = `<code id="npx-command-preview" class="command-preview">${npxCommandOf("latest", null)}</code>`;
+  // 端口框用原生 number：只有它自带上下步进图标。图标平时透明、鼠标悬停或聚焦到框上才显形，
+  // 但**始终占位**（透明度切换而非 display），否则显隐会让输入框内的可用宽度变化、文字左右挪。
+  const portControl = `<input id="port" type="number" inputmode="numeric" min="1" max="65535" step="1" placeholder="例如 3099" />`;
   // 与启动方式同在主卡内、并排的两张小卡：「附加参数」与「端口」。
   const extraArgsBody = `<div class="fields">
       <label for="extra-args">附加参数 <span class="info-dot" role="img" tabindex="0" aria-label="附加参数说明" data-tip="追加到该启动方式的命令末尾（运行环境选 WSL 时追加到发行版内的命令后面）。仅允许字母数字与 - _ . / : = @ + 和空格；壳始终自动追加 --no-open（不自动弹浏览器），需要时用工具栏的「打开方式」。">!</span></label>
@@ -333,7 +333,7 @@ export function buildHtml(info: AppInfo): string {
     </div>`;
   const portBody = `<div class="fields">
       <label for="port">监听端口 <span id="port-info" class="info-dot" role="img" tabindex="0" aria-label="端口说明" data-tip="正在读取 DSH 配置…">!</span></label>
-      <div class="port-row">${portControl}<button type="button" id="port-reset" class="port-reset" title="把端口还原为默认（留空 = 跟随 DSH 配置）">还原</button></div>
+      <div class="port-row">${portControl}<button type="button" id="port-reset" class="square-btn" title="把端口还原为默认（留空 = 跟随 DSH 配置）" aria-label="还原端口">${ICON_REVERT}</button></div>
       <p class="hint" id="port-hint">留空即跟随 DSH 自身的配置。</p>
     </div>`;
 
@@ -407,7 +407,8 @@ export function buildHtml(info: AppInfo): string {
   const panels = [
     panelSection(
       "launch",
-      mainCard([cell(modesBody), cell(commandPreviewBody), cellRow("1-1", extraArgsBody, portBody)]),
+      // 命令预览不再单独一张小卡：它只跟「官方 npx 命令」这一项有关，已经跟着这一项的参数走了。
+      mainCard([cell(modesBody), cellRow("1-1", extraArgsBody, portBody)]),
     ),
     panelSection("env", mainCard([cell(profilesBody), cell(pluginBody)])),
     panelSection("integ", mainCard([cell(cliBlockBody), cell(cacheBlockBody)])),

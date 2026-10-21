@@ -59,9 +59,9 @@ impl Manifest {
 
     /// 这份目录是不是 `spec` 对应的那一份（精确优先，包名兜底）。
     ///
-    /// `spec` 来自 `launch::npx_spec(channel, version)`。两种命中强度不同：
+    /// `spec` 来自 `launch::npx_spec(version)`。两种命中强度不同：
     /// - `_npx.packages` 里逐字有 `spec`：这就是它（`exact`）；
-    /// - `dependencies` 的键等于 `spec`：只在不带版本后缀（稳定版渠道）时才可能对上，
+    /// - `dependencies` 的键等于 `spec`：只在不带版本后缀（自动最新版）时才可能对上，
     ///   且同时可能有多份目录对上，所以只当兜底。调用方要「优先精确」，
     ///   用 `exact` 先筛一遍。
     pub fn uses(&self, spec: &str) -> bool {
@@ -113,6 +113,27 @@ pub fn spec_package_name(spec: &str) -> &str {
     match spec.get(start..).and_then(|rest| rest.find('@')) {
         Some(index) => &spec[..start + index],
         None => spec,
+    }
+}
+
+/// 从一条本包 npx spec 里取具体版本号；不带版本后缀时 None。
+///
+/// `@deepseek-ai/dsh@0.2.1-rc.2` → `Some("0.2.1-rc.2")`，而 `@deepseek-ai/dsh`、
+/// `@deepseek-ai/dsh@next`、别的包（`lodash@4`）、空串或脏数据都是 None。
+/// 两层判断都必要：先确认包名是本包（`_npx` 里躺着别的包，`lodash@4` 的后缀也是
+/// 数字开头，不认包名就会把别人的版本算成「已缓存」），再确认后缀是版本号形态
+/// （复用 `registry::is_version_like`：dist-tag 不是版本号）。
+pub fn spec_version(spec: &str) -> Option<&str> {
+    if spec_package_name(spec) != NPX_PACKAGE {
+        return None;
+    }
+    let spec = spec.trim();
+    let start = if spec.starts_with('@') { 1 } else { 0 };
+    let suffix = &spec[start..].split_once('@')?.1;
+    if crate::registry::is_version_like(suffix) {
+        Some(suffix)
+    } else {
+        None
     }
 }
 
@@ -210,23 +231,58 @@ pub fn plan(dirs: &[DirEntry], current_spec: Option<&str>, keep_count: usize) ->
 
 /// 当前启动配置用的 npx spec；启动方式不是「官方 npx 命令」时为 None。
 ///
-/// 自定义命令里可能也写着 `npx @deepseek-ai/dsh@next …`，但那是用户手写的字符串（
-/// 可能带 `-p`、`--yes`、另一个包…），从里面猜包规格只会猜错，所以直接不算：
+/// 自定义命令里可能也写着 `npx @deepseek-ai/dsh@0.2.1-rc.2 …`，但那是用户手写的字符串
+/// （可能带 `-p`、`--yes`、另一个包…），从里面猜包规格只会猜错，所以直接不算：
 /// 这种情况下只按 mtime 保留（`plan` 会当成「当前那份命中不到」处理）。
 /// 非 Windows 宿主（WSL 发行版）的 npm 缓存是另一份，本版不统计，同样不影响这里。
 pub fn current_spec(config: &LaunchConfig) -> Option<String> {
     match &config.mode {
-        LaunchMode::Npx { channel, version } => {
-            Some(launch::npx_spec(*channel, version.as_deref()))
-        }
+        LaunchMode::Npx { version } => Some(launch::npx_spec(version.as_deref())),
         _ => None,
     }
+}
+
+/// 把 `_npx` 里扫到的「本包版本」汇总成界面要用的清单（去重 + 从新到旧）。
+///
+/// 每个目录给两个来源，顺序不能反：
+/// - `resolved`：该目录 `node_modules/@deepseek-ai/dsh/package.json` 里的 `version`，
+///   这是 npx 当年真正解析出来的那一版；
+/// - `specs`：该目录 `package.json` 的 `_npx.packages` 原始 spec，读不到上面那版时
+///   退回用它的版本后缀（`npx_cache::spec_version`）。
+///
+/// 两个来源都可能缺（目录没装完、被清过、spec 是 `@next` 这种标签），缺就跳过；
+/// 该目录一个来源都没有就不产出任何版本，绝不用别的包或标签凑数。
+pub fn cached_versions<'a, I, S>(entries: I) -> Vec<String>
+where
+    I: IntoIterator<Item = (Option<&'a str>, S)>,
+    S: IntoIterator,
+    S::Item: AsRef<str>,
+{
+    let mut versions: Vec<String> = Vec::new();
+    for (resolved, specs) in entries {
+        let version = resolved
+            .map(str::trim)
+            .filter(|version| crate::registry::is_version_like(version))
+            .map(str::to_string)
+            .or_else(|| {
+                specs
+                    .into_iter()
+                    .find_map(|spec| spec_version(spec.as_ref()).map(str::to_string))
+            });
+        if let Some(version) = version {
+            versions.push(version);
+        }
+    }
+    versions.sort();
+    versions.dedup();
+    crate::registry::sort_newest_first(&mut versions);
+    versions
 }
 
 /// 界面上给一份缓存目录起个名。
 ///
 /// 目录名是一串 hash，单看没意义；它 `_npx.packages` 里记的 spec 才是人能读的
-/// （`@deepseek-ai/dsh@next`）。同一份 spec 可能同时有多份目录，所以后面缀上目录名
+/// （`@deepseek-ai/dsh@0.2.1-rc.2`）。同一份 spec 可能同时有多份目录，所以后面缀上目录名
 /// 的前 8 位以区别于彼此。
 pub fn dir_label(dir: &DirEntry) -> String {
     let short: String = dir.name.chars().take(8).collect();
@@ -570,36 +626,76 @@ mod tests {
 
     #[test]
     fn current_spec_only_comes_from_the_official_npx_mode() {
-        let npx = |channel, version: Option<&str>| LaunchConfig {
+        let npx = |version: Option<&str>| LaunchConfig {
             mode: LaunchMode::Npx {
-                channel,
                 version: version.map(|text| text.to_string()),
             },
             runtime: crate::launch::Runtime::Default,
             extra_args: Vec::new(),
             port: None,
         };
+        // 不选版本时 npx 跟 npm 的 latest 标签，spec 就是裸包名。
+        assert_eq!(current_spec(&npx(None)).as_deref(), Some(NPX_PACKAGE));
         assert_eq!(
-            current_spec(&npx(crate::launch::Channel::Latest, None)).as_deref(),
-            Some(NPX_PACKAGE)
-        );
-        assert_eq!(
-            current_spec(&npx(crate::launch::Channel::Next, None)).as_deref(),
-            Some("@deepseek-ai/dsh@next")
-        );
-        assert_eq!(
-            current_spec(&npx(crate::launch::Channel::Rc, Some("0.2.1-rc.2"))).as_deref(),
+            current_spec(&npx(Some("0.2.1-rc.2"))).as_deref(),
             Some("@deepseek-ai/dsh@0.2.1-rc.2")
         );
         let custom = LaunchConfig {
             mode: LaunchMode::Custom {
-                command: "npx --yes @deepseek-ai/dsh@next web".to_string(),
+                command: "npx --yes @deepseek-ai/dsh@0.2.1-rc.2 web".to_string(),
             },
             runtime: crate::launch::Runtime::Default,
             extra_args: Vec::new(),
             port: None,
         };
         assert_eq!(current_spec(&custom), None, "手写的命令行里不猜包规格");
+    }
+
+    #[test]
+    fn spec_version_reads_only_concrete_versions() {
+        assert_eq!(
+            spec_version("@deepseek-ai/dsh@0.2.1-rc.2"),
+            Some("0.2.1-rc.2")
+        );
+        assert_eq!(spec_version("  @deepseek-ai/dsh@0.2.1 "), Some("0.2.1"));
+        // dist-tag 不是版本号：它不代表任何已装版本，界面不能在「已缓存」里列它。
+        assert_eq!(spec_version("@deepseek-ai/dsh@next"), None);
+        assert_eq!(spec_version("@deepseek-ai/dsh@latest"), None);
+        // 不带版本后缀、别的包、脏数据。
+        assert_eq!(spec_version("@deepseek-ai/dsh"), None);
+        assert_eq!(spec_version("lodash@4"), None);
+        assert_eq!(spec_version(""), None);
+        assert_eq!(spec_version("   "), None);
+        assert_eq!(spec_version("@deepseek-ai/dsh@"), None);
+    }
+
+    #[test]
+    fn cached_versions_prefers_resolved_then_manifest_spec() {
+        let entries: [(&str, Option<&str>, &[&str]); 5] = [
+            // 解析出来的那一版优先，spec 里的后缀忽略（同一目录两个来源会不一致）。
+            (
+                "hash-a",
+                Some(" 0.2.1-rc.2 "),
+                &["@deepseek-ai/dsh@0.2.1-alpha.5"],
+            ),
+            // 读不到 node_modules 清单时退回 spec 后缀。
+            ("hash-b", None, &["@deepseek-ai/dsh@0.2.0"]),
+            // 两个来源都没有可用版本：spec 是 dist-tag，不能凑数。
+            ("hash-c", None, &["@deepseek-ai/dsh@next"]),
+            // 同一版本出现两次只报一次。
+            ("hash-d", Some("0.3.0"), &["@deepseek-ai/dsh@0.3.0"]),
+            // 脏数据（被改坏的清单）不算版本，也不能 panic。
+            ("hash-e", Some("not-a-version"), &["@deepseek-ai/dsh@"]),
+        ];
+        let versions = cached_versions(
+            entries
+                .iter()
+                .map(|(_, resolved, specs)| (*resolved, *specs)),
+        );
+        assert_eq!(versions, vec!["0.3.0", "0.2.1-rc.2", "0.2.0"]);
+
+        // 空输入不是错误：缓存里还没有本包的任何版本。
+        assert!(cached_versions(Vec::<(Option<&str>, Vec<&str>)>::new()).is_empty());
     }
 
     #[test]

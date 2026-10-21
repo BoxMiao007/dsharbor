@@ -163,7 +163,8 @@
 
 /* 并排两个控件（渠道下拉 + 版本徽章 / 端口 + 还原）时按比例分宽。 */
 .block .control-line > .picker,
-.block .port-row > input[type="text"] {
+.block .port-row > input[type="text"],
+.block .port-row > input[type="number"] {
   flex: 1 1 auto;
   width: auto;
 }

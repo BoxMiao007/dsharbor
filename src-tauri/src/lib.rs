@@ -717,10 +717,13 @@ async fn wsl_distro_info() -> Result<Vec<wsl::DistroInfo>, String> {
     Ok(distros)
 }
 
-/// 查 npm 上的 DSH 渠道 / 版本清单（带 10 分钟缓存）。
+/// 查 npm 上的 DSH 版本清单（带 10 分钟缓存）。
 ///
 /// async 命令：要拉起 npm（WSL 下还要先起 wsl.exe），同步命令会把主线程堵住。
-/// 查询失败就返回错误字符串，界面自己降级成「稳定版 + 默认环境」继续可用。
+/// 查询失败就返回错误字符串，界面自己降级成「自动最新版本 + 默认环境」继续可用。
+///
+/// `force` 为 true 时跳过那 10 分钟缓存直接重查（界面上的刷新按钮：
+/// 刚发布的版本要立刻出现在下拉里）；缺省 false，走缓存。
 ///
 /// 下载源由界面随请求一起传（`source`）：它才是「这次要用哪个源」的权威，
 /// 不必先去读盘——否则一旦保存没落盘，界面显示的选项与实际请求的源就对不上。
@@ -730,6 +733,7 @@ async fn query_dsh_versions(
     app: tauri::AppHandle,
     runtime: launch::Runtime,
     source: String,
+    force: Option<bool>,
 ) -> Result<dsharbor_core::registry::RegistryInfo, String> {
     let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
         eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
@@ -739,9 +743,24 @@ async fn query_dsh_versions(
     // 代理用已保存的设置（见壳设置里的「网络」卡）。
     let prefs = settings::load(&app).prefs;
     let env = proxy::child_env(&prefs, source);
-    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime, source, &env))
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || registry::query(&runtime, source, &env, force))
         .await
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
+}
+
+/// 列出 npx 缓存里已经缓存过的本包版本号（给界面「已缓存」徽章用）。
+///
+/// 跟随当前运行环境：Windows 宿主扫宿主 npm 缓存，WSL 则进发行版里扫——
+/// 同一个版本号在宿主上是「已缓存」、在发行版里可能是要现下的，所以必须分环境算。
+///
+/// async + spawn_blocking：要问 npm 缓存根、递归扫 `_npx` 下每个目录（WSL 下还要
+/// 起 wsl.exe），同步命令会把主线程堵住。
+#[tauri::command]
+async fn npx_cached_versions(runtime: launch::Runtime) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || npxcache::cached_versions(&runtime))
+        .await
+        .map_err(|err| format!("后台读取已缓存版本失败：{err}"))?
 }
 
 /// 打开（或刷新）DSH 界面窗口——界面与托盘的「应用内打开」。
@@ -1639,6 +1658,7 @@ pub fn run() {
             dsh_status,
             wsl_distro_info,
             query_dsh_versions,
+            npx_cached_versions,
             open_dsh_window,
             open_dsh_in_browser,
             dsh_login_url,
