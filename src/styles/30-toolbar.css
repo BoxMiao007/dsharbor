@@ -65,9 +65,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 绿色状态徽章（运行中 / 桥接就绪 / 依赖已装）。
+   底色与描边都混进不透明的 --card 再上屏：原来混的是 transparent，
+   同一颗徽章垫在工具条上和在主卡小卡上会算出两种深浅不同的绿（实测
+   浅色下 #e2ede9 与 #d3e0de），并排看着像"颜色跑偏"。混入实底后
+   无论垫在哪种面上都是同一个色值，浅色主题下也稳定达标（文字 5.37:1）。 */
 .badge-running {
-  border-color: color-mix(in srgb, var(--ok) 42%, transparent);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 34%, var(--card));
+  background: color-mix(in srgb, var(--ok) 14%, var(--card));
   color: var(--ok);
 }
 

@@ -355,7 +355,10 @@ button.danger:hover:not(:disabled) {
   height: 15px;
   padding: 0 4px;
   border-radius: 8px;
-  background: var(--accent);
+  /* 用 --accent-fill（实底蓝）而不是 --accent（浅冰蓝）：深色主题下 --accent 是
+     #7fb2ff，白字压它只有 2.16:1，那颗「5」几乎糊掉；--accent-fill 深色 #2f6fd0 /
+     浅色 #1c5fd0，白字都是 4.9~5.8:1，两套主题都清楚。 */
+  background: var(--accent-fill);
   color: #ffffff;
   font-size: 10px;
   font-weight: 600;
