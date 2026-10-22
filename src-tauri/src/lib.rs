@@ -11,6 +11,7 @@ mod npxcache;
 mod patch;
 mod plugin;
 mod plugin_switch;
+mod plugin_update;
 mod profile;
 mod profile_ops;
 mod proxy;
@@ -358,6 +359,15 @@ async fn proxy_state(app: tauri::AppHandle) -> Result<proxy::ProxyState, String>
 /// 与真实下载走同一条注入路径。
 ///
 /// 不写入缓存（见 `registry::self_check`）：自检的结果是「此刻这条网络」的快照，
+/// 界面随请求传来的下载源字符串 → 强类型。认不出就按默认源处理并记日志：
+/// 界面传错值不该让整条查询失败。走网络的四条命令（自检/查版本/插件检查/插件更新）共用。
+fn parse_source_arg(source: String) -> dsharbor_core::prefs::DownloadSource {
+    dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
+        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
+        dsharbor_core::prefs::DownloadSource::default()
+    })
+}
+
 /// 与「有多少版本可选」是两回事，互相覆盖只会让两边都不准。
 #[tauri::command]
 async fn self_check_network(
@@ -365,10 +375,7 @@ async fn self_check_network(
     runtime: launch::Runtime,
     source: String,
 ) -> Result<dsharbor_core::net::SelfCheckReport, String> {
-    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
-        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
-        dsharbor_core::prefs::DownloadSource::default()
-    });
+    let source = parse_source_arg(source);
     let prefs = settings::load(&app).prefs;
     tauri::async_runtime::spawn_blocking(move || registry::self_check(&runtime, &prefs, source))
         .await
@@ -659,10 +666,7 @@ async fn query_dsh_versions(
     source: String,
     force: Option<bool>,
 ) -> Result<dsharbor_core::registry::RegistryInfo, String> {
-    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
-        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
-        dsharbor_core::prefs::DownloadSource::default()
-    });
+    let source = parse_source_arg(source);
     // 注入给 npm 的环境变量在这里算好：源用界面这次传的（它才是权威），
     // 代理用已保存的设置（见壳设置里的「网络」卡）。
     let prefs = settings::load(&app).prefs;
@@ -1215,6 +1219,51 @@ async fn plugin_toggle(
     .map_err(|err| format!("后台切换插件开关失败：{err}"))?
 }
 
+/// 检查某个环境里第三方插件的更新（当前版本 → registry 目标版本）。
+///
+/// 只读 + 会话级缓存：每个（环境, 包名）本次使用会话只在第一次进插件卡时查一次，
+/// `force=true`（「检查更新」按钮）绕过缓存重查。官方内置骨架包与桥接插件不参与。
+/// 下载源随请求传（与 `query_dsh_versions` 同一个理由：界面才是权威）。
+#[tauri::command]
+async fn plugin_updates_list(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+    source: String,
+    force: Option<bool>,
+) -> Result<Vec<dsharbor_core::plugin_update::PluginUpdateItem>, String> {
+    let source = parse_source_arg(source);
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_update::list(&app, &config, &name, source, force)
+    })
+    .await
+    .map_err(|err| format!("后台检查插件更新失败：{err}"))?
+}
+
+/// 更新某个环境里的第三方插件：`plugin` 有值更新单个，`None` 更新全部有更新的
+/// （逐个执行，单个失败不影响其余，最后汇总）。
+///
+/// 要写 node_modules，所以要求会话已停止：运行中的 DSH 同时在用这些文件，
+/// 谁后写谁赢（与重装依赖同一理由）。
+#[tauri::command]
+async fn plugin_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+    source: String,
+    plugin: Option<String>,
+) -> Result<plugin_update::UpdateOutcome, String> {
+    ensure_session_stopped(&state, "更新插件", &name)?;
+    let source = parse_source_arg(source);
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_update::update(&app, &config, &name, source, plugin.as_deref())
+    })
+    .await
+    .map_err(|err| format!("后台更新插件失败：{err}"))?
+}
+
 /// 记录界面主题（Rust 侧镜像）。
 ///
 /// 主题本体记在 WebView 的 localStorage，Rust 读不到；但窗口装饰（主题 3 换系统
@@ -1607,6 +1656,8 @@ pub fn run() {
             patch_backups,
             plugin_list,
             plugin_toggle,
+            plugin_updates_list,
+            plugin_update,
             open_external,
             save_ui_theme,
             check_binary_path,

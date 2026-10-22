@@ -145,6 +145,7 @@ const state = {
       { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true },
       { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true },
       { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true },
+      { name: "dsh-local-tools", entries: ["local-tools"], enabled: true, bridge: false, manual: true, switchable: true },
       { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true },
       { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true },
     ],
@@ -154,6 +155,19 @@ const state = {
     ],
     headless: [],
     desktop: [],
+  },
+  /** 插件更新检查（`plugin_updates_list`）的假数据：按环境名分组，形状照后端
+      PluginUpdateItem（camelCase）。web 里安排了「可更新、停用也可更新（两行）、已最新、
+      查不到」五种行，把行内渲染的分支都预览到；没配的环境返回 []。 */
+  pluginUpdates: {
+    web: [
+      { name: "billion-context", current: "2.1.0", target: "2.3.0-rc.1", error: null, hasUpdate: true },
+      { name: "dsh-context", current: "0.4.2", target: "0.4.2", error: null, hasUpdate: false },
+      { name: "dsh-better-sidebar", current: "3.0.1", target: "3.2.0", error: null, hasUpdate: true },
+      { name: "dsh-free-search", current: null, target: null, error: "读取插件「dsh-free-search」的版本列表失败：E404", hasUpdate: false },
+      { name: "dsh-local-tools", current: "0.9.0", target: null, error: "读取插件「dsh-local-tools」的版本列表失败：E404", hasUpdate: false },
+      { name: "dsh-skill-mcp-panel", current: "1.0.0", target: "1.1.0", error: null, hasUpdate: true },
+    ],
   },
   calls: {},
 };
@@ -595,6 +609,43 @@ window.__mockUnimplemented = [];
             ? "桥接插件已关闭：DSH 每次启动会动态生成登录链接，关掉桥接后壳取不到它，只能从日志里翻。"
             : null,
         items: list,
+      };
+    },
+    // ---- 插件更新 --------------------------------------------------------------
+    plugin_updates_list: (a) => {
+      seen("plugin_updates_list:" + (a && a.name ? a.name : "?") + "/" + (a && a.force ? "force" : "cached"));
+      return (S.pluginUpdates && S.pluginUpdates[a && a.name]) || [];
+    },
+    plugin_update: (a) => {
+      const name = a && a.name;
+      const plugin = a && a.plugin;
+      seen("plugin_update:" + name + "/" + (plugin || "all"));
+      if (S.session === "running") {
+        throw busyText("更新插件", name);
+      }
+      const rows = (S.pluginUpdates[name] = S.pluginUpdates[name] || []);
+      const scope = plugin ? rows.filter((it) => it.name === plugin) : rows.filter((it) => it.hasUpdate);
+      if (plugin && scope.length === 0) {
+        throw "环境「" + name + "」的更新清单里没有插件「" + plugin + "」，先「检查更新」再试。";
+      }
+      const done = [];
+      for (const it of scope) {
+        if (!it.hasUpdate) continue;
+        it.current = it.target;
+        it.hasUpdate = false;
+        done.push(it.name + "@" + it.current);
+      }
+      const message = plugin
+        ? done.length
+          ? "已把「" + plugin + "」更新到 " + done[0].split("@").pop() + "。重启 DSH 后生效。"
+          : "已是最新版本，未做任何改动。"
+        : done.length === 0
+          ? "没有需要更新的插件。"
+          : "全部更新完成：成功 " + done.length + " 个（" + done.join("、") + "）。重启 DSH 后生效。";
+      return {
+        ok: true,
+        message: message,
+        backupDir: "C:\\Users\\mock\\AppData\\Roaming\\DSHarbor\\backups\\backup-mock",
       };
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。

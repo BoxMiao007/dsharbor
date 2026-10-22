@@ -184,12 +184,22 @@ fn check_result(code: i32, output: &str) -> Result<(), String> {
     })
 }
 
-fn timeout_error() -> String {
-    format!("查询官方版本列表超时（{} 秒）", QUERY_TIMEOUT.as_secs())
+fn timeout_error(label: &str) -> String {
+    format!("查询{}超时（{} 秒）", label, QUERY_TIMEOUT.as_secs())
 }
 
-fn run_query(runtime: &Runtime, env: &[(String, String)]) -> Result<RegistryInfo, String> {
-    let mut command = build_command(runtime, env)?;
+/// 跑一次 `npm view <args…>` 并把输出解析成版本清单。
+///
+/// 官方版本查询（`query`）与插件更新（查任意插件包的目标版本）共用这一条链路：
+/// 同样的超时、同样的行收集、同样的解析。`label` 只用于失败文案（「官方版本列表」
+/// /「插件 X 的版本列表」），让报错说清是谁没查到。
+pub(crate) fn run_view(
+    runtime: &Runtime,
+    env: &[(String, String)],
+    args: &[&str],
+    label: &str,
+) -> Result<RegistryInfo, String> {
+    let mut command = npm_command(runtime, args, env)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -245,7 +255,7 @@ fn run_query(runtime: &Runtime, env: &[(String, String)]) -> Result<RegistryInfo
     if timed_out {
         // 超时：查询进程不该留活口（npm 可能卡在网络重试上）。
         let _ = crate::launcher::kill_tree(child.id());
-        return Err(timeout_error());
+        return Err(timeout_error(label));
     }
     // stdout 关闭了不代表进程已结束（`cmd /C npm` 后面还有一层 node）：
     // 同样用 deadline 轮询，不让它无限占着一个 blocking 线程。
@@ -257,7 +267,7 @@ fn run_query(runtime: &Runtime, env: &[(String, String)]) -> Result<RegistryInfo
         }
         if Instant::now() >= deadline {
             let _ = crate::launcher::kill_tree(child.id());
-            return Err(timeout_error());
+            return Err(timeout_error(label));
         }
         std::thread::sleep(Duration::from_millis(120));
     };
@@ -268,9 +278,14 @@ fn run_query(runtime: &Runtime, env: &[(String, String)]) -> Result<RegistryInfo
         } else {
             detail.lines().next().unwrap_or(detail).to_string()
         };
-        return Err(format!("读取官方版本列表失败：{detail}"));
+        return Err(format!("读取{label}失败：{detail}"));
     }
     registry::parse(&output)
+}
+
+/// 查 DSH 官方包的版本清单（插件更新之外的原有入口，走固定参数）。
+fn run_query(runtime: &Runtime, env: &[(String, String)]) -> Result<RegistryInfo, String> {
+    run_view(runtime, env, &registry::query_args(), "官方版本列表")
 }
 
 /// 组装查询命令：Windows 直接跑 npm；WSL 经 wsl.exe 在发行版里跑。

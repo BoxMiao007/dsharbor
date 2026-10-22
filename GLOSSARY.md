@@ -58,3 +58,7 @@
 | 预览台 | mock preview（`scripts/mock-preview.mjs`） | 界面改动的第一道证据：`pnpm build` 后把 `dist/index.html` 拷成 `mock.html` 并注入假的 `__TAURI_INTERNALS__`（假 DSH 状态、假桥接、假窗口命令），在普通浏览器里量尺寸、截图；看不到的部分（WebView2 渲染差异、无边框窗口拖动 / 缩放 / 贴靠、真 DSH 进程与托盘）才上真机。 |
 | 验证门 | verification gates | 交付前必过的命令集合，见 `AGENTS.md`「完成定义」。 |
 | 手动验收 | manual acceptance | 需要真机才能确认的复核清单（WebView2 渲染差异、无边框窗口拖动 / 缩放 / 贴靠、真 DSH 进程与托盘、安装与卸载），见 `docs/manual-acceptance.md`；日常界面改动不走它，改用预览台，只有发布或涉及真机行为时才逐项走。 |
+| 第三方插件 | third-party plugin | 环境 `dsh.profile.bundles` 里登记、但既不是官方包（`@deepseek-ai/*`）也不是桥接插件的包；壳的插件开关与插件更新只作用于这一类。 |
+| 检查更新 | update check | 对管理目标环境里的第三方插件逐个读出已装版本、到 npm registry 查可用版本并比对；只产生提示，不自动安装任何东西。 |
+| 插件更新 | plugin update | 把某个第三方插件升到目标版本；走官方插件安装入口（`dsh plugin add 包名@版本`）执行，前后自动备份环境文件，装完回读磁盘确认版本真的换了。 |
+| 目标版本 | target version | 插件更新要装到的版本：该包在 registry 全部版本里按 semver 从新到旧排序的第一名（含预发布版）。不跟随 `dist-tags.latest`——插件普遍用预发布发版，latest 常落后于真实最新。 |

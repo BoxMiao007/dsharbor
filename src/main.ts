@@ -1702,7 +1702,10 @@ async function main(): Promise<void> {
       const rows = manageablePlugins();
       const on = rows.filter((item) => item.enabled).length;
       const count = pluginLoaded ? `已启用 ${on}/${rows.length} 个插件` : "正在读取插件清单…";
-      pluginSummary.textContent = `${target.name} · ${count}`;
+      const updates = pluginUpdatesChecked
+        ? ` · ${pluginUpdateItems.filter((item) => item.hasUpdate).length} 个可更新`
+        : "";
+      pluginSummary.textContent = `${target.name} · ${count}${updates}`;
       pluginSummary.className = `badge ${target.depsInstalled ? "badge-running" : "badge-stopped"} panel-badge`;
     }
 
@@ -2420,6 +2423,8 @@ async function main(): Promise<void> {
     const pluginNote = $<HTMLParagraphElement>("plugin-note");
     const pluginWarning = $<HTMLParagraphElement>("plugin-warning");
     const btnPluginDeps = $<HTMLButtonElement>("btn-plugin-deps");
+    const btnPluginCheckUpdates = $<HTMLButtonElement>("btn-plugin-check-updates");
+    const btnPluginUpdateAll = $<HTMLButtonElement>("btn-plugin-update-all");
 
     /** 与 Rust 侧 `plugin_switch::PluginItem` 对应。 */
     interface PluginItem {
@@ -2448,6 +2453,29 @@ async function main(): Promise<void> {
     /** 插件开关动作是否在跑（忙时所有开关置灰，防重复提交）。 */
     let pluginBusy = false;
 
+    /** 与 Rust 侧 `plugin_update::PluginUpdateItem` 对应。 */
+    interface PluginUpdateItem {
+      name: string;
+      current: string | null;
+      target: string | null;
+      error: string | null;
+      hasUpdate: boolean;
+    }
+
+    /** 与 Rust 侧 `plugin_update::UpdateOutcome` 对应。 */
+    interface UpdateOutcome {
+      ok: boolean;
+      message: string;
+      backupDir: string;
+    }
+
+    /** 最近一次检查得到的更新清单（只含参与更新的第三方插件）。 */
+    let pluginUpdateItems: PluginUpdateItem[] = [];
+    /** 当前环境是否已检查过（没查过时行里不显示版本号，免得像「没有版本」）。 */
+    let pluginUpdatesChecked = false;
+    /** 插件更新动作是否在跑（忙时更新按钮与开关全部置灰，防重复提交）。 */
+    let pluginUpdateBusy = false;
+
     /**
      * 插件清单：一行一个插件，右端一枚**总开关**（开/关整个插件）。
      *
@@ -2467,12 +2495,45 @@ async function main(): Promise<void> {
       return ` title="${escapeHtml(`总开关：停用整个「${item.name}」。它挂在 ${points}。${manual}改完要重启 DSH 才生效。`)}"`;
     }
 
+    /** 该插件最近的检查结果（没查过、或不在更新范围——官方骨架包/桥接插件——就没有行）。 */
+    function updateItemFor(name: string): PluginUpdateItem | null {
+      return pluginUpdateItems.find((item) => item.name === name) ?? null;
+    }
+
+    /** 行里「版本号 + 更新按钮」那段：查过更新才有；版本读不出来时亮「版本未知」。
+     *  目标版本照实写在按钮上（含预发布），点不点由维护者定。 */
+    function pluginUpdateCellHtml(item: PluginItem): string {
+      if (!pluginUpdatesChecked) {
+        return "";
+      }
+      const upd = updateItemFor(item.name);
+      if (!upd) {
+        return "";
+      }
+      let html = "";
+      if (upd.error && !upd.current) {
+        html += `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">版本未知</span>`;
+      } else if (upd.current) {
+        html += `<span class="plugin-ver">v${escapeHtml(upd.current)}</span>`;
+        // 版本读得出来但检查失败（registry 查不到/断网）：错误必须露出来，不能只留版本号装没事。
+        // 本地 tgz、私有包装的插件就落在这条分支上。
+        if (upd.error) {
+          html += `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">检查失败</span>`;
+        }
+      }
+      if (upd.hasUpdate && upd.target) {
+        const busy = pluginUpdateBusy || pluginBusy ? " disabled" : "";
+        html += `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新到 ${escapeHtml(upd.target)}</button>`;
+      }
+      return html;
+    }
+
     function pluginRowHtml(item: PluginItem): string {
       // 只留「桥接」这一枚身份标签：开关本身已经说明启用与否，再写一遍「已启用/已停用」
       // 是同一件事说两次；「手写禁用」这点信息收进行提示，不占位。
       const marks = item.bridge ? `<span class="plugin-tag plugin-tag-bridge">桥接</span>` : "";
       const label = item.enabled ? "停用" : "启用";
-      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${pluginRowTitle(item)}><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"><span class="switch-knob"></span></button></div>`;
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${pluginRowTitle(item)}><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"><span class="switch-knob"></span></button></div>`;
     }
 
     function renderPluginList(): void {
@@ -2488,6 +2549,20 @@ async function main(): Promise<void> {
           void togglePlugin(box.dataset.plugin ?? "", next);
         });
       }
+      for (const box of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin-update]")) {
+        box.addEventListener("click", () => {
+          void updatePlugin(box.dataset.pluginUpdate ?? "");
+        });
+      }
+      renderPluginUpdatesToolbar();
+    }
+
+    /** 工具条两枚按钮的可用状态：在忙、还没查过、没有可更新的插件就置灰。 */
+    function renderPluginUpdatesToolbar(): void {
+      const pending = pluginUpdateItems.filter((item) => item.hasUpdate).length;
+      btnPluginCheckUpdates.disabled = pluginBusy || pluginUpdateBusy || !pluginLoaded;
+      btnPluginUpdateAll.disabled =
+        pluginBusy || pluginUpdateBusy || !pluginUpdatesChecked || pending === 0;
     }
 
     /**
@@ -2515,6 +2590,8 @@ async function main(): Promise<void> {
         pluginItems = [];
         pluginLoaded = false;
         pluginLoadedFor = null;
+        pluginUpdateItems = [];
+        pluginUpdatesChecked = false;
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
@@ -2524,13 +2601,106 @@ async function main(): Promise<void> {
         pluginLoadedFor = target.name;
         pluginItems = [];
         pluginLoaded = false;
+        // 更新清单跟着环境走，一并重置；第一次进这张卡自动查一次
+        // （后端有会话级缓存，重进/重查不打网络）。
+        pluginUpdateItems = [];
+        pluginUpdatesChecked = false;
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
         void refreshPluginList(target.name);
+        void refreshPluginUpdates(target.name, false);
         return;
       }
       renderPluginList();
+    }
+
+    /** 检查一次更新：进插件卡自动查（每个环境一次，后端会话缓存兜着），
+     *  「检查更新」按钮强制重查。失败只提示，不打断开关插件等其它动作。 */
+    async function refreshPluginUpdates(name: string, force: boolean): Promise<void> {
+      if (!name) {
+        return;
+      }
+      try {
+        const items = await invoke<PluginUpdateItem[]>("plugin_updates_list", {
+          config: collectConfig(),
+          name,
+          source: prefs.downloadSource,
+          force,
+        });
+        if (prefs.profile !== name) {
+          return; // 期间换了环境，丢弃这批结果
+        }
+        pluginUpdateItems = items;
+        pluginUpdatesChecked = true;
+        renderPluginList();
+        renderPluginSummary();
+        const pending = items.filter((item) => item.hasUpdate).length;
+        const broken = items.filter((item) => item.error).length;
+        // 只有用户主动点的「检查更新」才写日志：进卡自动查是背景动作，结果就在
+        // 行内版本号与徽章上，写日志只会让每次开卡都冒出一条没动作的未读。
+        if (force) {
+          logAction(
+            `已重新检查插件更新：${pending} 个可更新` + (broken ? `、${broken} 个查不到` : ""),
+          );
+        }
+      } catch (err) {
+        if (prefs.profile === name) {
+          setPluginNote(`检查插件更新失败：${String(err)}`);
+        }
+        logAction(`检查插件更新失败：${String(err)}`);
+      }
+    }
+
+    /**
+     * 更新单个插件（`name` 有值）或全部有更新的插件（`null`，后端逐个执行、
+     * 单个失败不影响其余）。
+     *
+     * 忙时所有更新入口都置灰；完成后用后端回来的汇总提示，并重查一次更新清单
+     * （更新过的包后端已挪掉会话缓存，这一步看到的是装上的真版本）。
+     * 更新不碰补丁层：停用状态原样保留；但新版本若改了挂载点，停用可能失效，要提醒。
+     */
+    async function updatePlugin(name: string | null): Promise<void> {
+      const target = prefs.profile;
+      if (!target || pluginBusy || pluginUpdateBusy || manageBusy || patchBusy) {
+        return;
+      }
+      pluginUpdateBusy = true;
+      setPluginNote(null);
+      setPluginWarning(null);
+      renderPluginList();
+      // 记下这轮要动的插件（批量=查出的全部可更新行），完事好提醒「停用的也更新了」。
+      const scope = name
+        ? [name]
+        : pluginUpdateItems.filter((item) => item.hasUpdate).map((item) => item.name);
+      try {
+        const outcome = await invoke<UpdateOutcome>("plugin_update", {
+          config: collectConfig(),
+          name: target,
+          source: prefs.downloadSource,
+          plugin: name,
+        });
+        setPluginNote(outcome.message);
+        logAction(outcome.message);
+        if (outcome.ok) {
+          const disabled = scope.filter(
+            (plugin) => pluginItems.find((item) => item.name === plugin)?.enabled === false,
+          );
+          if (disabled.length > 0) {
+            setPluginWarning(
+              `「${disabled.join("」「")}」目前处于停用状态，更新后保持停用；若新版本改了挂载点，停用可能失效。`,
+            );
+          }
+        }
+        await refreshPluginUpdates(target, false);
+      } catch (err) {
+        setPluginNote(`更新插件失败：${String(err)}`);
+        logAction(`更新插件失败：${String(err)}`);
+      } finally {
+        pluginUpdateBusy = false;
+        renderPluginList();
+        renderPluginSummary();
+      }
     }
 
     /** 读一次插件清单（读失败只提示，不打断其它动作）。 */
@@ -2646,6 +2816,19 @@ async function main(): Promise<void> {
     // 零插件空状态里的「去安装依赖」：跟着走同一个动作，而不是另写一份。
     btnPluginDeps.addEventListener("click", () => {
       void runEnvAction(() => installDeps(prefs.profile), { output: true });
+    });
+
+    // 「检查更新」：强制重查（后端绕过会话缓存真发网络）。
+    btnPluginCheckUpdates.addEventListener("click", () => {
+      if (!prefs.profile || pluginBusy || pluginUpdateBusy) {
+        return;
+      }
+      void refreshPluginUpdates(prefs.profile, true);
+    });
+
+    // 「全部更新」：批量走后端逐个升级（plugin=null），汇总由后端算好带回来。
+    btnPluginUpdateAll.addEventListener("click", () => {
+      void updatePlugin(null);
     });
 
     // ---- 集成面板：命令行集成（用户级 PATH + dsh 垫片） ------------------------

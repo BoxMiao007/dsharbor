@@ -34,8 +34,8 @@ const BACKUP_FILES: [&str; 4] = [
     "pnpm-lock.yaml",
     "cordis.patch.yml",
 ];
-/// 安装/卸载命令的超时（首次可能触发 pnpm 解析依赖，给足时间）。
-const PLUGIN_OP_TIMEOUT: Duration = Duration::from_secs(240);
+/// 安装/卸载/更新命令的超时（首次可能触发 pnpm 解析依赖，给足时间）。
+pub(crate) const PLUGIN_OP_TIMEOUT: Duration = Duration::from_secs(240);
 /// 备份保留份数上限（维护者要求 5 份）：超出后自动删掉最旧的，避免无限累积。
 const BACKUP_KEEP: usize = 5;
 
@@ -341,7 +341,7 @@ pub(crate) fn run_capture(
     Ok((status.code().unwrap_or(-1), text.trim_end().to_string()))
 }
 
-fn tail_chars(text: &str, max: usize) -> String {
+pub(crate) fn tail_chars(text: &str, max: usize) -> String {
     let count = text.chars().count();
     if count <= max {
         text.to_string()
@@ -433,13 +433,13 @@ fn prune_backups(app: &tauri::AppHandle) -> Vec<String> {
 }
 
 /// 一次备份的结果：新备份目录 + 因超出上限被清理掉的旧备份名。
-struct BackupResult {
-    dir: String,
-    pruned: Vec<String>,
+pub(crate) struct BackupResult {
+    pub dir: String,
+    pub pruned: Vec<String>,
 }
 
 /// 备份 profile 目录里会被 pnpm 改写的文件（含内容哈希清单），返回备份结果。
-fn backup_profile(
+pub(crate) fn backup_profile(
     app: &tauri::AppHandle,
     target: &Target,
     profile: &str,
@@ -476,8 +476,8 @@ fn backup_profile(
     })
 }
 
-/// 按上限清理旧备份的说明（拼进安装/卸载输出；没清理就为空）。
-fn prune_note(pruned: &[String]) -> String {
+/// 按上限清理旧备份的说明（拼进安装/卸载/更新输出；没清理就为空）。
+pub(crate) fn prune_note(pruned: &[String]) -> String {
     if pruned.is_empty() {
         return String::new();
     }
