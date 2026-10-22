@@ -532,3 +532,12 @@
 | 2026-10-22 | 删掉「已装」徽章（`tone: "installed"` 与 `.picker-badge-installed` 一并删除），版本行只留「最新」与「已缓存」两种 | 原判定是 `version === selectedVersion` —— `selectedVersion` 只是下拉里选中的那个值（`selectedVersion = value === AUTO_VERSION ? null : value`），**不代表这一版装没装**，所以选中任何未安装的版本都会挂上「已装」。真正「装没装」的唯一数据源是 `cachedVersions`（`npx_cached_versions` 扫描 `_npx` 缓存目录得到的实际版本号），「已缓存」用的就是它 | 把「已装」改成 `cachedVersions.includes(version)` 保留两枚徽章（两枚都来自同一份数据、说的同一件事，肉眼是重复信息）；新增「使用中」徽章（下拉不掌握运行中版本，要额外拉 `installed_dsh_versions`，超出本次范围） |
 | 2026-10-22 | 选中行靠行首 `✓` 与按钮里的版本号认，不再额外挂徽章；`PickerBadge['tone']` 联合类型收窄为 `"latest" \| "cached" \| "manual"` | 徽章是「这一版的固有属性」（是不是 latest、本机缓存在不在），选中状态是「下拉控件的临时状态」，两者混在一个徽章列里必然互相打架 | 保留 `"installed"` 这个 tone 但不用（类型上留着死值，下一个人会以为它还有语义） |
 | 2026-10-22 | `test/frontend/version-picker.test.mjs` 增补：断言任何行都不挂「已装」、并新增用例「选中未安装的版本不显示『已装』徽章」（点 `0.2.1-alpha.5` 后按钮徽章为空） | 这个 bug 正是「选择行为改变徽章」造成的，必须有一条用例把「选中 ≠ 已装」钉住，否则下次有人把 `selectedVersion` 塞回判定里也没人发现 | 只改实现不补测试（回归时无从发现） |
+
+## 2026-10-22 修「选版本要点两次」：候选重铺改成就地更新，不再整表重建 `<li>`
+
+维护者报：切换版本时要连点两次才能选中。
+
+| 日期 | 决策 | 为什么 | 放弃了什么 |
+|------|------|--------|------------|
+| 2026-10-22 | `src/ui/picker.ts` 的 `renderOptions()` 在**行数不变**时只做就地更新（新增 `paintRow()`：改 class / `aria-selected` / 勾选符 / 文字 / 徽章，节点一个都不换），行数真的变了才重建 `<li>` | 展开版本下拉会异步扫一次 npx 缓存（`onOpen` → `refreshCachedVersions`），扫回来要重铺候选；原来 `renderOptions()` 整表 `innerHTML` 重建。用户恰好在「扫描返回前按下、返回后抬起」时，按下的 `<li>`（甚至连行内 `.text`）已被移除，浏览器判定按下与抬起不在同一节点链上，**不发 click** —— 表现为「要点两次」。先按鼠标在 `<li>` 上不行，连行内 `<span>` 也要保住，所以最终的 `paintRow` 连文本节点都就地改 | 只保住 `<li>` 却仍替换 `innerHTML`（行内 `.text` 被换掉，点击照样丢，已实测失败）；给 `onOpen` 的扫描加 debounce 或延迟（治标：用户随时可能在扫描返回的那一刻点击）；缓存结果后不再重铺（首开仍会重铺一次，问题照旧） |
+| 2026-10-22 | 新增前端用例「缓存扫描在按下与抬起之间返回时，一次点击就能选中」：在 `evaluateOnNewDocument` 里把 `npx_cached_versions` 拖慢 300ms，用 `mouse.down()` → 等 500ms → `mouse.up()` 复现跨扫描的点击 | 假后端 `invoke` 是同步返回的，慢扫描在预览台里根本复现不出来；不把延迟注入进去，这条回归只能靠手点真机发现。用例同时断言坐标确实落在目标行（`elementFromPoint` 命中行内），否则「没选中」会被误判成实现问题 | 只靠手点验收（这类时序 bug 手点也常常碰不上）；用 `element.click()` 模拟（派发的是合成事件，不经过按下/抬起匹配，检测不到这个 bug） |
