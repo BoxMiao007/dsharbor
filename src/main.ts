@@ -80,6 +80,7 @@ async function main(): Promise<void> {
     const customCommand = $<HTMLInputElement>("custom-command");
     const npxCommandPreview = $<HTMLElement>("npx-command-preview");
     const npxVersionsHint = $<HTMLDivElement>("npx-versions-hint");
+    const npxInstalledHint = $<HTMLDivElement>("npx-installed-hint");
     const npxVersionsRefresh = $<HTMLButtonElement>("npx-versions-refresh");
     const portInput = $<HTMLInputElement>("port");
     const portReset = $<HTMLButtonElement>("port-reset");
@@ -292,6 +293,20 @@ async function main(): Promise<void> {
       return "";
     }
 
+    /**
+     * 选中版本「本机已经装过」的提示。按实际版本号判等（不看 latest 标签），
+     * 命中就说明这一份 npx 缓存已经存在，只提示不禁用——用户仍可照常启动。
+     */
+    function installedHint(): string {
+      if (selectedVersion === null) {
+        return "";
+      }
+      if (!cachedVersions.includes(selectedVersion)) {
+        return "";
+      }
+      return `v${selectedVersion} 本机已经装过（npx 缓存里已有这一份），选它启动不会再下载一份。`;
+    }
+
     /** 版本下拉、命令预览、提示行与刷新按钮的状态一处刷齐。 */
     function renderVersionUI(): void {
       npxVersionPicker.setChoices(versionChoices());
@@ -302,6 +317,9 @@ async function main(): Promise<void> {
       npxVersionsHint.classList.toggle("hidden", hint === "");
       // 读不到列表时这句要像错误一样显眼（黄色胶囊），读得到时就是普通灰字。
       npxVersionsHint.classList.toggle("notice", registryError !== null && !registryLoading);
+      const installed = installedHint();
+      npxInstalledHint.textContent = installed;
+      npxInstalledHint.classList.toggle("hidden", installed === "");
       // 读列表期间刷新按钮转圈并禁用：连点会让每次强制查询都真发一次 npm view。
       npxVersionsRefresh.disabled = registryLoading;
       npxVersionsRefresh.classList.toggle("is-spinning", registryLoading);
@@ -317,7 +335,8 @@ async function main(): Promise<void> {
         cachedVersions = [];
       }
       // 徽章是在 versionChoices() 里算的，扫回来必须重铺一遍候选；只调 relayout() 不会重算徽章。
-      npxVersionPicker.setChoices(versionChoices());
+      // 「本机已装过」的提示也依赖 cachedVersions，一并重刷。
+      renderVersionUI();
       npxVersionPicker.relayout();
     }
 
@@ -3126,6 +3145,8 @@ async function main(): Promise<void> {
     // 运行环境候选与官方版本列表都提前读好，切到对应面板即可直接选。
     await loadDistros();
     await loadRegistry();
+    // 先扫一次本机 npx 缓存：既给「已缓存」徽章，也决定「本机已经装过」那条提示要不要显示。
+    await refreshCachedVersions();
     await refreshPortHint();
     await refresh();
     void refreshBridgeState();

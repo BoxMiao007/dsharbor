@@ -12,7 +12,7 @@
 | 运行环境 | `Runtime` | 启动方式在哪儿执行：`默认`（Windows 宿主）或某个 WSL 发行版（`wsl:<发行版>`）；只对官方 npx 与自定义命令生效，跨启动方式共用一份选择。 |
 | 版本 | version | 官方 npx 命令跑哪个版本的 DSH。界面首项固定「自动最新版本」（不带版本号，跟 npm 的 `latest` 标签走）；其余就是具体的官方版本号，选它就固定跑那个版本。原「渠道」（`Channel`：latest / next / rc / alpha）已下线。 |
 | 版本清单 | `RegistryInfo` | 从 `npm view @deepseek-ai/dsh dist-tags versions --json` 现查并缓存的版本数据（外壳侧 10 分钟）：`dist_tags.latest` + 按从新到旧排好的全量 `versions`；读不到时界面给提示、不阻塞启动。 |
-| 已缓存版本 | cached version | 本机 npx 缓存目录里已有对应包的版本号；界面上挂「已缓存」标记，表示选它启动不用再重新下载。 |
+| 已缓存版本 | cached version | 本机 npx 缓存目录里已有对应包的版本号；界面上挂「已缓存」标记，表示选它启动不用再重新下载。选中版本恰好已装过时，版本下拉下方还会出一条黄色提示（只提示，不禁用操作）。 |
 | DSH 会话 | DSH session | 壳拉起的这一次 DSH 进程树（cmd/npx/node 等）。 |
 | 登录链接 / 认证链接 | authenticated URL | `http://<host>:<端口>/?token=<一次性 token>`，`<host>` 跟随 webserver 的绑定地址（回环或具体网卡 IP）；DSH 每次启动随机生成、进程内存驻留，浏览器凭它换持久 Cookie。 |
 | 访问端点 | endpoint | 壳用来探活、连桥接的 `host:port`，由 `profile` 的 webserver 块 + 端口优先级算出（`dsharbor_core::endpoint`）。 |

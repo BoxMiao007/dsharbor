@@ -274,6 +274,7 @@ export function buildHtml(info: AppInfo): string {
           <button type="button" id="npx-versions-refresh" class="square-btn" title="重新获取官方版本列表" aria-label="重新获取官方版本列表">${ICON_REFRESH}</button>
         </div>
         <div id="npx-versions-hint" class="hint hidden"></div>
+        <div id="npx-installed-hint" class="hint notice hidden"></div>
         <div class="preview-line"><span class="field-label">命令预览</span><code id="npx-command-preview" class="command-preview">${npxCommandOf(null)}</code></div>
       </div>
     </div>
