@@ -330,10 +330,9 @@ button.danger:hover:not(:disabled) {
 }
 
 /* 插件更新工具条：两枚图标方钮（悬停出「检查更新 / 全部更新」气泡），
-   比通用 34px 方钮收一档，贴着插件卡的密度；挂在卡头标题行右侧（margin-left:auto 顶到行尾），
+   比通用 34px 方钮收一档，贴着插件卡的密度；紧跟在卡头的计数徽章后面，
    与「插件」标题同一行，不再单独占一行。 */
 .plugin-head-actions {
-  margin-left: auto;
   display: flex;
   gap: 6px;
 }
@@ -397,22 +396,24 @@ button.danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--ok) 18%, var(--card-2));
 }
 
-/* 行内「更新」文字按钮：就两个字，主色文字无底框；目标版本在绿徽章与气泡里。 */
+/* 行内「更新」按钮：样式沿用主色小按钮（accent-soft 底、主色描边），文字就两个字；
+   目标版本在新版本绿徽章与气泡里，点不点由维护者定。 */
 .plugin-update {
   flex: none;
-  padding: 2px 6px;
-  border: none;
-  border-radius: 6px;
-  background: none;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 8px;
+  background: var(--accent-soft);
   color: var(--accent);
   font-size: 12px;
-  font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .plugin-update:hover:not(:disabled) {
-  background: var(--accent-soft);
+  border-color: transparent;
+  background: var(--accent-fill);
+  color: #ffffff;
 }
 
 .plugin-update:disabled {
