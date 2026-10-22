@@ -2,11 +2,11 @@
 
 import { escapeHtml } from "./markup";
 
-/** 行内小徽章：显示在选项文字右边（「最新 / 已装 / 已缓存 / 手动」）。 */
+/** 行内小徽章：显示在选项文字右边（「最新 / 已缓存 / 手动」）。 */
 export interface PickerBadge {
   text: string;
   /** 只决定配色，与语义绑死，不跟具体文案走。 */
-  tone: "latest" | "installed" | "cached" | "manual";
+  tone: "latest" | "cached" | "manual";
 }
 
 export interface PickerChoice {

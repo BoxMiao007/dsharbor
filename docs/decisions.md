@@ -522,3 +522,13 @@
 | 2026-10-22 | 在「启动方式 → 版本」下拉下方加 `#npx-installed-hint`（`hint notice` 黄色胶囊）：选中的版本号出现在 `npx_cached_versions` 里就显示「v… 本机已经装过（npx 缓存里已有这一份），选它启动不会再下载一份。」，**不置灰任何控件、不禁用启动** | npx 的缓存键是 spec 字符串：走「自动最新版本」发的是裸包名 `@deepseek-ai/dsh`，选具体版本发 `@deepseek-ai/dsh@0.2.1-rc.2`，两者解析到同一版本却各建一个 `_npx/<hash>` 目录，于是「DSH 版本」里出现两行同版本。真正的去重要么合并目录、要么按版本号改 spec，牵扯缓存归属与并发下载，代价远超收益；维护者选择只提示、不拦 | 后端 `scan` 按版本合并成一行（要改 `InstalledDsh` 的粒度、删除要整组删）；把「自动最新版本」改成解出当前 latest 的具体版本号再发 spec（用户明确否决：官方最新版不一定先打到 `latest` 标签上）；禁用「重复」的那一项（维护者要求不禁用） |
 | 2026-10-22 | 判等用**实际版本号**与 `cachedVersions` 比对（`cachedVersions.includes(selectedVersion)`），不看 `registry.distTags.latest`；「自动最新版本」（`selectedVersion === null`）不提示 | 用户指出「官方最新版本有时不会这么快进 latest 标签里面」，拿 latest 标签代替实际版本会把「标签还没追上」误判成不同版本。「自动最新版本」选的是浮动标签，本来就随时可能是新版本，提示「已经装过」会是错的 | 用 latest 标签判等（会漏报或误报）；对「自动最新版本」也提示（浮动标签下这句话不成立） |
 | 2026-10-22 | 启动时在 `loadRegistry()` 之后、`refreshPortHint()` 之前加一次 `await refreshCachedVersions()`，并把 `refreshCachedVersions()` 里原来的 `setChoices(versionChoices()); relayout()` 改成先 `renderVersionUI()` 再 `relayout()` | 提示依赖 `cachedVersions`，而它原来只在「打开版本下拉」时才扫（`npxVersionPicker.onOpen`）。不提前扫，回填了已装版本的用户在首屏看不到这条提示，要手动点开下拉才出现——实测确认过这个 bug | 只在 `onOpen` 时扫（首屏漏提示）；把这次扫描做成阻塞启动（它只是列目录，很快，可以 await） |
+
+## 2026-10-22 修「已装」徽章判定错误，并把「已装」与「已缓存」合并成「已缓存」
+
+维护者报：选一个**未安装、未运行**的版本时，版本下拉里错误地显示「已装」徽章；同时「已装」与「已缓存」两枚徽章语义重复，要求合并。
+
+| 日期 | 决策 | 为什么 | 放弃了什么 |
+|------|------|--------|------------|
+| 2026-10-22 | 删掉「已装」徽章（`tone: "installed"` 与 `.picker-badge-installed` 一并删除），版本行只留「最新」与「已缓存」两种 | 原判定是 `version === selectedVersion` —— `selectedVersion` 只是下拉里选中的那个值（`selectedVersion = value === AUTO_VERSION ? null : value`），**不代表这一版装没装**，所以选中任何未安装的版本都会挂上「已装」。真正「装没装」的唯一数据源是 `cachedVersions`（`npx_cached_versions` 扫描 `_npx` 缓存目录得到的实际版本号），「已缓存」用的就是它 | 把「已装」改成 `cachedVersions.includes(version)` 保留两枚徽章（两枚都来自同一份数据、说的同一件事，肉眼是重复信息）；新增「使用中」徽章（下拉不掌握运行中版本，要额外拉 `installed_dsh_versions`，超出本次范围） |
+| 2026-10-22 | 选中行靠行首 `✓` 与按钮里的版本号认，不再额外挂徽章；`PickerBadge['tone']` 联合类型收窄为 `"latest" \| "cached" \| "manual"` | 徽章是「这一版的固有属性」（是不是 latest、本机缓存在不在），选中状态是「下拉控件的临时状态」，两者混在一个徽章列里必然互相打架 | 保留 `"installed"` 这个 tone 但不用（类型上留着死值，下一个人会以为它还有语义） |
+| 2026-10-22 | `test/frontend/version-picker.test.mjs` 增补：断言任何行都不挂「已装」、并新增用例「选中未安装的版本不显示『已装』徽章」（点 `0.2.1-alpha.5` 后按钮徽章为空） | 这个 bug 正是「选择行为改变徽章」造成的，必须有一条用例把「选中 ≠ 已装」钉住，否则下次有人把 `selectedVersion` 塞回判定里也没人发现 | 只改实现不补测试（回归时无从发现） |

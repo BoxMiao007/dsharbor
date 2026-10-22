@@ -208,17 +208,17 @@ async function main(): Promise<void> {
     const latestVersion = (): string | null => registry?.distTags.latest ?? null;
 
     /**
-     * 版本行尾的徽章。顺序固定（最新 → 已装 → 已缓存），同一行反复渲染长得一样。
-     * 「已装」与「已缓存」不并列：已选中的那一行说「已装」就够了，再说一遍缓存是同一件事。
+     * 版本行尾的徽章。顺序固定（最新 → 已缓存），同一行反复渲染长得一样。
+     * 「已缓存」只按本机 npx 缓存里有没有这一版来判（`cachedVersions`），与「当前选中哪一行」无关：
+     * 选中只是下拉里的一个值，不代表这一版已经装在本机，所以不能再拿 `selectedVersion` 当「已装」。
+     * 选中的那一行靠行首的 ✓ 认，不需要额外的「已装」徽章（与「已缓存」也是同一件事）。
      */
     function versionBadges(version: string): PickerBadge[] {
       const badges: PickerBadge[] = [];
       if (version === latestVersion()) {
         badges.push({ text: "最新", tone: "latest" });
       }
-      if (version === selectedVersion) {
-        badges.push({ text: "已装", tone: "installed" });
-      } else if (cachedVersions.includes(version)) {
+      if (cachedVersions.includes(version)) {
         badges.push({ text: "已缓存", tone: "cached" });
       }
       return badges;

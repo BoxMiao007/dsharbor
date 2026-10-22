@@ -4,7 +4,8 @@
  * 只测这一个接缝——`#npx-version-picker` 展开后的列表：
  *  1. 首项固定是「自动最新版本」，右侧徽章写 npm latest 指向的版本号，它不带版本号（选它 = 跟 latest 走）；
  *  2. 列表按新到旧直列官方发布过的版本，不打渠道分组；npm latest 那一行挂「最新」；
- *  3. npx 缓存里已有的版本挂「已缓存」（数据来自 `npx_cached_versions`）；
+ *  3. npx 缓存里已有的版本挂「已缓存」（数据来自 `npx_cached_versions`）；选中的版本不额外挂「已装」
+ *     （「已装」原来按「当前选中的值」判，选中未安装的版本也会误显示，已删）；
  *  4. 末尾是「更多…」，每点一次再放 10 个，且点「更多」不收起弹层。
  *
  * 跑在普通浏览器里（假后端预览台 scripts/mock-preview.mjs），不起 Tauri 窗口。
@@ -155,6 +156,33 @@ test("版本按新到旧直列，latest 那行挂「最新」，缓存里有的�
       const row = rows.find((r) => r.label === cached);
       assert.ok(row?.badges.includes("已缓存"), `${cached} 应挂「已缓存」`);
     }
+
+    // 「已装」徽章已删掉：选中只是下拉里的一个值，不代表这一版装在本机。
+    for (const row of rows) {
+      assert.ok(!row.badges.includes("已装"), `「${row.label}」不该挂「已装」`);
+    }
+  } finally {
+    await page.close();
+  }
+});
+
+test("选中未安装的版本不显示「已装」徽章", { skip: skipReason }, async () => {
+  const page = await openLaunchPage(browser);
+  try {
+    await openList(page);
+    // 假数据里 0.2.1-alpha.5 既不是 latest（0.2.1-rc.2）也不在本机缓存里。
+    await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll("#npx-version-picker .picker-option"));
+      items.find((li) => li.querySelector(".text")?.textContent === "0.2.1-alpha.5")?.click();
+    });
+    await sleep(200);
+    const label = await page.evaluate(() => ({
+      text: document.querySelector("#npx-version-picker .picker-label")?.textContent ?? "",
+      badges: Array.from(document.querySelectorAll("#npx-version-picker .picker-label .picker-badge")).map((b) => b.textContent),
+    }));
+    assert.ok(label.text.includes("0.2.1-alpha.5"), "应已选中 0.2.1-alpha.5");
+    assert.ok(!label.badges.includes("已装"), "未安装的版本不该挂「已装」");
+    assert.deepEqual(label.badges, [], "未安装、非 latest 的版本不挂任何徽章");
   } finally {
     await page.close();
   }

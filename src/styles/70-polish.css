@@ -54,7 +54,7 @@
   border-radius: 50%;
 }
 
-/* 行尾小徽章（最新 / 已装 / 已缓存 / 手动）：比选项文字再小一号的胶囊。
+/* 行尾小徽章（最新 / 已缓存 / 手动）：比选项文字再小一号的胶囊。
    顺序与配色都在调用方定死，同一行反复渲染长得一样。 */
 .picker-badge {
   flex: none;
@@ -71,11 +71,7 @@
   background: var(--accent-soft);
 }
 
-.picker-badge-installed {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-}
-
+/* 「已缓存」= 本机 npx 缓存里已有这一版，选它启动不用重新下载。 */
 .picker-badge-cached {
   color: var(--fg-dim);
   background: var(--elev);
