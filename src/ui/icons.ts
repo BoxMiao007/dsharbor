@@ -14,9 +14,12 @@ export const ICON_LOG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3"
 /** 「新建空白环境」：一枚加号。 */
 export const ICON_PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5v13" /><path d="M5.5 12h13" /></svg>`;
 
-/** 左栏底部那颗浅/深切换图标：显示的是「点下去会变成什么」，不是当前状态。 */
-export const ICON_SUN = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" /></svg>`;
-export const ICON_MOON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>`;
+/** 浅/深切换的两颗图标：显示的是「点下去会变成什么」，不是当前状态。
+    两颗同时常驻切换按钮（见 .theme-morph），由 html[data-mode] 决定谁在场、谁退场
+    ——可见性与对转全靠 CSS 的 opacity/transform，不在 JS 里换图标，所以过渡能完整
+    跑完、连点也不会卡中间。类名 ico-sun / ico-moon 是 CSS 与测试的接缝。 */
+export const ICON_SUN = `<svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" /></svg>`;
+export const ICON_MOON = `<svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>`;
 
 /** 左侧导航的分区：导航按钮与面板标题都按这份表生成，顺序即显示顺序。 */
 export const PANELS: ReadonlyArray<{ key: PanelKey; label: string; icon: string }> = [

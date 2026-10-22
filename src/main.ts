@@ -4,7 +4,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./style.css";
-import { PANELS, ICON_SUN, ICON_MOON, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
+import { PANELS, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
 import { isStarting } from "./ui/types";
 import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, InstalledDsh } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
@@ -414,9 +414,11 @@ async function main(): Promise<void> {
     // 左栏底部那颗浅/深切换：图标画的是「点下去会变成什么」，切换只改 <html data-mode>，
     // 界面不重建，正在填的字段与滚动位置都保住。
     const modeBtn = $<HTMLButtonElement>("mode-btn");
+    // 图标交接只由 html[data-mode] 驱动（见 20-sidebar.css 的 .theme-morph）：两颗图标
+    // 常驻 DOM，谁在场、谁转走全交给 CSS，JS 不再换 innerHTML，所以过渡能完整跑完、
+    // 连点也只会重算到目标终态。这里只同步无障碍标签。
     const renderModeButton = (): void => {
       const dark = theme === "dark";
-      modeBtn.innerHTML = dark ? ICON_SUN : ICON_MOON;
       const label = dark ? "切换到浅色模式" : "切换到深色模式";
       modeBtn.title = label;
       modeBtn.setAttribute("aria-label", label);
@@ -715,6 +717,9 @@ async function main(): Promise<void> {
     const PANEL_KEY = "dsharbor.ui.panel";
     const navButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-panel-btn]"));
     const panelSections = Array.from(root.querySelectorAll<HTMLElement>("[data-panel]"));
+    // 左栏那块跟着选中项滑的底（#36）：位置由按钮序号算，序号写在 --i 上（见 20-sidebar.css）。
+    const railEl = navButtons[0]?.closest<HTMLElement>(".rail") ?? null;
+    const railIndicator = railEl?.querySelector<HTMLElement>(".rail-ind") ?? null;
     /** 内容区整体滚动（工具栏与左栏固定），滚动指示条挂在它的外层。 */
 
     function readStoredPanel(): PanelKey {
@@ -738,12 +743,22 @@ async function main(): Promise<void> {
       for (const button of navButtons) {
         button.setAttribute("aria-current", button.dataset.panelBtn === key ? "true" : "false");
       }
+      // 左栏指示块按按钮序号滑过去：只写序号，位移与回弹交给 CSS 过渡（#36）。
+      if (railIndicator) {
+        const index = navButtons.findIndex((button) => button.dataset.panelBtn === key);
+        railIndicator.style.setProperty("--i", String(Math.max(index, 0)));
+      }
       for (const panel of panelSections) {
         const showing = panel.dataset.panel === key;
         panel.classList.toggle("hidden", !showing);
         // 换内容时留着旧滚动位置很莫名：主卡（唯一的滚动容器）回到顶部。
         if (showing) {
           for (const host of panel.querySelectorAll<HTMLElement>(".block.main-card")) host.scrollTop = 0;
+          // 内容入场（#36）：先摘类、强制一次回流，再挂回去，同一个分区来回切也能重播。
+          // 动画是 backwards 且不 forwards，跑完 transform 自然回到 none，类留着也不残留中间态。
+          panel.classList.remove("is-enter");
+          void panel.offsetWidth;
+          panel.classList.add("is-enter");
         }
       }
       updateScrollThumbHook();
@@ -755,6 +770,14 @@ async function main(): Promise<void> {
         }
       }
     };
+
+    // 首帧把指示块直接贴到存下来的分区上，不许它从第一个慢慢滑过去（#36）：
+    // 下一帧才给 .rail[data-ready]，从那时起换分区才有过渡。
+    if (railEl) {
+      window.requestAnimationFrame(() => {
+        railEl.dataset.ready = "";
+      });
+    }
 
     for (const button of navButtons) {
       button.addEventListener("click", () => {
@@ -768,6 +791,33 @@ async function main(): Promise<void> {
       });
     }
     selectPanel(currentPanel, false);
+
+    // ---- 折叠块：高度过渡（#36）--------------------------------------------------
+    // 语义与键盘仍归原生 <details>：这里只在它开合时补一段「内容长出来 / 收回去」的过程。
+    // 展开走纯 CSS（::details-content 的 block-size 0→auto，见 70-polish.css）；
+    // 收起时浏览器会立刻把内容当隐藏处理、内容量归零，高度动画就没有可缩的东西，
+    // 所以在关闭那一刻给整块挂 data-closing，等过渡跑完再摘——这一段是补原生做不到的一半。
+    const foldBoxes = Array.from(root.querySelectorAll<HTMLDetailsElement>(".log-box"));
+    for (const box of foldBoxes) {
+      // toggle 事件不分「用户点的」和「代码改 open」的，统一走这里，行为一致。
+      box.addEventListener("toggle", () => {
+        if (box.open) {
+          box.removeAttribute("data-closing");
+          return;
+        }
+        if (document.documentElement.dataset.motion === "off") return; // 动效关掉：不收窗口，瞬时完成
+        box.setAttribute("data-closing", "");
+        box.addEventListener(
+          "transitionend",
+          (event) => {
+            if (event.target === box && event.propertyName === "block-size") {
+              box.removeAttribute("data-closing");
+            }
+          },
+          { once: true },
+        );
+      });
+    }
 
     // ---- 日志：左栏里的一个分区，日志正文在主卡里自己滚 ---------------------------
     // 不做窄条 / 浮层 / 遮罩：点左栏「日志」进来，与其他分区平等的进进出出。
