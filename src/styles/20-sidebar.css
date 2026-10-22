@@ -233,3 +233,52 @@
   background: var(--elev);
   color: var(--fg);
 }
+
+/* 深浅切换：太阳 / 月亮两颗图标对转交接 -----------------------------------------
+   图标语义不变——显示的仍是「点下去会变成什么」（深色时太阳在场）。两颗都常驻
+   DOM，谁在场、谁退到哪一侧、转多少度，全由 html[data-mode] 驱动（见下方两条
+   状态规则），不在 JS 里堆状态，所以连续快速切换只会在两套终态间重算，不会卡在
+   中间或出现两颗同时清晰。切换时旧图标旋转约 70°、缩到 0.55、模糊 4px 淡出，
+   新图标反向进场；时长取 --m-enter（260ms），形变不算「放大」，符合位移/时长约束。 */
+.theme-morph {
+  position: relative;
+}
+
+.theme-morph svg {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 18px;
+  height: 18px;
+  /* 用 opacity 淡出，而不是 display：display 不可过渡，旧图标会「啪」地消失。 */
+  transition:
+    opacity var(--m-base) var(--ease-out),
+    transform var(--m-enter) var(--ease-spring),
+    filter var(--m-base) var(--ease-out);
+}
+
+/* 深色外观：太阳在场（居中、正、清晰），月亮转 70°、缩到 0.55、模糊退场。 */
+.theme-morph .ico-sun {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+  filter: blur(0);
+}
+
+.theme-morph .ico-moon {
+  opacity: 0;
+  transform: rotate(70deg) scale(0.55);
+  filter: blur(4px);
+}
+
+/* 浅色外观：反过来——月亮在场，太阳转 -70°、缩小模糊退场。 */
+html[data-mode="light"] .theme-morph .ico-sun {
+  opacity: 0;
+  transform: rotate(-70deg) scale(0.55);
+  filter: blur(4px);
+}
+
+html[data-mode="light"] .theme-morph .ico-moon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+  filter: blur(0);
+}
