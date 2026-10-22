@@ -13,6 +13,7 @@ use dsharbor_core::plugin_switch;
 use dsharbor_core::plugin_update::{self, PluginUpdateItem};
 use dsharbor_core::prefs::DownloadSource;
 use serde::Serialize;
+use tauri::ipc::Channel;
 
 use crate::plugin::{self, Target};
 use crate::registry;
@@ -224,6 +225,37 @@ pub struct UpdateOutcome {
     pub backup_dir: String,
 }
 
+/// 批量更新的逐行进度事件，只在「全部更新」（`name = None`）时经可选进度通道发出。
+///
+/// 与前端 `interface UpdateProgressEvent`（`src/main.ts`）成对维护：界面据 `phase`
+/// 把对应那一行渲染成 排队 / 更新中 / 已更新 / 失败，并用 `index / total` 推进顶部
+/// 确定进度条。单插件更新不走这条通道，只用命令返回值，避免两个状态来源。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressEvent {
+    /// 阶段：`"start"` 这一行开始更新，`"done"` 这一行已结束（成功或失败）。
+    pub phase: &'static str,
+    /// 这一行是第几个（从 1 开始）。
+    pub index: usize,
+    /// 本轮一共要更新几个。
+    pub total: usize,
+    /// 插件包名，对应界面里 `[data-row]` 的行。
+    pub plugin: String,
+    /// `done` 时是否成功；`start` 时为 `None`。
+    pub ok: Option<bool>,
+    /// `done` 且成功时装上的版本号；失败或 `start` 时为 `None`。
+    pub version: Option<String>,
+    /// `done` 时的结果说明（成功是版本提示，失败是错误首行）。
+    pub message: Option<String>,
+}
+
+/// 发一条进度事件；通道只是界面提示，发送失败（窗口关了、页面已走）不影响更新本身。
+fn send_progress(progress: Option<&Channel<ProgressEvent>>, event: ProgressEvent) {
+    if let Some(channel) = progress {
+        let _ = channel.send(event);
+    }
+}
+
 /// 更新单个第三方插件到 registry 上的目标版本。成功返回（装上的版本，备份目录）。
 ///
 /// 目标版本以会话缓存（没有就现查）为准，界面传来的按钮状态不参与决策；
@@ -295,12 +327,16 @@ fn update_one(
 
 /// 更新单个（`name=Some`）或全部有更新的第三方插件（`name=None`，逐个执行、
 /// 单个失败不影响其余）。
+///
+/// `progress` 只用于批量：每开一个插件发一条 `start`、跑完发一条 `done`；
+/// 单个插件更新的结果只从返回值读，不并发两条状态来源。
 pub fn update(
     app: &tauri::AppHandle,
     config: &LaunchConfig,
     profile: &str,
     source: DownloadSource,
     name: Option<&str>,
+    progress: Option<&Channel<ProgressEvent>>,
 ) -> Result<UpdateOutcome, String> {
     match name {
         Some(name) => {
@@ -318,18 +354,54 @@ pub fn update(
                 .filter(|item| item.has_update)
                 .map(|item| item.name.clone())
                 .collect();
+            let total = worklist.len();
             let mut results: Vec<(String, Result<String, String>)> = Vec::new();
             let mut backup_dir = String::new();
-            for name in &worklist {
-                match update_one(app, config, profile, source, name) {
+            for (offset, name) in worklist.iter().enumerate() {
+                let index = offset + 1;
+                send_progress(
+                    progress,
+                    ProgressEvent {
+                        phase: "start",
+                        index,
+                        total,
+                        plugin: name.clone(),
+                        ok: None,
+                        version: None,
+                        message: None,
+                    },
+                );
+                let outcome = update_one(app, config, profile, source, name);
+                let event = match &outcome {
                     Ok((version, dir)) => {
                         if backup_dir.is_empty() {
-                            backup_dir = dir;
+                            backup_dir = dir.clone();
                         }
-                        results.push((name.clone(), Ok(version)));
+                        results.push((name.clone(), Ok(version.clone())));
+                        ProgressEvent {
+                            phase: "done",
+                            index,
+                            total,
+                            plugin: name.clone(),
+                            ok: Some(true),
+                            version: Some(version.clone()),
+                            message: Some(format!("已更新到 {version}")),
+                        }
                     }
-                    Err(err) => results.push((name.clone(), Err(err))),
-                }
+                    Err(err) => {
+                        results.push((name.clone(), Err(err.clone())));
+                        ProgressEvent {
+                            phase: "done",
+                            index,
+                            total,
+                            plugin: name.clone(),
+                            ok: Some(false),
+                            version: None,
+                            message: Some(err.lines().next().unwrap_or(err.as_str()).to_string()),
+                        }
+                    }
+                };
+                send_progress(progress, event);
             }
             let ok = results.iter().all(|(_, r)| r.is_ok());
             Ok(UpdateOutcome {
