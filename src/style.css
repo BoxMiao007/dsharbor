@@ -10,6 +10,7 @@
 @import "./styles/40-content.css"; /* 日志分区 + 内容区卡片骨架（主卡/次卡/小卡） */
 @import "./styles/50-info.css"; /* ⓘ 角标 + 悬停气泡 + 徽章配色 */
 @import "./styles/60-controls.css"; /* 会话按钮族（启动/停止/重启动效）+ 表单控件 */
+@import "./styles/65-copy.css"; /* 复制类按钮的完整反馈（复制→勾 / 已复制 / 复制失败） */
 @import "./styles/70-polish.css"; /* 自绘下拉框 + 滚动条 + 折叠输出区 */
 @import "./styles/80-env-cards.css"; /* 环境大按钮卡片 + 三点操作菜单 */
 @import "./styles/90-modals.css"; /* 浮窗层：桥接插件 / 补丁层 / 环境名输入 */

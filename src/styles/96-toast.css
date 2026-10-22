@@ -1,6 +1,6 @@
 /* 动作回执 Toast（#34）：右下角固定堆叠，条数与生命周期由 src/ui/toast.ts 管。
-   容器 fixed 贴在视窗右下、不参与布局；容器本身不吃点击（pointer-events: none），
-   只有每条 toast 自己接点击，免得右下角一片空白区域挡住底下的按钮。 */
+   容器 fixed 贴在视窗右下、不参与布局；容器与每条 toast 都不吃点击（pointer-events: none），
+   只有关闭按钮把点击收回来，免得这块区域把底下的按钮挡住几秒。 */
 .toasts {
   position: fixed;
   right: 18px;
