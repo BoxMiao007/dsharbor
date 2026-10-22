@@ -58,6 +58,21 @@ pub fn cached_versions(runtime: &Runtime) -> Result<Vec<String>, String> {
     })))
 }
 
+/// 钉版本写法（`@deepseek-ai/dsh@<版本>`）启动能直接复用的缓存版本。
+///
+/// 界面用它区分「选它启动不会再下载」（命中这里）与「缓存里有、但选了还会再下一份」
+/// （只在 cached_versions 里）：npx 按命令写法各存一份缓存，裸包名写法留下的目录
+/// 服务不了钉版本的启动命令。与 cached_versions 同一次扫描，不在 Windows 宿主上返回空。
+pub fn pin_served(runtime: &Runtime) -> Result<Vec<String>, String> {
+    if !cfg!(windows) {
+        return Ok(Vec::new());
+    }
+    let installs = installed(runtime)?;
+    Ok(npx_cache::pin_served_versions(
+        installs.iter().map(|item| item.specs.iter()),
+    ))
+}
+
 /// 宿主 npm 缓存里每份 `_npx` 目录的安装信息。
 ///
 /// 版本先读 `node_modules/@deepseek-ai/dsh/package.json` 的 version（真实解析到的那一版），

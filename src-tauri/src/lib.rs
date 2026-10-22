@@ -677,7 +677,20 @@ async fn query_dsh_versions(
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }
 
-/// 列出 npx 缓存里已经缓存过的本包版本号（给界面「已缓存」徽章用）。
+/// `npx_cached_versions` 的返回：两个口径的「本机已缓存版本」。
+///
+/// - `versions`：缓存里出现过的版本（「已缓存」徽章按它挂）；
+/// - `pinServed`：其中钉版本写法（`dsh@<版本>`）启动能直接复用的那部分——npx 按命令
+///   写法各存一份缓存，裸包名写法留下的目录服务不了钉版本的启动命令，所以两个清单
+///   不重合时，界面要如实告诉用户「选了还会再下载一份」。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedVersions {
+    versions: Vec<String>,
+    pin_served: Vec<String>,
+}
+
+/// 列出 npx 缓存里已经缓存过的本包版本号（给界面「已缓存」徽章与「本机已经装过」提示用）。
 ///
 /// 跟随当前运行环境：Windows 宿主扫宿主 npm 缓存，WSL 则进发行版里扫——
 /// 同一个版本号在宿主上是「已缓存」、在发行版里可能是要现下的，所以必须分环境算。
@@ -685,10 +698,17 @@ async fn query_dsh_versions(
 /// async + spawn_blocking：要问 npm 缓存根、递归扫 `_npx` 下每个目录（WSL 下还要
 /// 起 wsl.exe），同步命令会把主线程堵住。
 #[tauri::command]
-async fn npx_cached_versions(runtime: launch::Runtime) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || npxcache::cached_versions(&runtime))
-        .await
-        .map_err(|err| format!("后台读取已缓存版本失败：{err}"))?
+async fn npx_cached_versions(runtime: launch::Runtime) -> Result<CachedVersions, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let versions = npxcache::cached_versions(&runtime)?;
+        let pin_served = npxcache::pin_served(&runtime)?;
+        Ok(CachedVersions {
+            versions,
+            pin_served,
+        })
+    })
+    .await
+    .map_err(|err| format!("后台读取已缓存版本失败：{err}"))?
 }
 
 /// 打开（或刷新）DSH 界面窗口——界面与托盘的「应用内打开」。

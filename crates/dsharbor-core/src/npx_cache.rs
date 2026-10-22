@@ -100,6 +100,33 @@ pub fn spec_version(spec: &str) -> Option<&str> {
     }
 }
 
+/// 「钉版本写法」（`@deepseek-ai/dsh@<具体版本号>`）能直接复用缓存的版本清单（去重 + 从新到旧）。
+///
+/// npx 的缓存键是命令写法本身：裸包名 `@deepseek-ai/dsh` 与钉版本
+/// `@deepseek-ai/dsh@0.2.1-rc.2` 解析到同一版本也各建一个 `_npx/<hash>` 目录。
+/// 所以「缓存里有 v」不等于「选 v 启动不用再下载」——只有 manifest 里登记的就是
+/// 钉版本写法的那份目录才服务得了钉版本的启动命令。`spec_version` 恰好只认这种
+/// 具体版本号的钉版本 spec（裸包名、`@next` 这类标签、别的包都判 None），直接复用。
+pub fn pin_served_versions<I, S>(entries: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: IntoIterator,
+    S::Item: AsRef<str>,
+{
+    let mut versions: Vec<String> = Vec::new();
+    for specs in entries {
+        for spec in specs {
+            if let Some(version) = spec_version(spec.as_ref()) {
+                versions.push(version.to_string());
+            }
+        }
+    }
+    versions.sort();
+    versions.dedup();
+    crate::registry::sort_newest_first(&mut versions);
+    versions
+}
+
 /// 把 `_npx` 里扫到的「本包版本」汇总成界面要用的清单（去重 + 从新到旧）。
 ///
 /// 每个目录给两个来源，顺序不能反：
@@ -280,6 +307,38 @@ mod tests {
 
         // 空输入不是错误：缓存里还没有本包的任何版本。
         assert!(cached_versions(Vec::<(Option<&str>, Vec<&str>)>::new()).is_empty());
+    }
+
+    #[test]
+    fn pin_served_versions_reads_only_pinned_specs() {
+        // 钉版本写法的目录：这一版启动能直接复用。
+        let pinned: Vec<Vec<&str>> = vec![vec!["@deepseek-ai/dsh@0.2.1-rc.2"]];
+        assert_eq!(pin_served_versions(&pinned), vec!["0.2.1-rc.2"]);
+
+        // 裸包名与 dist-tag 写法的目录再多也服务不了钉版本的启动：一个都不算。
+        let loose: Vec<Vec<&str>> = vec![
+            vec!["@deepseek-ai/dsh"],
+            vec!["@deepseek-ai/dsh@next"],
+            vec!["@deepseek-ai/dsh@"],
+        ];
+        assert!(pin_served_versions(&loose).is_empty());
+
+        // 别的包不算（`lodash@4` 的后缀也是数字开头）。
+        let other: Vec<Vec<&str>> = vec![vec!["lodash@4.17.21"]];
+        assert!(pin_served_versions(&other).is_empty());
+
+        // 空输入不是错误。
+        assert!(pin_served_versions(Vec::<Vec<&str>>::new()).is_empty());
+    }
+
+    #[test]
+    fn pin_served_versions_dedupes_and_sorts_newest_first() {
+        // 同一版本钉过两次（或同一目录登记多条）只报一次；空格容忍与 cached_versions 一致。
+        let entries: Vec<Vec<&str>> = vec![
+            vec!["@deepseek-ai/dsh@0.2.0", "  @deepseek-ai/dsh@0.2.0 "],
+            vec!["@deepseek-ai/dsh@0.3.0"],
+        ];
+        assert_eq!(pin_served_versions(&entries), vec!["0.3.0", "0.2.0"]);
     }
 
     #[test]

@@ -5,6 +5,8 @@
  *  1. 首项固定是「自动最新版本」，右侧徽章写 npm latest 指向的版本号，它不带版本号（选它 = 跟 latest 走）；
  *  2. 列表按新到旧直列官方发布过的版本，不打渠道分组；npm latest 那一行挂「最新」；
  *  3. npx 缓存里已有的版本挂「已缓存」（数据来自 `npx_cached_versions`）；选中的版本不额外挂「已装」
+ *  4. 「本机已经装过」提示的两种口径：缓存那份是钉版本写法（`dsh@<版本>`）→「不会再下载」；
+ *     只是裸包名写法留下的 →「会再下载一份」（npx 按命令写法各存一份缓存）
  *     （「已装」原来按「当前选中的值」判，选中未安装的版本也会误显示，已删）；
  *  4. 末尾是「更多…」，每点一次再放 10 个，且点「更多」不收起弹层。
  *
@@ -58,15 +60,18 @@ function startPreview() {
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-async function openLaunchPage(browser) {
+async function openLaunchPage(browser, state = null, waitText = "自动最新版本") {
   const page = await browser.newPage();
   await page.setViewport({ width: 1240, height: 900 });
-  await page.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
+  const url = state ? `${PAGE_URL}?state=${encodeURIComponent(JSON.stringify(state))}` : PAGE_URL;
+  await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#npx-version-picker .picker-btn");
-  // 版本列表是异步读回来的：等首项从「正在读取…」变成「自动最新版本」。
+  // 版本列表是异步读回来的：等首项从「正在读取…」变成目标文案（默认是「自动最新版本」，
+  // 注入了已存版本的页面则是那个版本号本身）。
   await page.waitForFunction(
-    () => document.querySelector("#npx-version-picker .picker-label")?.textContent.includes("自动最新版本"),
+    (text) => document.querySelector("#npx-version-picker .picker-label")?.textContent.includes(text),
     { timeout: 5000 },
+    waitText,
   );
   return page;
 }
@@ -283,6 +288,51 @@ test("末尾「更多…」每次只放 10 个，且点了不收起弹层", { sk
 
     const afterOne = await readList(page);
     assert.equal(verCount(afterOne), beforeCount + 10, "点一次「更多…」应再多放 10 个版本");
+  } finally {
+    await page.close();
+  }
+});
+
+test("缓存提示分两种口径：钉版本写法不重下，裸包名写法会重下", { skip: skipReason }, async () => {
+  // 保存的配置选了 0.2.0-rc.2：它在缓存里（默认假数据），但 pinServed 只登记 0.2.1-rc.1
+  // ——即缓存里那份 0.2.0-rc.2 是裸包名写法留下的，按 npx「每种写法各存一份」会再下载。
+  const state = {
+    savedLaunch: {
+      mode: { kind: "npx", version: "0.2.0-rc.2" },
+      runtime: { kind: "default" },
+      extraArgs: [],
+      port: null,
+    },
+    npxPinServedVersions: ["0.2.1-rc.1"],
+  };
+  const page = await openLaunchPage(browser, state, "0.2.0-rc.2");
+  try {
+    const hint = () =>
+      page.evaluate(() => {
+        const el = document.querySelector("#npx-installed-hint");
+        return { text: el?.textContent ?? "", hidden: el?.classList.contains("hidden") ?? true };
+      });
+
+    let shown = await hint();
+    assert.equal(shown.hidden, false, "缓存里的选中版本要出提示");
+    assert.match(shown.text, /0\.2\.0-rc\.2/, "提示要带当前版本号");
+    assert.match(shown.text, /[^不]会再下载一份/, "裸包名写法留下的缓存要如实说会再下载");
+    assert.doesNotMatch(shown.text, /不会再下载/, "此时不能反过来保证不重下");
+
+    // 换选 pinServed 命中的 0.2.1-rc.1：这份缓存就是钉版本写法留下的，如实说不重下。
+    await openList(page);
+    await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll("#npx-version-picker .picker-option"));
+      items.find((li) => li.querySelector(".text")?.textContent === "0.2.1-rc.1")?.click();
+    });
+    await page.waitForFunction(
+      () => document.querySelector("#npx-version-picker .picker-label")?.textContent.includes("0.2.1-rc.1"),
+      { timeout: 3000 },
+    );
+    shown = await hint();
+    assert.equal(shown.hidden, false, "换成钉版本命中的版本仍要有提示");
+    assert.match(shown.text, /不会再下载/, "钉版本写法命中的缓存要说明不会重下");
+    assert.doesNotMatch(shown.text, /[^不]会再下载一份/, "此时不能误报会重下");
   } finally {
     await page.close();
   }

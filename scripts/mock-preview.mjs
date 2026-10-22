@@ -60,6 +60,8 @@ const state = {
   },
   /** 本机 npx 缓存里已有的版本（`npx_cached_versions`）：「已缓存」徽章按它挂。 */
   npxCachedVersions: ["0.2.1-rc.1", "0.2.0-rc.2"],
+  /** 其中钉版本写法（`dsh@<版本>`）启动能直接复用的部分：提示按它说「不会再下载」。 */
+  npxPinServedVersions: ["0.2.1-rc.1"],
   /** 已保存的启动配置：改它并刷新页面就能预览各种保存/回填分支（如存了已下架的版本）。 */
   savedLaunch: {
     mode: { kind: "npx", version: null },
@@ -667,10 +669,14 @@ window.__mockUnimplemented = [];
       if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
       return S.registry;
     },
-    // 本机 npx 缓存里现有的版本：「已缓存」徽章的数据源（预览里固定给一组假版本）。
+    // 本机 npx 缓存里现有的版本：「已缓存」徽章的数据源（预览里固定给一组假版本）；
+    // pinServed 是钉版本写法能直接复用的部分（不重合的版本提示「选了还会再下载」）。
     npx_cached_versions: () => {
       seen("npx_cached_versions");
-      return S.npxCachedVersions || [];
+      return {
+        versions: S.npxCachedVersions || [],
+        pinServed: S.npxPinServedVersions || [],
+      };
     },
 
     // 自检：结论与失败原因都从 __MOCK_STATE__.selfCheck 来（改它能预览三种文案），

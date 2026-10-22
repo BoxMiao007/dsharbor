@@ -132,6 +132,8 @@ async function main(): Promise<void> {
     let selectedVersion: string | null = null;
     /** 本机 npx 缓存里已有的版本；每次展开版本下拉现扫一次。 */
     let cachedVersions: string[] = [];
+    /** 其中钉版本写法（`dsh@<版本>`）启动能直接复用的部分（`npx_cached_versions.pinServed`）。 */
+    let pinServedVersions: string[] = [];
     /** 版本下拉当前放出几个具体版本（不含首项与末尾的「更多…」）。 */
     let versionShown = VERSION_INITIAL_COUNT;
 
@@ -295,7 +297,9 @@ async function main(): Promise<void> {
 
     /**
      * 选中版本「本机已经装过」的提示。按实际版本号判等（不看 latest 标签），
-     * 命中就说明这一份 npx 缓存已经存在，只提示不禁用——用户仍可照常启动。
+     * 只提示不禁用——用户仍可照常启动。两种口径都说实话：
+     * 缓存里那份就是钉版本写法（`dsh@<版本>`）留下的，选它启动直接复用；
+     * 否则（裸包名写法留下的）按 npx「每种写法各存一份缓存」的规则，选了还会再下一份。
      */
     function installedHint(): string {
       if (selectedVersion === null) {
@@ -304,7 +308,10 @@ async function main(): Promise<void> {
       if (!cachedVersions.includes(selectedVersion)) {
         return "";
       }
-      return `v${selectedVersion} 本机已经装过（npx 缓存里已有这一份），选它启动不会再下载一份。`;
+      if (pinServedVersions.includes(selectedVersion)) {
+        return `v${selectedVersion} 本机已经装过（缓存里就是 dsh@${selectedVersion} 写法的那份），选它启动不会再下载一份。`;
+      }
+      return `v${selectedVersion} 本机 npx 缓存里已有这一份，但选它启动会再下载一份——npx 按命令写法各存一份缓存，缓存里那份是裸包名写法（不带 @版本）留下的。`;
     }
 
     /** 版本下拉、命令预览、提示行与刷新按钮的状态一处刷齐。 */
@@ -328,11 +335,17 @@ async function main(): Promise<void> {
     /** 现扫一次本机 npx 缓存里已有的版本，好把「已缓存」徽章挂到正确的行上。 */
     async function refreshCachedVersions(): Promise<void> {
       try {
-        cachedVersions = await invoke<string[]>("npx_cached_versions", { runtime });
+        const cached = await invoke<{ versions: string[]; pinServed: string[] }>(
+          "npx_cached_versions",
+          { runtime },
+        );
+        cachedVersions = cached.versions;
+        pinServedVersions = cached.pinServed;
       } catch (err) {
         // 缓存目录读不到只影响那枚徽章，不影响选版本；不打扰用户，日志里留痕。
         console.error("读取 npx 缓存版本失败:", err);
         cachedVersions = [];
+        pinServedVersions = [];
       }
       // 徽章是在 versionChoices() 里算的，扫回来必须重铺一遍候选；只调 relayout() 不会重算徽章。
       // 「本机已装过」的提示也依赖 cachedVersions，一并重刷。
