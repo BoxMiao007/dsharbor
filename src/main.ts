@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./style.css";
-import { PANELS, ICON_SUN, ICON_MOON, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
+import { PANELS, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
 import { isStarting } from "./ui/types";
 import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, InstalledDsh } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
@@ -414,9 +414,11 @@ async function main(): Promise<void> {
     // 左栏底部那颗浅/深切换：图标画的是「点下去会变成什么」，切换只改 <html data-mode>，
     // 界面不重建，正在填的字段与滚动位置都保住。
     const modeBtn = $<HTMLButtonElement>("mode-btn");
+    // 图标交接只由 html[data-mode] 驱动（见 20-sidebar.css 的 .theme-morph）：两颗图标
+    // 常驻 DOM，谁在场、谁转走全交给 CSS，JS 不再换 innerHTML，所以过渡能完整跑完、
+    // 连点也只会重算到目标终态。这里只同步无障碍标签。
     const renderModeButton = (): void => {
       const dark = theme === "dark";
-      modeBtn.innerHTML = dark ? ICON_SUN : ICON_MOON;
       const label = dark ? "切换到浅色模式" : "切换到深色模式";
       modeBtn.title = label;
       modeBtn.setAttribute("aria-label", label);
