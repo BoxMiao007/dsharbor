@@ -1,3 +1,18 @@
+/* ---- 只给读屏看：视觉隐藏但留在辅助技术树里 --------------------------------
+   复制反馈的 role="status" 播报区（#35）用它。不能用 display:none / visibility:hidden，
+   那会把内容从读屏里一起删掉；这里留 1px 盒子并用 clip 收掉。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---- 收尾：.hidden 放在最末 ----------------------------------------------
    文件里不少组件自带 display（.subcard、.cell-row、.fields…），与 .hidden 同特指度时
    靠源码顺序定胜负。放在最末才能保证「加了 .hidden 就真的不显示」，不用逐个补 .xxx.hidden。 */

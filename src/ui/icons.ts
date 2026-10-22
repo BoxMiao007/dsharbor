@@ -92,4 +92,13 @@ export const ICON_REVERT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d=
 export const ICON_MODAL_CLOSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" /></svg>`;
 /** 打开方式两段式按钮右侧那颗小三角。 */
 export const ICON_CHEVRON_DOWN = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" /></svg>`;
-export const ICON_COPY = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.2" /><path d="M15 6.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15" /></svg>`;
+const COPY_BODY = `<rect x="9" y="9" width="11" height="11" rx="2.2" /><path d="M15 6.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15" />`;
+export const ICON_COPY = `<svg viewBox="0 0 24 24" aria-hidden="true">${COPY_BODY}</svg>`;
+
+/** 复制按钮里与勾叠放的「复制」形（#35）：带 .i-copy 类，供复制反馈切换可见性。
+ *  与 ICON_COPY 同一条路径，只多一个类名——按钮态与菜单图标不会画成两种复制形。 */
+export const ICON_COPY_MORPH = `<svg class="i-copy" viewBox="0 0 24 24" aria-hidden="true">${COPY_BODY}</svg>`;
+
+/** 完成勾（#35）：方钮的 0.9s 完成态与复制按钮的成功态共用这一枚，别再画第二个勾。
+ *  与 ICON_COPY 同视框、同描边参数，两枚叠放切换时视觉重心不跳。 */
+export const ICON_CHECK = `<svg class="i-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7" /></svg>`;

@@ -830,6 +830,17 @@ window.__mockUnimplemented = [];
       return handler(a === undefined ? {} : a);
     },
   };
+  // 剪贴板替身：127.0.0.1 下 navigator.clipboard 在无头浏览器里不一定给写权限，
+  // 复制按钮会掉到 execCommand 兜底、结果随浏览器而异。这里给一个必定成功的假实现，
+  // 让「已复制」反馈在预览与自动化测试里稳定复现；测试要验失败态时自行覆写。
+  try {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async () => undefined, readText: async () => "" },
+    });
+  } catch {
+    // 老浏览器不允许改 navigator 属性时保留原生实现，不影响预览其余部分。
+  }
   // 运行中时日志行每秒增长，用来验证「滚动 / 拖选时界面不会被刷没」
   window.setInterval(() => { if (S.session === "running" && !S.freezeLog) S.counter += 1; }, 1000);
 })();
