@@ -1,6 +1,6 @@
 /* 应用入口：只剩 main() —— 装配初始 DOM、绑定全部事件、轮询后端状态。
    静态骨架见 ui/build-html.ts；图标、类型、工具、主题、转动状态机等模块在 ui/。 */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./style.css";
@@ -2620,6 +2620,9 @@ async function main(): Promise<void> {
     const btnPluginCheckUpdates = $<HTMLButtonElement>("btn-plugin-check-updates");
     const btnPluginUpdateAll = $<HTMLButtonElement>("btn-plugin-update-all");
     const btnUpdateAllBadge = $<HTMLSpanElement>("plugin-update-all-badge");
+    const pluginProgress = $<HTMLElement>("plugin-progress");
+    const pluginProgressBar = $<HTMLElement>("plugin-progress-bar");
+    const pluginProgressSum = $<HTMLParagraphElement>("plugin-progress-sum");
 
     /** 与 Rust 侧 `plugin_switch::PluginItem` 对应。 */
     interface PluginItem {
@@ -2666,6 +2669,28 @@ async function main(): Promise<void> {
       backupDir: string;
     }
 
+    /**
+     * 与 Rust 侧 `plugin_update::ProgressEvent` 对应：批量更新时后端逐个插件回放的进度。
+     * 每个插件两条——`start`（开始动它）与 `done`（结果出来了）；单插件更新不走这里。
+     */
+    interface UpdateProgressEvent {
+      phase: "start" | "done";
+      /** 这一轮里的序号，从 1 起。 */
+      index: number;
+      /** 这一轮一共要更新几个。 */
+      total: number;
+      plugin: string;
+      /** 仅 `done`：这一步成功与否。 */
+      ok: boolean | null;
+      /** 仅 `done` 且成功：装上的版本。 */
+      version: string | null;
+      /** 仅 `done`：成功是版本提示，失败是原因（首行）。 */
+      message: string | null;
+    }
+
+    /** 行级更新状态：排队 → 更新中 → 已更新/失败。不在表里＝这一行没参与本轮。 */
+    type UpdatePhase = "queue" | "busy" | "done" | "fail";
+
     /** 最近一次检查得到的更新清单（只含参与更新的第三方插件）。 */
     let pluginUpdateItems: PluginUpdateItem[] = [];
     /** 当前环境是否已检查过（没查过时行里不显示版本号，免得像「没有版本」）。 */
@@ -2676,6 +2701,23 @@ async function main(): Promise<void> {
     let pluginUpdateRunningAll = false;
     /** 检查更新是否在跑（「检查更新」按钮发起的强制重查；进卡自动查不锁界面）。 */
     let pluginCheckBusy = false;
+    /** 这一轮更新里每一行自己的状态（键＝插件名）。空着＝没有正在展示的更新轮次。 */
+    let pluginUpdatePhases = new Map<string, { phase: UpdatePhase; message: string | null }>();
+    /** 这一轮要更新几个／已完成几个（含失败）／失败几个：进度条与收尾汇总都按它们算。 */
+    let pluginProgressTotal = 0;
+    let pluginProgressDone = 0;
+    let pluginProgressFailed = 0;
+    /** 收尾汇总文案（null＝这一轮还没跑完，进度区显示进行中的已完成数）。 */
+    let pluginProgressSummary: string | null = null;
+
+    /** 清掉上一轮的进度与行级状态（换环境、重新检查、开始新一轮时用）。 */
+    function resetPluginProgress(): void {
+      pluginUpdatePhases = new Map();
+      pluginProgressTotal = 0;
+      pluginProgressDone = 0;
+      pluginProgressFailed = 0;
+      pluginProgressSummary = null;
+    }
 
     /** 插件卡上还有没有别的动作在跑（检查更新或任意一轮更新）：
      *  是的话开关与更新按钮全部置灰——维护者要求这些操作互斥，做完才放开。 */
@@ -2707,6 +2749,38 @@ async function main(): Promise<void> {
       return pluginUpdateItems.find((item) => item.name === name) ?? null;
     }
 
+    /** 行级四态的中文标签：排队 / 更新中 / 已更新 / 失败。 */
+    const updatePhaseLabel: Record<UpdatePhase, string> = {
+      queue: "排队",
+      busy: "更新中",
+      done: "已更新",
+      fail: "失败",
+    };
+
+    /** 这一行在本轮更新里的状态；没参与本轮返回 null。 */
+    function updatePhaseFor(name: string): { phase: UpdatePhase; message: string | null } | null {
+      return pluginUpdatePhases.get(name) ?? null;
+    }
+
+    /** 行标题里那枚状态胶囊：只在参与本轮更新的行上出现。 */
+    function pluginPhaseChipHtml(name: string): string {
+      const state = updatePhaseFor(name);
+      if (!state) {
+        return "";
+      }
+      return `<span class="plugin-phase plugin-phase-${state.phase}">${updatePhaseLabel[state.phase]}</span>`;
+    }
+
+    /** 失败行把原因留在行里（可读、可核对），成功行不占位。 */
+    function pluginFailHtml(name: string): string {
+      const state = updatePhaseFor(name);
+      if (!state || state.phase !== "fail") {
+        return "";
+      }
+      const reason = state.message ? `失败：${state.message}` : "失败：原因未知";
+      return `<div class="plugin-fail" title="${escapeHtml(reason)}">${escapeHtml(reason)}</div>`;
+    }
+
     /** 行标题里的版本徽章：查过更新才有；版本读不出来时亮「版本未知」。
      *  检查失败（registry 查不到/断网）必须露出来，不能只留版本号装没事——
      *  本地 tgz、私有包装的插件就落在这条分支上。 */
@@ -2735,8 +2809,24 @@ async function main(): Promise<void> {
       return `<span class="plugin-ver">v${escapeHtml(upd.current)}</span>${bad}`;
     }
 
-    /** 行里的「更新」按钮：有更新才出现；目标版本在新版本徽章与气泡里，点不点由维护者定。 */
+    /** 行里的「更新」按钮：有更新才出现；目标版本在新版本徽章与气泡里，点不点由维护者定。
+     *  这一轮参与更新的行按状态改文案：排队/更新中置灰但不摘掉（互斥面要有可读的禁用态），
+     *  已更新摘掉（没得再更），失败换成「重试」（失败行留着，能单独再跑一次）。 */
     function pluginUpdateCellHtml(item: PluginItem): string {
+      const state = updatePhaseFor(item.name);
+      if (state?.phase === "done") {
+        return "";
+      }
+      if (state) {
+        const busy = pluginActionBusy() || pluginBusy ? " disabled" : "";
+        const upd = updateItemFor(item.name);
+        const retry = state.phase === "fail";
+        const label = retry ? "重试" : "更新";
+        const hint = retry
+          ? `重新更新「${item.name}」；失败原因在行内`
+          : `把 ${item.name} 从 v${upd?.current ?? "?"} 更新到 v${upd?.target ?? "?"}`;
+        return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="${escapeHtml(hint)}"${busy}>${label}</button>`;
+      }
       if (!pluginUpdatesChecked) {
         return "";
       }
@@ -2761,7 +2851,9 @@ async function main(): Promise<void> {
       // 整表会让别的行在开关结束后残留在禁用态。
       const lock = pluginActionBusy() ? " disabled" : "";
       const label = item.enabled ? "停用" : "启用";
-      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}</div>${desc}</div>${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
+      const state = updatePhaseFor(item.name);
+      const phaseAttr = state ? ` data-phase="${state.phase}"` : "";
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${phaseAttr}${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
     }
 
     function renderPluginList(): void {
@@ -2802,6 +2894,61 @@ async function main(): Promise<void> {
     }
 
     /**
+     * 画顶部这条确定进度条与汇总文案。
+     *
+     * 百分比只按「已完成数 / 总数」算（不转圈、不猜），收尾时正好 100%；汇总区是
+     * `aria-live="polite"`，完成一句话会被读屏读出来。失败数一并写进去，不藏在行里。
+     */
+    function renderPluginProgress(): void {
+      const visible = pluginProgressTotal > 0 || pluginProgressSummary !== null;
+      pluginProgress.classList.toggle("hidden", !visible);
+      const percent =
+        pluginProgressTotal > 0 ? Math.round((pluginProgressDone / pluginProgressTotal) * 100) : 0;
+      pluginProgressBar.setAttribute("aria-valuenow", String(percent));
+      const fill = pluginProgressBar.firstElementChild;
+      if (fill instanceof HTMLElement) {
+        fill.style.width = `${percent}%`;
+      }
+      pluginProgressSum.textContent =
+        pluginProgressSummary ??
+        (pluginProgressTotal > 0
+          ? `正在更新：已完成 ${pluginProgressDone}/${pluginProgressTotal}`
+          : "");
+    }
+
+    /** 全部跑完时把收尾文案定下来：`已更新 N/M，K 个失败`（N 是成功的，M 是本轮总数）。 */
+    function finishPluginProgressIfComplete(): void {
+      if (pluginProgressTotal > 0 && pluginProgressDone >= pluginProgressTotal) {
+        const ok = pluginProgressDone - pluginProgressFailed;
+        pluginProgressSummary = `已更新 ${ok}/${pluginProgressTotal}，${pluginProgressFailed} 个失败`;
+      }
+    }
+
+    /** 吃一条后端进度事件：start 只把这一行点亮，done 记结果并推进进度条。 */
+    function applyUpdateProgress(event: UpdateProgressEvent): void {
+      if (event.phase === "start") {
+        pluginUpdatePhases.set(event.plugin, { phase: "busy", message: null });
+      } else {
+        const previous = pluginUpdatePhases.get(event.plugin);
+        // 同一行只算一次完成：后端理论上不会重发，这里挡一层，进度条不会超额。
+        if (previous && previous.phase !== "done" && previous.phase !== "fail") {
+          pluginProgressDone += 1;
+        }
+        const ok = event.ok === true;
+        if (!ok) {
+          pluginProgressFailed += 1;
+        }
+        pluginUpdatePhases.set(event.plugin, {
+          phase: ok ? "done" : "fail",
+          message: ok ? (event.message ?? null) : (event.message ?? "原因未知"),
+        });
+        finishPluginProgressIfComplete();
+      }
+      renderPluginList();
+      renderPluginProgress();
+    }
+
+    /**
      * 只重画一行的开关状态，不动别的行也不重建列表。
      *
      * 点开关时整表重建过一次（乐观更新）再重建一次（后端回话），两次之间开关会闪、
@@ -2828,9 +2975,11 @@ async function main(): Promise<void> {
         pluginLoadedFor = null;
         pluginUpdateItems = [];
         pluginUpdatesChecked = false;
+        resetPluginProgress();
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
+        renderPluginProgress();
         return;
       }
       if (pluginLoadedFor !== target.name) {
@@ -2841,9 +2990,11 @@ async function main(): Promise<void> {
         // （后端有会话级缓存，重进/重查不打网络）。
         pluginUpdateItems = [];
         pluginUpdatesChecked = false;
+        resetPluginProgress();
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
+        renderPluginProgress();
         void refreshPluginList(target.name);
         void refreshPluginUpdates(target.name, false);
         return;
@@ -2863,7 +3014,10 @@ async function main(): Promise<void> {
       }
       if (force) {
         pluginCheckBusy = true;
+        // 重新检查＝新一轮：上一轮的行级状态与收尾文案都作废，免得旧结果冒充新结果。
+        resetPluginProgress();
         renderPluginList();
+        renderPluginProgress();
       }
       let ok = false;
       try {
@@ -2927,22 +3081,48 @@ async function main(): Promise<void> {
       pluginUpdateRunningAll = runningAll;
       setPluginNote(null);
       setPluginWarning(null);
-      renderPluginList();
       // 记下这轮要动的插件（批量=查出的全部可更新行），完事好提醒「停用的也更新了」。
       const scope = name
         ? [name]
         : pluginUpdateItems.filter((item) => item.hasUpdate).map((item) => item.name);
       let ok = false;
+      // 开端就把整轮状态摆出来：批量全部进「排队」，单行直接「更新中」——不画假进度。
+      resetPluginProgress();
+      if (name === null) {
+        pluginProgressTotal = scope.length;
+        for (const plugin of scope) {
+          pluginUpdatePhases.set(plugin, { phase: "queue", message: null });
+        }
+      } else if (name) {
+        pluginUpdatePhases.set(name, { phase: "busy", message: null });
+      }
+      renderPluginList();
+      renderPluginProgress();
+      // 批量走进度通道（后端逐个回放开始/结束）；单插件只认返回值——一个状态来源。
+      const progress = name === null ? new Channel<UpdateProgressEvent>() : null;
+      if (progress) {
+        progress.onmessage = (event: UpdateProgressEvent) => {
+          applyUpdateProgress(event);
+        };
+      }
       try {
         const outcome = await invoke<UpdateOutcome>("plugin_update", {
           config: collectConfig(),
           name: target,
           source: prefs.downloadSource,
           plugin: name,
+          progress,
         });
         ok = outcome.ok;
         setPluginNote(outcome.message);
         logAction(outcome.message);
+        if (name !== null) {
+          // 单插件：返回值的 ok 就是这一行的结果，失败原因就写在 message 里。
+          pluginUpdatePhases.set(name, {
+            phase: outcome.ok ? "done" : "fail",
+            message: outcome.ok ? null : outcome.message,
+          });
+        }
         if (outcome.ok) {
           const disabled = scope.filter(
             (plugin) => pluginItems.find((item) => item.name === plugin)?.enabled === false,
@@ -2957,10 +3137,16 @@ async function main(): Promise<void> {
       } catch (err) {
         setPluginNote(`更新插件失败：${String(err)}`);
         logAction(`更新插件失败：${String(err)}`);
+        if (name) {
+          pluginUpdatePhases.set(name, { phase: "fail", message: String(err) });
+        }
       } finally {
         pluginUpdateBusy = false;
         pluginUpdateRunningAll = false;
+        // 兜底：通道没把最后一条送到时，按已收到的结果把汇总定下来，不让进度条悬着。
+        finishPluginProgressIfComplete();
         renderPluginList();
+        renderPluginProgress();
         renderPluginSummary();
       }
       // 全部更新成功：在工具条那枚按钮上落勾停 0.9s；失败直接还原，不做错误态图标。

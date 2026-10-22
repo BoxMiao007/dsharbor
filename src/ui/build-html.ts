@@ -180,6 +180,10 @@ export function buildHtml(info: AppInfo): string {
   const pluginBody = `
     ${colHead("插件", `${badgeLine("plugin-summary", "读取中…")}<span class="plugin-head-actions"><button id="btn-plugin-check-updates" class="square-btn has-tip" type="button" data-tip="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${squareBusyChrome(ICON_REFRESH)}</button><button id="btn-plugin-update-all" class="square-btn has-tip" type="button" data-tip="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${squareBusyChrome(ICON_UPDATE_ALL)}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button></span>`)}
     <div id="profile-plugins" class="plugin-panel">
+      <div id="plugin-progress" class="plugin-progress hidden">
+        <div id="plugin-progress-bar" class="plugin-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="全部更新进度"><i aria-hidden="true"></i></div>
+        <p id="plugin-progress-sum" class="plugin-progress-sum" aria-live="polite"></p>
+      </div>
       <div id="plugin-list" class="plugin-list"></div>
       <div id="plugin-empty" class="plugin-empty hidden">
         <p class="hint notice">这个环境还没有壳管得了的插件（官方内置骨架包与桥接插件不在列表里）。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
