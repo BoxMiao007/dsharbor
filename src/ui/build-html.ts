@@ -248,7 +248,7 @@ export function buildHtml(info: AppInfo): string {
       <summary><span class="chev">▸</span>删除说明</summary>
       <div class="log-area">
         <p class="hint">「npm 全局」那一份点「卸载」，等同于 <code>npm uninstall -g @deepseek-ai/dsh</code>；「npx 缓存」那几份点「删除」，直接删掉对应的缓存目录。两种都要再点一次「确定」，删掉后没法找回。</p>
-        <p class="hint">正被当前启动方式用着的那一份（标着「使用中」）删掉后要换一种启动方式，或者重新下一次。只想腾空间、又不想丢版本的话，留着即可：npx 那几份下次选对应版本启动时不用重新下载。</p>
+        <p class="hint">正被当前启动方式用着的那一份（标着「使用中」）删掉后要换一种启动方式，或者重新下一次。只想腾空间、又不想丢版本的话，留着即可：npx 按命令写法各存一份缓存——选具体版本启动复用的是 dsh@版本号 写法的那份，自动最新复用的是裸包名写法的那份；缓存里没有对应写法的那份时，启动就会现下一份。</p>
       </div>
     </details>
   `;
@@ -269,7 +269,7 @@ export function buildHtml(info: AppInfo): string {
       <div id="npx-fields" class="fields hidden">
         <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行，桥接插件也装到那个发行版里。">!</span></span>
         <div class="picker" id="npx-runtime-picker"></div>
-        <span class="field-label">版本 <span class="info-dot" role="img" tabindex="0" aria-label="版本说明" data-tip="首项「自动最新版本」不带版本号，跟 npm 的 latest 标签走，官方发新版后自动用上；下面按新到旧列出官方发布过的版本，「更多…」每次再放 10 个。标「已缓存」的版本本机 npx 缓存里已经有了，选它启动不用重新下载。">!</span></span>
+        <span class="field-label">版本 <span class="info-dot" role="img" tabindex="0" aria-label="版本说明" data-tip="首项「自动最新版本」不带版本号，跟 npm 的 latest 标签走，官方发新版后自动用上；下面按新到旧列出官方发布过的版本，「更多…」每次再放 10 个。标「已缓存」的版本本机 npx 缓存里已经有了；npx 按命令写法各存一份缓存，只有那份是 dsh@版本号 写法留下的才直接复用、不再下载，裸包名写法留下的选了还会再下载一份。">!</span></span>
         <div class="control-line">
           <div class="picker" id="npx-version-picker"></div>
           <button type="button" id="npx-versions-refresh" class="square-btn" title="重新获取官方版本列表" aria-label="重新获取官方版本列表">${ICON_REFRESH}</button>
