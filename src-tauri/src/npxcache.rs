@@ -44,32 +44,30 @@ pub fn installed(runtime: &Runtime) -> Result<Vec<NpxInstall>, String> {
     }
 }
 
-/// npx 缓存里已经缓存过的本包版本号（界面的「已缓存」徽章）。
+/// 一次扫描算出两份清单（已缓存版本、钉版本可复用版本）。
+///
+/// 返回 `(已缓存版本, 钉版本可复用版本)`：前者喂界面「已缓存」徽章；后者是前者的子集，
+/// 只登记钉版本写法（`@deepseek-ai/dsh@<版本>`）留下的缓存——界面用它区分「选它启动
+/// 不会再下载」与「缓存里有、但选了还会再下一份」：npx 按命令写法各存一份缓存，
+/// 裸包名写法留下的目录服务不了钉版本的启动命令。
+///
+/// 两份清单共用一次 `installed()` 扫描：它要全量递归 `_npx`（WSL 下还要起 wsl.exe），
+/// 分开各扫一遍只是把这个成本翻倍。
 ///
 /// 只在 Windows 宿主上扫：非 Windows 宿主上 npx 缓存盘面本来就不支持，
 /// 这里返回空列表而不是报错——「一个都没缓存」是能算出来的诚实答案。
-pub fn cached_versions(runtime: &Runtime) -> Result<Vec<String>, String> {
+pub fn cached_and_pin_served(runtime: &Runtime) -> Result<(Vec<String>, Vec<String>), String> {
     if !cfg!(windows) {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let installs = installed(runtime)?;
-    Ok(npx_cache::cached_versions(installs.iter().map(|item| {
-        (item.version.as_deref(), item.specs.as_slice())
-    })))
-}
-
-/// 钉版本写法（`@deepseek-ai/dsh@<版本>`）启动能直接复用的缓存版本。
-///
-/// 界面用它区分「选它启动不会再下载」（命中这里）与「缓存里有、但选了还会再下一份」
-/// （只在 cached_versions 里）：npx 按命令写法各存一份缓存，裸包名写法留下的目录
-/// 服务不了钉版本的启动命令。与 cached_versions 同一次扫描，不在 Windows 宿主上返回空。
-pub fn pin_served(runtime: &Runtime) -> Result<Vec<String>, String> {
-    if !cfg!(windows) {
-        return Ok(Vec::new());
-    }
-    let installs = installed(runtime)?;
-    Ok(npx_cache::pin_served_versions(
-        installs.iter().map(|item| item.specs.iter()),
+    Ok((
+        npx_cache::cached_versions(
+            installs
+                .iter()
+                .map(|item| (item.version.as_deref(), item.specs.as_slice())),
+        ),
+        npx_cache::pin_served_versions(installs.iter().map(|item| item.specs.iter())),
     ))
 }
 

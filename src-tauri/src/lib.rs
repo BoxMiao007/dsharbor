@@ -700,8 +700,8 @@ struct CachedVersions {
 #[tauri::command]
 async fn npx_cached_versions(runtime: launch::Runtime) -> Result<CachedVersions, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let versions = npxcache::cached_versions(&runtime)?;
-        let pin_served = npxcache::pin_served(&runtime)?;
+        // 已缓存徽章与「不会再下载」判定共用一次 `_npx` 扫描（WSL 下免得起两次 wsl.exe）。
+        let (versions, pin_served) = npxcache::cached_and_pin_served(&runtime)?;
         Ok(CachedVersions {
             versions,
             pin_served,
