@@ -57,6 +57,7 @@
 
 /* 分区导航：每一项自己是一枚浮在左栏卡片上的胶囊（草图里左栏 5 个浅色胶囊）。 */
 .rail {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -66,8 +67,42 @@
   overflow-y: auto;
 }
 
+/* 选中指示块：一块跟着选中项走的淡色底（#36）。选中项的底色不再由按钮自己铺，
+   换分区时整块滑过去，视线先跟左边、再落到右边内容；按钮自己的 hover 仍在上层。
+   位置按按钮序号算：每项 44px + .rail 的 gap 10px = 54px；顶部 4px 对齐首项上沿。 */
+.rail-ind {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  right: 0;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  transform: translateY(calc(var(--i, 0) * 54px));
+  transition: transform var(--m-base) var(--ease-spring);
+  pointer-events: none;
+}
+
+/* 首帧贴位置时不要滑：先把指示块放到存下来的分区上，下一帧才允许过渡（见 main.ts）。 */
+.rail:not([data-ready]) .rail-ind {
+  transition: none;
+}
+
+/* 选中标记（胶囊内左侧一根 3px 竖条）跟着指示块一起滑，不留在按钮里各自闪烁。 */
+.rail-ind::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
 .ico-item {
   position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 11px;
@@ -78,7 +113,7 @@
   border: 0;
   border-radius: 10px;
   /* 未选中不画底框（维护者要求）：一排同色块挤在一起，看不出哪块是当前项；
-     底色只在悬停与选中时出现。 */
+     底色只在悬停时出现，选中态由 .rail-ind 这块滑动指示给（#36）。 */
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
@@ -111,21 +146,9 @@
   color: var(--fg);
 }
 
+/* 选中项只提亮文字：底色与左侧竖条都由 .rail-ind 统一给，选中态才不会「两块一起动」。 */
 .ico-item[aria-current="true"] {
-  background: var(--accent-soft);
   color: var(--fg);
-}
-
-/* 选中标记：胶囊内左侧一根 3px 竖条。画在胶囊内侧而不是栏外，免得贴到卡片边。 */
-.ico-item[aria-current="true"]::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 11px;
-  bottom: 11px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--accent);
 }
 
 /* 左栏「日志」条目上的未读数字：只在有未读时出现——没有未读时容器内容是空的，

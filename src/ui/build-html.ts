@@ -68,6 +68,7 @@ export function buildHtml(info: AppInfo): string {
         <p class="sidebar-sub">DeepSeek</p>
       </div>
       <nav class="rail" id="nav" aria-label="设置分区">
+        <span class="rail-ind" aria-hidden="true"></span>
         ${PANELS.map(
           (item) =>
             `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span>${item.key === "log" ? UNREAD_BADGE_HTML : ""}</button>`,

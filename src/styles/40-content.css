@@ -102,6 +102,33 @@
   gap: 12px;
 }
 
+/* 分区入场（#36）：换分区时内容往后落 8px 再淡入，和左栏滑块的移动接上节奏。
+   子项按 0 / 24 / 48 / 72ms 依次起，前 4 块错开就够，再往后错开只是拖慢。
+   backwards 让等待期间就停在起点（否则会先满屏闪一下再动）；跑完 transform 回到
+   元素自己的 none，类留在身上也不会残留中间态，下次切回来重新挂一次即可。 */
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.panel.is-enter .panel-body > * {
+  animation: panel-enter var(--m-base) var(--ease-out) backwards;
+}
+
+.panel.is-enter .panel-body > *:nth-child(2) {
+  animation-delay: 24ms;
+}
+
+.panel.is-enter .panel-body > *:nth-child(3) {
+  animation-delay: 48ms;
+}
+
+.panel.is-enter .panel-body > *:nth-child(4) {
+  animation-delay: 72ms;
+}
+
 /* 主卡里并排的两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。
    gap 与 .block.main-card 的纵向 gap 取同一个值（20px）：同一张主卡里横向、纵向
    原来是 28 / 20 两套间距，看着不齐；统一成一个值，格子才对得上。 */

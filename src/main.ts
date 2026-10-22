@@ -725,6 +725,9 @@ async function main(): Promise<void> {
     const PANEL_KEY = "dsharbor.ui.panel";
     const navButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-panel-btn]"));
     const panelSections = Array.from(root.querySelectorAll<HTMLElement>("[data-panel]"));
+    // 左栏那块跟着选中项滑的底（#36）：位置由按钮序号算，序号写在 --i 上（见 20-sidebar.css）。
+    const railEl = navButtons[0]?.closest<HTMLElement>(".rail") ?? null;
+    const railIndicator = railEl?.querySelector<HTMLElement>(".rail-ind") ?? null;
     /** 内容区整体滚动（工具栏与左栏固定），滚动指示条挂在它的外层。 */
 
     function readStoredPanel(): PanelKey {
@@ -748,12 +751,22 @@ async function main(): Promise<void> {
       for (const button of navButtons) {
         button.setAttribute("aria-current", button.dataset.panelBtn === key ? "true" : "false");
       }
+      // 左栏指示块按按钮序号滑过去：只写序号，位移与回弹交给 CSS 过渡（#36）。
+      if (railIndicator) {
+        const index = navButtons.findIndex((button) => button.dataset.panelBtn === key);
+        railIndicator.style.setProperty("--i", String(Math.max(index, 0)));
+      }
       for (const panel of panelSections) {
         const showing = panel.dataset.panel === key;
         panel.classList.toggle("hidden", !showing);
         // 换内容时留着旧滚动位置很莫名：主卡（唯一的滚动容器）回到顶部。
         if (showing) {
           for (const host of panel.querySelectorAll<HTMLElement>(".block.main-card")) host.scrollTop = 0;
+          // 内容入场（#36）：先摘类、强制一次回流，再挂回去，同一个分区来回切也能重播。
+          // 动画是 backwards 且不 forwards，跑完 transform 自然回到 none，类留着也不残留中间态。
+          panel.classList.remove("is-enter");
+          void panel.offsetWidth;
+          panel.classList.add("is-enter");
         }
       }
       updateScrollThumbHook();
@@ -765,6 +778,14 @@ async function main(): Promise<void> {
         }
       }
     };
+
+    // 首帧把指示块直接贴到存下来的分区上，不许它从第一个慢慢滑过去（#36）：
+    // 下一帧才给 .rail[data-ready]，从那时起换分区才有过渡。
+    if (railEl) {
+      window.requestAnimationFrame(() => {
+        railEl.dataset.ready = "";
+      });
+    }
 
     for (const button of navButtons) {
       button.addEventListener("click", () => {
@@ -778,6 +799,33 @@ async function main(): Promise<void> {
       });
     }
     selectPanel(currentPanel, false);
+
+    // ---- 折叠块：高度过渡（#36）--------------------------------------------------
+    // 语义与键盘仍归原生 <details>：这里只在它开合时补一段「内容长出来 / 收回去」的过程。
+    // 展开走纯 CSS（::details-content 的 block-size 0→auto，见 70-polish.css）；
+    // 收起时浏览器会立刻把内容当隐藏处理、内容量归零，高度动画就没有可缩的东西，
+    // 所以在关闭那一刻给整块挂 data-closing，等过渡跑完再摘——这一段是补原生做不到的一半。
+    const foldBoxes = Array.from(root.querySelectorAll<HTMLDetailsElement>(".log-box"));
+    for (const box of foldBoxes) {
+      // toggle 事件不分「用户点的」和「代码改 open」的，统一走这里，行为一致。
+      box.addEventListener("toggle", () => {
+        if (box.open) {
+          box.removeAttribute("data-closing");
+          return;
+        }
+        if (document.documentElement.dataset.motion === "off") return; // 动效关掉：不收窗口，瞬时完成
+        box.setAttribute("data-closing", "");
+        box.addEventListener(
+          "transitionend",
+          (event) => {
+            if (event.target === box && event.propertyName === "block-size") {
+              box.removeAttribute("data-closing");
+            }
+          },
+          { once: true },
+        );
+      });
+    }
 
     // ---- 日志：左栏里的一个分区，日志正文在主卡里自己滚 ---------------------------
     // 不做窄条 / 浮层 / 遮罩：点左栏「日志」进来，与其他分区平等的进进出出。
@@ -1829,6 +1877,19 @@ async function main(): Promise<void> {
       }
     }
 
+    /** 某个环境卡上的三点按钮；卡片重建（切换环境）后按环境名找回新的一颗。 */
+    function envMoreButton(name: string | null): HTMLElement | null {
+      if (!name) {
+        return null;
+      }
+      for (const btn of profileCards.querySelectorAll<HTMLElement>("[data-env-more]")) {
+        if (btn.dataset.envMore === name) {
+          return btn;
+        }
+      }
+      return null;
+    }
+
     /** 在三点按钮旁边展开菜单；靠视口边缘时往回收，别被窗口裁掉。 */
     function toggleEnvMenu(name: string, anchor: HTMLElement): void {
       const already = envMenuTarget === name;
@@ -1871,23 +1932,27 @@ async function main(): Promise<void> {
       item.addEventListener("click", () => {
         const name = envMenuTarget;
         const act = item.dataset.envAct ?? "";
+        // 菜单一收起，里面点的这一项就不可见了：先把焦点还给这颗三点按钮，
+        // 浮窗关闭时才有个「刚才点的位置」可回（见 setModal 的 modalReturnFocus）。
+        envMoreButton(name)?.focus();
         closeEnvMenu();
         if (!name) {
           return;
         }
         if (act === "rename") {
-          openNameModal("rename", name);
+          openNameModal("rename", name, envMoreButton(name));
         } else if (act === "copy") {
-          openNameModal("copy", name);
+          openNameModal("copy", name, envMoreButton(name));
         } else if (act === "delete") {
-          openNameModal("delete", name);
+          openNameModal("delete", name, envMoreButton(name));
         } else if (act === "deps") {
           void runEnvAction(() => installDeps(name));
         } else if (act === "patch") {
           // 补丁层是「按环境」的：先把管理目标切到这一个，再开浮窗（浮窗自己会去拉它的备份）。
+          // 切换会重建环境卡，所以要等切完再按环境名取那颗新的三点按钮当焦点归处。
           void selectProfile(name).then(() => {
             syncPatchModal();
-            setModal("patch");
+            setModal("patch", envMoreButton(name));
           });
         } else if (act === "open") {
           void openProfileDir(name);
@@ -1905,6 +1970,8 @@ async function main(): Promise<void> {
     let openModal: ModalId | null = null;
     /** 打开浮窗前焦点所在的元素：关闭时把焦点还回去，键盘用户才不会被丢在页面顶部。 */
     let modalReturnFocus: HTMLElement | null = null;
+    /** 等出场动画播完的定时器；期间再打开浮窗要把它取消掉。 */
+    let modalCloseTimer: number | null = null;
 
     /** 浮窗内可聚焦的控件（用于初始聚焦与 Tab 兜圈）。 */
     function focusablesIn(container: HTMLElement): HTMLElement[] {
@@ -1916,36 +1983,105 @@ async function main(): Promise<void> {
       );
     }
 
-    function setModal(id: ModalId | null): void {
-      const wasOpen = openModal !== null;
-      openModal = id;
-      modalBridge.classList.toggle("hidden", id !== "bridge");
-      modalPatch.classList.toggle("hidden", id !== "patch");
-      modalName.classList.toggle("hidden", id !== "name");
-      modalScrim.classList.toggle("hidden", id === null);
+    function panelOf(id: ModalId): HTMLElement {
+      return id === "bridge" ? modalBridge : id === "patch" ? modalPatch : modalName;
+    }
+
+    /** 本机偏好关掉动效时，进出场应当瞬时完成，不再等出场那 130ms。 */
+    function motionOff(): boolean {
+      return document.documentElement.dataset.motion === "off";
+    }
+
+    /** 出场动画时长：直接读 --m-exit，避免 JS 里再写一份毫秒数。
+     *  浏览器把计算后的 <time> 序列化成秒（"0.13s"），不是变量里写的 "130ms"，
+     *  所以按单位换算，别把 0.13 当毫秒用。 */
+    function modalExitMs(): number {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue("--m-exit").trim();
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value) || value <= 0) {
+        return 130;
+      }
+      return raw.endsWith("ms") ? value : value * 1000;
+    }
+
+    function clearModalClose(): void {
+      if (modalCloseTimer !== null) {
+        window.clearTimeout(modalCloseTimer);
+        modalCloseTimer = null;
+      }
+      for (const panel of [modalBridge, modalPatch, modalName]) {
+        panel.classList.remove("is-closing");
+      }
+      modalScrim.classList.remove("is-closing");
+    }
+
+    /** 出场播完（或动效关闭）后才真正隐藏，display:none 不会截断动画。 */
+    function finishModalClose(): void {
+      modalCloseTimer = null;
+      modalReturnFocus = null;
+      for (const panel of [modalBridge, modalPatch, modalName]) {
+        panel.classList.add("hidden");
+        panel.classList.remove("is-closing");
+      }
+      modalScrim.classList.add("hidden");
+      modalScrim.classList.remove("is-closing");
+    }
+
+    /** 取出关闭后该还回去的焦点控件；卡片重建过就按环境名找回那颗三点按钮。 */
+    function takeModalReturnFocus(): HTMLElement | null {
+      const back = modalReturnFocus;
+      modalReturnFocus = null;
+      if (back?.isConnected) {
+        return back;
+      }
+      return envMoreButton(back?.dataset.envMore ?? null) ?? back;
+    }
+
+    function setModal(id: ModalId | null, returnFocus?: HTMLElement | null): void {
       if (id !== null) {
-        // 打开：把焦点送进浮窗（环境名浮窗优先落在输入框上），并记住打开前的焦点。
+        // 打开（或从一张浮窗换到另一张）：取消还在跑的出场，再换显示的那张。
+        clearModalClose();
+        const wasOpen = openModal !== null;
+        openModal = id;
+        modalBridge.classList.toggle("hidden", id !== "bridge");
+        modalPatch.classList.toggle("hidden", id !== "patch");
+        modalName.classList.toggle("hidden", id !== "name");
+        modalScrim.classList.remove("hidden");
+        // 打开：把焦点送进浮窗第一颗按钮，并记住打开前的焦点。
+        // 调用方可以显式指定归处：从三点菜单打开时，那颗按钮在切换环境后会被重建。
         if (!wasOpen) {
           modalReturnFocus =
-            document.activeElement instanceof HTMLElement
-              ? document.activeElement
-              : null;
+            returnFocus ??
+            (document.activeElement instanceof HTMLElement ? document.activeElement : null);
         }
-        const panel =
-          id === "bridge" ? modalBridge : id === "patch" ? modalPatch : modalName;
+        const panel = panelOf(id);
         const first = focusablesIn(panel)[0] ?? panel;
         first.focus();
-      } else if (wasOpen) {
-        // 关闭：焦点还给原来的触发点（若它还在文档里）。
-        const back = modalReturnFocus;
-        modalReturnFocus = null;
-        if (back && back.isConnected) {
-          back.focus();
-        }
+        return;
       }
-      if (id === null) {
-        closeEnvMenu();
+      // 关闭：先让出场动画播完，再真正隐藏（.hidden 是瞬时的，会截断动画）。
+      closeEnvMenu();
+      if (openModal === null && modalCloseTimer === null) {
+        return;
       }
+      if (openModal !== null) {
+        const panel = panelOf(openModal);
+        openModal = null;
+        panel.classList.add("is-closing");
+        modalScrim.classList.add("is-closing");
+      }
+      const back = takeModalReturnFocus();
+      if (back?.isConnected) {
+        back.focus();
+      }
+      if (motionOff()) {
+        finishModalClose();
+        return;
+      }
+      if (modalCloseTimer !== null) {
+        window.clearTimeout(modalCloseTimer);
+      }
+      modalCloseTimer = window.setTimeout(finishModalClose, modalExitMs());
     }
 
     // 焦点圈在打开着的浮窗里：Tab / Shift+Tab 到首尾时折返，不会跑到浮窗背后的页面上。
@@ -2051,8 +2187,13 @@ async function main(): Promise<void> {
       profileManageError.classList.remove("hidden");
     }
 
-    /** 打开名字浮窗：新建收集新名字，重命名/复制预填旧名字，删除只做确认。 */
-    function openNameModal(mode: NameMode, target: string | null): void {
+    /** 打开名字浮窗：新建收集新名字，重命名/复制预填旧名字，删除只做确认。
+     *  `returnFocus` 是关闭后焦点该回去的控件（三点菜单触发时显式传入）。 */
+    function openNameModal(
+      mode: NameMode,
+      target: string | null,
+      returnFocus?: HTMLElement | null,
+    ): void {
       nameMode = mode;
       nameTarget = target;
       // 命名规则与环境切分说明只在新建时可讲：卡里不再常驻这段说明，但也不能让人盲填。
@@ -2085,8 +2226,12 @@ async function main(): Promise<void> {
       btnNameConfirm.classList.toggle("danger", deleting);
       btnNameConfirm.classList.toggle("primary", !deleting);
       btnNameCancel.disabled = manageBusy;
-      setModal("name");
-      if (!deleting) {
+      setModal("name", returnFocus);
+      if (deleting) {
+        // 删除是危险动作：默认焦点不落在「确定删除」上，落在「取消」，
+        // 回车不会顺手把环境删掉。
+        btnNameCancel.focus();
+      } else {
         profileManageName.focus();
         profileManageName.select();
       }
