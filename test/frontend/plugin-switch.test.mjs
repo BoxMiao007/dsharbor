@@ -77,7 +77,16 @@ async function openPluginPanel(browser) {
     () => !document.querySelector("#plugin-summary").textContent.includes("正在读取"),
     { timeout: 5000 },
   );
-  await sleep(150);
+  // 插件清单的行入场是错开的（每行 40ms 递延、单行 220ms，见 #32），本文件量的是
+  // 「几何稳定后」的行位置，必须等入场跑完再量，否则会把动画中途的 top 当成基准。
+  await page.waitForFunction(
+    () => {
+      const rows = Array.from(document.querySelectorAll("#plugin-list .plugin-row"));
+      return rows.length > 0 && rows.every((row) => row.getAnimations().length === 0);
+    },
+    { timeout: 5000 },
+  );
+  await sleep(50);
   return page;
 }
 
