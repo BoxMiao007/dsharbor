@@ -2650,6 +2650,17 @@ async function main(): Promise<void> {
     let pluginLoaded = false;
     /** 已为哪个环境拉过清单；换环境才重新拉。 */
     let pluginLoadedFor: string | null = null;
+    /** 骨架最短展示时长（毫秒）：清单回得再快也要站够，避免快网络下只闪一下。 */
+    const PLUGIN_SKELETON_MIN_MS = 300;
+    /** 是否在画骨架（清单还没回来）。读到结果（成功/失败/空清单）都要关掉它，
+     *  否则骨架会一直挂在列表里冒充「还在加载」。 */
+    let pluginSkeleton = false;
+    /** 骨架最早可撤下的时刻（performance.now 时间戳）：清单回得再快也要站够最短展示，
+     *  避免快网络下只闪一下，比不画还难看。 */
+    let pluginSkeletonUntil = 0;
+    /** 下一次重铺要不要给真实行挂入场标记。只在「骨架 → 真实行」那一次置真，用完即清，
+     *  之后的重绘不带，免得每次重画都重播一遍入场。 */
+    let pluginEnterPending = false;
     /** 插件开关动作是否在跑（忙时所有开关置灰，防重复提交）。 */
     let pluginBusy = false;
 
@@ -2838,7 +2849,7 @@ async function main(): Promise<void> {
       return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新</button>`;
     }
 
-    function pluginRowHtml(item: PluginItem): string {
+    function pluginRowHtml(item: PluginItem, enterIndex = -1): string {
       // 只留「桥接」这一枚身份标签：开关本身已经说明启用与否，再写一遍「已启用/已停用」
       // 是同一件事说两次；「手写禁用」这点信息收进行提示，不占位。
       const marks = item.bridge ? `<span class="plugin-tag plugin-tag-bridge">桥接</span>` : "";
@@ -2853,15 +2864,43 @@ async function main(): Promise<void> {
       const label = item.enabled ? "停用" : "启用";
       const state = updatePhaseFor(item.name);
       const phaseAttr = state ? ` data-phase="${state.phase}"` : "";
-      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${phaseAttr}${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
+      // 入场序号：只在「骨架 → 真实行」那一次重铺里带上（enterIndex >= 0），序号既写进
+      // `--i` 给 CSS 算错开的延迟，也写进 `data-enter` 当稳定的测试钩子；之后的重绘不带，
+      // 不会每次重画都重播一遍入场。
+      const enterAttr =
+        enterIndex >= 0 ? ` style="--i:${enterIndex}" data-enter="${enterIndex}"` : "";
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${phaseAttr}${enterAttr}${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
+    }
+
+    /** 一行骨架：左侧一个圆点（图标位）加长短两条灰条（标题与说明），右端一枚方条（开关位）。
+     *  结构与真实行同高（`.plugin-row` 的 padding/border 照搬，主列固定 38px），切换时版面不跳。
+     *  刻意不复用 `.plugin-row` 类：那是「真实插件行」的语义钩子（其它界面测试靠它判断
+     *  清单是否读完），骨架顶上会让它们以为已经加载完了。 */
+    function pluginSkeletonRowHtml(index: number): string {
+      return `<div class="plugin-skel" data-skeleton="${index}" aria-hidden="true"><div class="sk-main"><span class="sk-dot"></span><span class="sk-line sk-line-name"></span><span class="sk-line sk-line-desc"></span></div><span class="sk-line sk-line-switch"></span></div>`;
     }
 
     function renderPluginList(): void {
       const rows = manageablePlugins();
+      // 骨架只在「还没读到清单」时铺：读到空清单是空态，不是加载中。
+      const showSkeleton = pluginSkeleton && !pluginLoaded;
       pluginEmpty.classList.toggle("hidden", rows.length > 0 || !pluginLoaded);
       // 整表重铺会重建每一行，先把滚动位置记下来再放回去，否则列表看着像跳了一下。
       const scrollTop = pluginList.scrollTop;
-      pluginList.innerHTML = rows.map(pluginRowHtml).join("");
+      if (showSkeleton) {
+        pluginList.innerHTML = [0, 1, 2].map(pluginSkeletonRowHtml).join("");
+        pluginList.classList.add("is-loading");
+        pluginList.classList.remove("is-loaded");
+        pluginList.scrollTop = scrollTop;
+        renderPluginUpdatesToolbar();
+        return;
+      }
+      // 只在「骨架 → 真实行」那次重铺挂入场；用完即清，后续重绘不再重播。
+      const enter = pluginEnterPending;
+      pluginEnterPending = false;
+      pluginList.innerHTML = rows.map((item, i) => pluginRowHtml(item, enter ? i : -1)).join("");
+      pluginList.classList.remove("is-loading");
+      pluginList.classList.toggle("is-loaded", pluginLoaded && rows.length > 0);
       pluginList.scrollTop = scrollTop;
       for (const box of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin]")) {
         box.addEventListener("click", () => {
@@ -2973,6 +3012,8 @@ async function main(): Promise<void> {
         pluginItems = [];
         pluginLoaded = false;
         pluginLoadedFor = null;
+        pluginSkeleton = false;
+        pluginEnterPending = false;
         pluginUpdateItems = [];
         pluginUpdatesChecked = false;
         resetPluginProgress();
@@ -2986,6 +3027,10 @@ async function main(): Promise<void> {
         pluginLoadedFor = target.name;
         pluginItems = [];
         pluginLoaded = false;
+        // 进卡即铺骨架，并记下最早可撤下的时刻：清单回得再快也得站够最短展示。
+        pluginSkeleton = true;
+        pluginSkeletonUntil = performance.now() + PLUGIN_SKELETON_MIN_MS;
+        pluginEnterPending = false;
         // 更新清单跟着环境走，一并重置；第一次进这张卡自动查一次
         // （后端有会话级缓存，重进/重查不打网络）。
         pluginUpdateItems = [];
@@ -3155,20 +3200,38 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 读一次插件清单（读失败只提示，不打断其它动作）。 */
+    /** 读一次插件清单（读失败只提示，不打断其它动作）。
+     *  骨架有最短展示：清单回得再快，也要站到 `pluginSkeletonUntil` 才换成真实行，
+     *  否则快网络下骨架闪一下就没，比不画还难看。 */
     async function refreshPluginList(name: string): Promise<void> {
       try {
         const list = await invoke<PluginItem[]>("plugin_list", { config: collectConfig(), name });
         if (prefs.profile !== name) {
           return; // 期间换了环境，丢弃这批结果
         }
+        // 站够最短展示再撤骨架。
+        const wait = pluginSkeletonUntil - performance.now();
+        if (pluginSkeleton && wait > 0) {
+          await new Promise((done) => setTimeout(done, wait));
+          if (prefs.profile !== name) {
+            return; // 等待期间又换了环境，这批结果作废
+          }
+        }
+        const hadSkeleton = pluginSkeleton;
         pluginItems = list;
         pluginLoaded = true;
+        pluginSkeleton = false;
+        // 只有「骨架 → 真实行」那一次挂入场；之前没有骨架就不重播。
+        pluginEnterPending = hadSkeleton;
         renderPluginList();
         // 徽章的计数与列表同口径：清单回来要把「正在读取…」换成真实数字。
         renderPluginSummary();
       } catch (err) {
         if (prefs.profile === name) {
+          // 读失败：撤掉骨架（不冒充还在加载），只留失败提示；空态也不显示。
+          pluginSkeleton = false;
+          pluginEnterPending = false;
+          renderPluginList();
           setPluginNote(`读取插件清单失败：${String(err)}`);
         }
       }

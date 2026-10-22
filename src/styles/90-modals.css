@@ -273,8 +273,10 @@ button.danger:hover:not(:disabled) {
 }
 
 /* 插件行：标题行（包名 + 标记 + 版本徽章）与说明行叠在左侧主列，右端一枚开关。开关
-   本身就是唯一的状态表达，不再另写「已启用 / 已停用」——同一件事说两次，还挤掉名字的宽度。 */
-.plugin-row {
+   本身就是唯一的状态表达，不再另写「已启用 / 已停用」——同一件事说两次，还挤掉名字的宽度。
+   骨架行 `.plugin-skel` 与它同一套盒模型（padding/border/圆角），切换时列表区域不跳高。 */
+.plugin-row,
+.plugin-skel {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -323,6 +325,102 @@ button.danger:hover:not(:disabled) {
 
 .plugin-row.is-off .plugin-name {
   color: var(--fg-mute);
+}
+
+/* ---- 插件清单加载骨架（#32）----------------------------------------------
+   清单还没回来时铺三行与真实行同高同结构的骨架（左圆点 + 长短两条灰条 + 右端开关位），
+   数据到达后换成真实行并逐行错开入场。假行不会被点、也不进读屏（aria-hidden），
+   行高与真实行对齐（同样的 padding/border、主列 38px），切换时列表区域不跳高。 */
+.plugin-skel {
+  cursor: default;
+}
+
+/* 骨架的主列：圆点（图标位）在前，两条灰条竖排在后。 */
+.sk-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  grid-template-columns: 18px 1fr;
+  grid-template-rows: 17px 17px;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-content: center;
+  height: 38px;
+}
+
+/* 圆点：占据真实行标题前的图标位，与第一行标题齐平。 */
+.sk-dot {
+  grid-row: 1;
+  grid-column: 1;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--cell);
+}
+
+/* 灰条：短标题条在上、长说明条在下（长短不一更像真内容）；右端另有一枚开关位方条。
+   忙态允许无限循环的扫光，所以这里刻意不用 --m-* 的单次时长。 */
+.sk-line {
+  background: linear-gradient(
+    90deg,
+    var(--cell) 0%,
+    color-mix(in srgb, var(--fg) 14%, var(--cell)) 50%,
+    var(--cell) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 120% 0;
+  border-radius: 5px;
+  height: 9px;
+  animation: plugin-skeleton-shimmer 1.25s linear infinite;
+}
+
+.sk-line-name {
+  grid-row: 1;
+  grid-column: 2;
+  align-self: center;
+  width: 46%;
+  max-width: 160px;
+}
+
+.sk-line-desc {
+  grid-row: 2;
+  grid-column: 2;
+  align-self: center;
+  width: 76%;
+  max-width: 320px;
+}
+
+/* 右端开关位：与 .switch 同宽（36px）、圆角更大，正好落在开关的位置上。 */
+.plugin-skel .sk-line-switch {
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  animation-delay: 0.15s;
+}
+
+@keyframes plugin-skeleton-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+/* 真实行入场：只给「骨架 → 真实行」那一次重铺带 data-enter 的行挂动画；
+   序号 --i 由行内 style 写，延迟 = --i × 40ms，总时长 220ms（≤300ms）。 */
+.plugin-list.is-loaded .plugin-row[data-enter] {
+  animation: plugin-row-in 220ms var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+@keyframes plugin-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 /* 开关：36×20 的胶囊 + 18px 圆头，开=强调色、关=灰底。
