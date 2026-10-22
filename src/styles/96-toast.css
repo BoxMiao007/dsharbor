@@ -1,0 +1,134 @@
+/* 动作回执 Toast（#34）：右下角固定堆叠，条数与生命周期由 src/ui/toast.ts 管。
+   容器 fixed 贴在视窗右下、不参与布局；容器本身不吃点击（pointer-events: none），
+   只有每条 toast 自己接点击，免得右下角一片空白区域挡住底下的按钮。 */
+.toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  /* 压在浮窗层（90/91）之上：桥接插件安装结果这类回执要在浮窗开着时也能看到。 */
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  max-width: 340px;
+  padding: 10px 10px 10px 12px;
+  /* 内层语气图标是正圆、关闭按钮是小方钮，都不跟卡片边贴齐，所以这里按参考稿取 11px。 */
+  border-radius: 11px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.5;
+  /* 回执里常带「成功 N 个」这类会变的数字：等宽数字，别让宽度抖。 */
+  font-variant-numeric: tabular-nums;
+  /* 只有这条接点击（主要是给关闭按钮）。 */
+  pointer-events: auto;
+  animation: toast-in var(--m-enter) var(--ease-out);
+}
+
+/* 退场：放完动画再摘节点（等待时长见 src/ui/toast.ts 的 LEAVE_MS）。 */
+.toast.is-leaving {
+  animation: toast-out var(--m-exit) var(--ease-out) forwards;
+}
+
+/* 进：从下方 8px 内滑上来（位移 ≤8px 的硬约束）并轻微放大回 1。 */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* 出：往下飘 6px 并淡出。 */
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+/* 语气图标底圈：底色与墨色按 data-kind 取令牌，色值不写在这里。 */
+.toast-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  border-radius: 50%;
+}
+
+.toast-ico svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.toast[data-kind="ok"] .toast-ico {
+  background: color-mix(in srgb, var(--ok) 22%, transparent);
+  color: var(--ok);
+}
+
+.toast[data-kind="error"] .toast-ico {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  color: var(--danger);
+}
+
+.toast[data-kind="info"] .toast-ico {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 正文：路径这类长串折行，不把卡片撑破右边。 */
+.toast-body {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 关闭按钮：安静地待在右上角，悬停 / 键盘聚焦时才提亮。 */
+.toast-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -2px -2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition:
+    background var(--m-quick) var(--ease-out),
+    color var(--m-quick) var(--ease-out);
+}
+
+.toast-close svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.toast-close:hover,
+.toast-close:focus-visible {
+  background: var(--elev);
+  color: var(--fg);
+}

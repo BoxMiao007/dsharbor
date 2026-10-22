@@ -14,4 +14,5 @@
 @import "./styles/80-env-cards.css"; /* 环境大按钮卡片 + 三点操作菜单 */
 @import "./styles/90-modals.css"; /* 浮窗层：桥接插件 / 补丁层 / 环境名输入 */
 @import "./styles/95-integration.css"; /* 「集成」卡片：命令行集成 */
+@import "./styles/96-toast.css"; /* 动作回执 Toast（右下角堆叠，最多 3 条） */
 @import "./styles/99-hidden.css"; /* .hidden 收尾 */
