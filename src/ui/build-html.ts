@@ -1,6 +1,6 @@
 /* 整页静态骨架 buildHtml：由 AppInfo 渲染左栏与右栏全部初始 DOM（id 不变，绑定代码共用） —— 自 main.ts 原样搬出（2026-10 模块化拆分），声明加 export，其余未改。 */
 
-import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_UPDATE_ALL, ICON_FOLDER, ICON_REVERT } from "./icons";
+import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MOON, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_UPDATE_ALL, ICON_FOLDER, ICON_REVERT } from "./icons";
 import type { AppInfo } from "./types";
 import { CUSTOM_DEFAULT_COMMAND, TOGGLE_TEXT_REST, TOOLTIP_RESTART, npxCommandOf } from "./config";
 import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, cardRow, cellColumn, colHead, badgeLine } from "./markup";
@@ -57,6 +57,7 @@ export function buildHtml(info: AppInfo): string {
         <p class="sidebar-sub">DeepSeek</p>
       </div>
       <nav class="rail" id="nav" aria-label="设置分区">
+        <span class="rail-ind" aria-hidden="true"></span>
         ${PANELS.map(
           (item) =>
             `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span>${item.key === "log" ? UNREAD_BADGE_HTML : ""}</button>`,
@@ -65,7 +66,7 @@ export function buildHtml(info: AppInfo): string {
       <div class="sidebar-links">
         <button id="link-site" class="icon-btn" type="button" title="打开 DSH 官网" aria-label="打开 DSH 官网">${ICON_DSH_SITE}</button>
         <button id="link-repo" class="icon-btn" type="button" title="打开 GitHub 仓库" aria-label="打开 GitHub 仓库">${ICON_GITHUB}</button>
-        <button id="mode-btn" class="icon-btn" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}</button>
+        <button id="mode-btn" class="icon-btn theme-morph" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}${ICON_MOON}</button>
       </div>
     </aside>
   `;
