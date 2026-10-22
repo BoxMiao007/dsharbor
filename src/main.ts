@@ -13,6 +13,8 @@ import { Picker } from "./ui/picker";
 import type { PickerBadge, PickerChoice } from "./ui/picker";
 import { THEME_KEY, readStoredTheme, applyMode } from "./ui/theme";
 import type { ThemeId } from "./ui/theme";
+import { readStoredMotion, saveStoredMotion, applyMotion } from "./ui/motion";
+import type { MotionPref } from "./ui/motion";
 import { escapeHtml, toggleSwapHtml } from "./ui/markup";
 import { applyRestartSpin, beginRestartSpin, endRestartSpin, updateRestartSpin, setStatusRefresher } from "./ui/spin";
 import { buildHtml } from "./ui/build-html";
@@ -43,6 +45,9 @@ async function main(): Promise<void> {
   }
 
   let theme: ThemeId = readStoredTheme();
+  // 全站动效偏好：与外观同族，存在 localStorage。关闭时 <html> 带 data-motion="off"，
+  // 由 99-hidden.css 统一中和动画与过渡。
+  let motion: MotionPref = readStoredMotion();
   // 六个新字段的当前值：后端读回来之后换成它。本版只做承载，没有界面控件改它，
   // 但保存链路上必须原样带上，否则界面上任何一次保存都会把用户已改的值抹回默认。
   let prefs: ShellPrefs = { ...DEFAULT_PREFS };
@@ -56,6 +61,9 @@ async function main(): Promise<void> {
   /** 生成界面与全部绑定。只在启动时跑一次：切浅色/深色只改 <html data-mode>，不重建 DOM。 */
   async function mount(): Promise<void> {
     applyMode(theme);
+    // 动效偏好与外观一样只改 <html>，不重建界面。index.html 的内联脚本已在首帧贴过
+    // 一次，这里再贴一次是给「首帧之后才跑到的代码路径」兜底（幂等）。
+    applyMotion(motion);
     root.innerHTML = buildHtml(info);
 
     const $ = <T extends HTMLElement>(id: string): T => {
@@ -425,6 +433,20 @@ async function main(): Promise<void> {
       syncThemeToShell(theme);
     });
     renderModeButton();
+    // 「动效」总开关：与外观同一套做法——只改 <html data-motion>，不重建界面，
+    // 正在填的字段与滚动位置都保住。关掉后由 99-hidden.css 统一把动画与过渡中和，
+    // 转圈这类无限动画改为静止（图标仍在，不会出现「看不出在忙」）。
+    const motionToggle = $<HTMLButtonElement>("motion-toggle");
+    const renderMotionToggle = (): void => {
+      motionToggle.setAttribute("aria-checked", motion === "off" ? "false" : "true");
+    };
+    motionToggle.addEventListener("click", () => {
+      motion = motion === "off" ? "on" : "off";
+      applyMotion(motion);
+      saveStoredMotion(motion);
+      renderMotionToggle();
+    });
+    renderMotionToggle();
     // 下载源：「网络」卡的第一个控件。改完立刻生效于版本清单查询（选「官方源」
     // 就真的去官方地址拉），不必重启壳。
     /** 「网络与代理」卡的平台标记。卡头不再挂摘要徽章（各块一律只有标题）。*/

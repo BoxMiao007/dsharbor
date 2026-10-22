@@ -274,15 +274,16 @@ test("数字出现前后条目高度都保持 44px", { skip: skipReason }, async
   }
 });
 
-test("prefers-reduced-motion 下不做弹动", { skip: skipReason }, async () => {
+test("系统的「减少动画」不影响本项目：仍照常弹动", { skip: skipReason }, async () => {
   const page = await openPage(browser, { session: "stopped", counter: 0, freezeLog: true });
   try {
+    // 项目的动效只由设置里的「动效」开关控制，不跟随系统 prefers-reduced-motion。
     await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
     await clickToggle(page);
     await sleep(1400);
     const entry = await readLogEntry(page);
     assert.equal(entry.visible, true, "数字照常出现");
-    assert.equal(entry.animationName, "none", "减少动态效果时不做弹动");
+    assert.equal(entry.animationName, "ico-count-bump", "系统开了「减少动画」本项目仍照常弹动（关动效走设置里的开关）");
   } finally {
     await page.close();
   }

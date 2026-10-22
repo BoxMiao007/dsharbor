@@ -4,3 +4,32 @@
 .hidden {
   display: none;
 }
+
+/* ---- 动效偏好关闭：全站中和 ----------------------------------------------
+   界面的「动效」开关关掉后，<html> 带 data-motion="off"（见 src/ui/motion.ts）。
+   这里把动画与过渡整体压平：时长与延迟归零、只跑一轮，这样一次性动效（入场、
+   弹跳、闪烁）都不再可见，但不用去每个组件里逐个写覆盖。
+
+   注意「无限动画」必须单独显式 animation: none —— 只把时长压到 0s 的话，linear
+   infinite 会退化成 0ms 一轮的死循环，浏览器仍然每帧往回调，白烧 CPU。所以下面
+   把当前全部无限动画（重启转圈、方形按钮转圈、swap 抖动）逐条点名关掉。
+   以后新增无限动画（只允许出现在「正在忙」的状态上）也要在这里补一行。 */
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* 无限动画三条：停掉，不留空转。图标本身还在（重启的环形箭头、方钮的刷新圈），
+   静止的图标就是「在忙」的静态线索，不会出现看不出在忙的空窗。 */
+html[data-motion="off"] #btn-restart.is-restarting svg,
+html[data-motion="off"] .square-btn.is-spinning svg,
+html[data-motion="off"] .ico-count.ico-count-bump,
+html[data-motion="off"] #btn-toggle.swap:hover,
+html[data-motion="off"] #btn-toggle.swap:focus-visible {
+  animation: none !important;
+}

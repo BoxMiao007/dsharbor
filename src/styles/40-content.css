@@ -130,6 +130,19 @@
   min-height: 2lh;
 }
 
+/* 「托盘与网络」这一行：左列上下两张小卡（.cell-col）+ 右列一张长卡。
+   列间距与左列内部的卡间距都取 --gap-card，与主卡外「卡片之间」的间距同一取值，
+   这样横缝竖缝看起来一样宽。 */
+.cell-row:has(> .cell-col) {
+  gap: var(--gap-card);
+}
+
+.cell-row > .cell-col {
+  display: grid;
+  gap: var(--gap-card);
+  align-content: start;
+}
+
 /* 卡片：淡底 + 圆角 + 分层柔和阴影浮在页面背景上，代替硬描边。
    块头左边标题、右边徽章或说明。 */
 .block {

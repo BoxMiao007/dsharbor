@@ -57,6 +57,16 @@ export function cellRow(ratio: string, left: string, right: string): string {
   return `<div class="cell-row" data-ratio="${ratio}">${cell(left)}${cell(right)}</div>`;
 }
 
+/** 并排的卡，列形态由调用方给（不走 cell 包裹）：用于「左列上下两卡│右列一张长卡」这种不对称列。 */
+export function cardRow(ratio: string, ...columns: string[]): string {
+  return `<div class="cell-row" data-ratio="${ratio}">${columns.join("")}</div>`;
+}
+
+/** 一列上下堆叠的小卡：左列「托盘设置 / 动效」。卡间距与外层卡片间距同一取值，见 40-content.css。 */
+export function cellColumn(...bodies: string[]): string {
+  return `<div class="cell-col">${bodies.map((body) => cell(body)).join("")}</div>`;
+}
+
 /** 并排两列时的小标题：左列「托盘设置」、右列「网络与代理」，保证两列从同一行起。 */
 export function colHead(title: string, extra = ""): string {
   return `<div class="col-head"><span class="col-title">${title}</span>${extra}</div>`;
