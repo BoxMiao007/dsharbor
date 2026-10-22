@@ -390,30 +390,9 @@ button.primary:hover:not(:disabled) {
   }
 }
 
-/* 减少动态效果：关掉抖动与未读数字的弹动、swap 切字压到最短
-   （数字照常变化，只是不弹——上拍列表仍按 90ms 一拍走）。
-   两处「无限转圈」也一并停掉：重启按钮的转圈与方形按钮（自查 / 刷新）的转圈，
-   它们是 linear infinite，不关掉会一直动，对前庭敏感的用户不友好。 */
-@media (prefers-reduced-motion: reduce) {
-  .ico-count.ico-count-bump {
-    animation: none;
-  }
-
-  #btn-toggle.swap:hover,
-  #btn-toggle.swap:focus-visible {
-    animation: none;
-  }
-
-  #btn-restart.is-restarting svg,
-  .square-btn.is-spinning svg {
-    animation: none;
-  }
-
-  #btn-toggle.swap .span-mother span,
-  #btn-toggle.swap .span-mother2 span {
-    transition-duration: 0.01ms !important;
-  }
-}
+/* 减少动态效果不再走系统 prefers-reduced-motion：改由界面里的「动效」开关控制，
+   开关关闭时由 99-hidden.css 的 html[data-motion="off"] 规则统一中和
+   （抖动、弹动、两处无限转圈、swap 切字都在那边一并停掉）。 */
 
 .error {
   margin: 10px 0 4px;

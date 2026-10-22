@@ -3,7 +3,7 @@
 import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_UPDATE_ALL, ICON_FOLDER, ICON_REVERT } from "./icons";
 import type { AppInfo } from "./types";
 import { CUSTOM_DEFAULT_COMMAND, TOGGLE_TEXT_REST, TOOLTIP_RESTART, npxCommandOf } from "./config";
-import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, colHead, badgeLine } from "./markup";
+import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, cardRow, cellColumn, colHead, badgeLine } from "./markup";
 
 /** 版本徽章里的两个四角星图标（取自 DeepSeek Harness 官网，路径原样保留）。 */
 export const SPARKLE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -111,6 +111,20 @@ export function buildHtml(info: AppInfo): string {
   const statusErrorBlock = `<p id="status-error" class="error hidden" role="alert" aria-live="assertive"></p>`;
   const loginNoteBlock = `<p id="login-note" class="hint notice login-note hidden" role="status" aria-live="polite"></p>`;
 
+  // 「动效」块：全站动效的总开关，值存在 localStorage（键见 src/ui/motion.ts），
+  // 关掉后 <html> 带 data-motion="off"，由 99-hidden.css 统一把动画与过渡中和。
+  // 刻意不跟随系统的「减少动画」偏好：本项目的界面动效有自己的开关，两套口径混用
+  // 会出现「明明开着却不动」的困惑，所以说明里写清。
+  const motionFields = `
+    ${colHead("动效")}
+    <div class="switch-row">
+      <span class="switch-label" id="motion-toggle-label">界面动效</span>
+      <button class="switch" type="button" role="switch" id="motion-toggle" aria-checked="true" aria-labelledby="motion-toggle-label"><span class="switch-knob"></span></button>
+    </div>
+    <p class="hint">关掉后界面不再有过渡与位移，转圈这类忙碌提示改为静止的图标。</p>
+    <p class="hint">只看这里的设置，不跟随系统的「减少动画」偏好。</p>
+  `;
+
   // 两条托盘设置（单击打开 / 释放界面内存）在「托盘设置」块里，说明直接写在控件下方。
   const trayFields = `
     ${colHead("托盘设置")}
@@ -166,7 +180,9 @@ export function buildHtml(info: AppInfo): string {
     </div>
   `;
 
-  // 「网络与代理」块：下载源 + 代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
+  // 「网络与代理」块：下载源 + 代理，末尾接「测试连接」——自检跑的就是这里配的代理，
+  // 放在同一张卡里才看得出「测的是上面这套设置」，不再单独占一张小卡。
+  // 代理设置按下发到子进程的时机生效，所以地址框失焦就存。
   const networkFieldsBody = `
     <p id="network-windows-only" class="hint notice network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
     <div id="network-content" class="network-content">
@@ -184,17 +200,14 @@ export function buildHtml(info: AppInfo): string {
       </div>
       <p class="hint" id="proxy-hint"></p>
     </div>
-    </div>
-  `;
-
-  // 「网络自检」块：真正起一次 npm，看直连和走代理各自通不通。
-  const selfCheckBody = `
     <div class="fields">
+      <span class="field-label">连接测试</span>
       <div class="actions">
         <button type="button" id="btn-self-check">测试连接</button>
       </div>
       <p class="hint" id="self-check-status"></p>
       <p class="hint hidden" id="self-check-detail"></p>
+    </div>
     </div>
   `;
 
@@ -412,10 +425,10 @@ export function buildHtml(info: AppInfo): string {
     panelSection("integ", mainCard([cell(cliBlockBody), cell(dshVersionsBody)])),
     panelSection(
       "traynet",
-      // 托盘设置与网络与代理两张小卡等宽：内容不是一个量级（网络那边的说明长得多），
-      // 但两张并排的卡宽窄不一、控件左右对不齐，观感更差；等宽后两列的标题、下拉框、
-      // 说明都从同一条竖线起，看着才整齐。
-      mainCard([cellRow("1-1", trayFields, networkFieldsBody), cell(selfCheckBody)]),
+      // 左列上下两张小卡（托盘设置 / 动效）、右列一张长卡（网络与代理，含测试连接）。
+      // 两列等宽：网络那边的说明长得多，宽窄不一控件就左右对不齐；等宽后两列的标题、
+      // 下拉框、说明都从同一条竖线起。左列两张卡的间距与外层卡片间距同一取值（--gap-card）。
+      mainCard([cardRow("1-1", cellColumn(trayFields, motionFields), cell(networkFieldsBody))]),
     ),
     // 日志分区是唯一不走「每项一张小卡」的分区：标题与按钮直接在大卡上，
     // 正文单独一层，所以这里把 logBody 直接铺进主卡，不套 cell。
