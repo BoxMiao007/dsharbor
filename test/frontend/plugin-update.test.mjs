@@ -187,7 +187,8 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
     }
 
     // 版本徽章挤在包名末尾的标题行里；插件自带的说明（description）单独一行，
-    // 悬停看全文；工具条是两枚图标方钮，功能名走气泡（aria-label 与 title 一致）。
+    // 悬停看全文；工具条是两枚图标方钮，功能名走自绘气泡（data-tip 与 aria-label 一致），
+    // 不再用原生 title（免得和气泡叠成两份提示）。
     const layout = await page.evaluate(() => {
       const row = document.querySelector('#plugin-list [data-row="billion-context"]');
       const badge = row.querySelector(".plugin-ver");
@@ -195,7 +196,12 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
       const desc = row.querySelector(".plugin-desc");
       const icons = ["#btn-plugin-check-updates", "#btn-plugin-update-all"].map((sel) => {
         const btn = document.querySelector(sel);
-        return { hasSvg: Boolean(btn.querySelector("svg")), label: btn.getAttribute("aria-label") };
+        return {
+          hasSvg: Boolean(btn.querySelector("svg")),
+          label: btn.getAttribute("aria-label"),
+          tip: btn.getAttribute("data-tip"),
+          title: btn.getAttribute("title"),
+        };
       });
       return {
         badgeInTitle: Boolean(badge && title && title.contains(badge)),
@@ -212,10 +218,10 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
     assert.deepEqual(
       layout.icons,
       [
-        { hasSvg: true, label: "检查更新" },
-        { hasSvg: true, label: "全部更新" },
+        { hasSvg: true, label: "检查更新", tip: "检查更新：重新对比 registry 上的最新版本", title: null },
+        { hasSvg: true, label: "全部更新", tip: "全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）", title: null },
       ],
-      "工具条应是两枚图标钮，气泡写功能名",
+      "工具条应是两枚图标钮：功能名走自绘气泡（data-tip，以 aria-label 开头），且无原生 title",
     );
 
     const state = await readPanelState(page);

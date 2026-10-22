@@ -1320,15 +1320,19 @@ async function main(): Promise<void> {
       if (!stopped) {
         btnToggle.classList.remove("swap");
         btnToggle.classList.add("round");
-        // 圆形钮里只有图标，没有可见文字：名字与气泡只能靠 title / aria-label。
-        btnToggle.title = TOOLTIP_STOP;
+        // 圆形钮里只有图标，没有可见文字：名字靠 aria-label，操作说明走自绘气泡
+        //（.has-tip + data-tip，见 50-info.css）。不再用原生 title，免得两份提示叠在一起。
+        btnToggle.classList.add("has-tip");
+        btnToggle.dataset.tip = TOOLTIP_STOP;
         btnToggle.setAttribute("aria-label", TOOLTIP_STOP);
         btnToggle.innerHTML = ICON_STOP;
         return;
       }
       btnToggle.classList.remove("round");
       btnToggle.classList.add("swap");
-      btnToggle.removeAttribute("title");
+      // 停止态是带可见文字的长条按钮，气泡没有意义，一并摘掉。
+      btnToggle.classList.remove("has-tip");
+      delete btnToggle.dataset.tip;
       btnToggle.setAttribute("aria-label", TOGGLE_TEXT_REST);
       btnToggle.innerHTML = toggleSwapHtml();
     }

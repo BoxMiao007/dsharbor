@@ -468,7 +468,8 @@ button.primary:hover:not(:disabled) {
 
 /* 方钮：正方形圆角、只放一枚图标，边长与工具条按钮同高（--btn-h = 34px）。
    「指定程序路径」的浏览、「监听端口」的还原、「官方 npx 命令」的刷新版本列表共用这一套；
-   图标钮没有可见文字，名字与操作说明一律走 title + aria-label（与顶栏两颗圆钮同一个做法）。 */
+   图标钮没有可见文字，名字靠 aria-label、操作说明走自绘气泡（.has-tip + data-tip，
+   见 50-info.css）；与顶栏两颗圆钮同一套做法，不再用原生 title。 */
 .square-btn {
   flex: none;
   display: grid;

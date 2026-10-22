@@ -88,14 +88,14 @@ export function buildHtml(info: AppInfo): string {
         <div class="actions actions-primary">
           <!-- 初始即停止态的逐字切换形态：首帧就用正确样式，等 render 前不会闪红底大字。 -->
           <button id="btn-toggle" class="primary swap" aria-label="${TOGGLE_TEXT_REST}">${toggleSwapHtml()}</button>
-          <button id="btn-restart" class="round hidden" type="button" title="${TOOLTIP_RESTART}" aria-label="${TOOLTIP_RESTART}">${ICON_RESTART}</button>
+          <button id="btn-restart" class="round hidden has-tip" type="button" data-tip="${TOOLTIP_RESTART}" aria-label="${TOOLTIP_RESTART}">${ICON_RESTART}</button>
         </div>
         <div class="open-split">
           <button id="btn-open" class="btn-open" type="button" disabled>
             <span class="btn-ico" id="open-ico" aria-hidden="true">${ICON_OPEN_APP}</span>
             <span class="btn-text" id="open-text">应用内打开</span>
           </button>
-          <button id="btn-open-more" class="btn-open-more" type="button" title="更换打开方式" aria-label="更换打开方式" aria-expanded="false" aria-controls="open-menu">${ICON_CHEVRON_DOWN}</button>
+          <button id="btn-open-more" class="btn-open-more has-tip" type="button" data-tip="更换打开方式" aria-label="更换打开方式" aria-expanded="false" aria-controls="open-menu">${ICON_CHEVRON_DOWN}</button>
           <div id="open-menu" class="open-menu hidden" role="menu" aria-label="打开方式">
             <button class="open-item" type="button" role="menuitem" data-open-mode="app">${ICON_OPEN_APP}<span>应用内打开</span></button>
             <button class="open-item" type="button" role="menuitem" data-open-mode="browser">${ICON_OPEN_BROWSER}<span>浏览器打开</span></button>
@@ -166,7 +166,7 @@ export function buildHtml(info: AppInfo): string {
   // 开关与更新的规则说明不再整段铺在卡头（维护者要求收掉）；关键提醒都收在控件
   // 自己的 title 气泡与完成后的提示行（#plugin-note / #plugin-warning）里。
   const pluginBody = `
-    ${colHead("插件", `${badgeLine("plugin-summary", "读取中…")}<span class="plugin-head-actions"><button id="btn-plugin-check-updates" class="square-btn" type="button" title="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${ICON_REFRESH}</button><button id="btn-plugin-update-all" class="square-btn" type="button" title="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${ICON_UPDATE_ALL}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button></span>`)}
+    ${colHead("插件", `${badgeLine("plugin-summary", "读取中…")}<span class="plugin-head-actions"><button id="btn-plugin-check-updates" class="square-btn has-tip" type="button" data-tip="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${ICON_REFRESH}</button><button id="btn-plugin-update-all" class="square-btn has-tip" type="button" data-tip="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${ICON_UPDATE_ALL}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button></span>`)}
     <div id="profile-plugins" class="plugin-panel">
       <div id="plugin-list" class="plugin-list"></div>
       <div id="plugin-empty" class="plugin-empty hidden">
@@ -285,7 +285,7 @@ export function buildHtml(info: AppInfo): string {
         <span class="field-label">版本 <span class="info-dot" role="img" tabindex="0" aria-label="版本说明" data-tip="首项「自动最新版本」不带版本号，跟 npm 的 latest 标签走，官方发新版后自动用上；下面按新到旧列出官方发布过的版本，「更多…」每次再放 10 个。标「已缓存」的版本本机 npx 缓存里已经有了；npx 按命令写法各存一份缓存，只有那份是 dsh@版本号 写法留下的才直接复用、不再下载，裸包名写法留下的选了还会再下载一份。">!</span></span>
         <div class="control-line">
           <div class="picker" id="npx-version-picker"></div>
-          <button type="button" id="npx-versions-refresh" class="square-btn" title="重新获取官方版本列表" aria-label="重新获取官方版本列表">${ICON_REFRESH}</button>
+          <button type="button" id="npx-versions-refresh" class="square-btn has-tip" data-tip="重新获取官方版本列表" aria-label="重新获取官方版本列表">${ICON_REFRESH}</button>
         </div>
         <div id="npx-versions-hint" class="hint hidden"></div>
         <div id="npx-installed-hint" class="hint notice hidden"></div>
@@ -312,7 +312,7 @@ export function buildHtml(info: AppInfo): string {
       <div id="binary-fields" class="fields hidden">
         <div class="path-row">
           <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" aria-label="指定程序路径" />
-          <button type="button" id="binary-browse" class="square-btn" title="浏览程序路径" aria-label="浏览程序路径">${ICON_FOLDER}</button>
+          <button type="button" id="binary-browse" class="square-btn has-tip" data-tip="浏览程序路径" aria-label="浏览程序路径">${ICON_FOLDER}</button>
         </div>
         <p id="binary-error" class="error field-error hidden"></p>
       </div>
@@ -344,7 +344,7 @@ export function buildHtml(info: AppInfo): string {
     </div>`;
   const portBody = `<div class="fields">
       <label for="port">监听端口 <span id="port-info" class="info-dot" role="img" tabindex="0" aria-label="端口说明" data-tip="正在读取 DSH 配置…">!</span></label>
-      <div class="port-row">${portControl}<button type="button" id="port-reset" class="square-btn" title="把端口还原为默认（留空 = 跟随 DSH 配置）" aria-label="还原端口">${ICON_REVERT}</button></div>
+      <div class="port-row">${portControl}<button type="button" id="port-reset" class="square-btn has-tip" data-tip="把端口还原为默认（留空 = 跟随 DSH 配置）" aria-label="还原端口">${ICON_REVERT}</button></div>
       <p class="hint" id="port-hint">留空即跟随 DSH 自身的配置。</p>
     </div>`;
 
