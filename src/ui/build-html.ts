@@ -165,7 +165,7 @@ export function buildHtml(info: AppInfo): string {
 
   // 插件管理卡：跟着「选中的环境」走。开关改的是补丁层里的禁用表达，不卸载插件包。
   // 开关与更新的规则说明不再整段铺在卡头（维护者要求收掉）；关键提醒都收在控件
-  // 自己的 title 气泡与完成后的提示行（#plugin-note / #plugin-warning）里。
+  // 自己的气泡（data-tip）与完成后的提示行（#plugin-note / #plugin-warning）里。
   const pluginBody = `
     ${colHead("插件", `${badgeLine("plugin-summary", "读取中…")}<span class="plugin-head-actions"><button id="btn-plugin-check-updates" class="square-btn has-tip" type="button" data-tip="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${ICON_REFRESH}</button><button id="btn-plugin-update-all" class="square-btn has-tip" type="button" data-tip="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${ICON_UPDATE_ALL}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button></span>`)}
     <div id="profile-plugins" class="plugin-panel">
