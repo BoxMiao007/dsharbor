@@ -1,15 +1,17 @@
 /**
- * 前端接缝测试：插件更新（检查结果行内渲染 + 单个/全部更新）。
+ * 前端接缝测试：插件更新（检查结果行内渲染 + 单个/全部更新 + 工具条互斥）。
  *
- * 只测三个接缝——插件卡里更新功能露在界面上的部分：
+ * 只测四个接缝——插件卡里更新功能露在界面上的部分：
  *  1. 检查过后行内出现版本号；有更新的行出现「更新到 <目标版本>」按钮（目标版本照实展示，
  *     含预发布）；registry 查不到的行按两种样子亮出错误——版本读不出的亮「版本未知」、
  *     读得出的在版本号旁亮「检查失败」，原因都收进 title；官方骨架包与桥接插件不出现在
- *     更新范围里（行内没有版本号）。
+ *     更新范围里（行内没有版本号）。版本徽章挤在包名末尾同行，插件自带的说明单独一行。
  *  2. 点单个「更新」：按钮走忙态，完成后该行按钮消失、版本号变成目标版本，汇总提示出现；
  *     停用中的插件更新后保持停用，并出现「新版本若改了挂载点，停用可能失效」的提醒。
  *  3. 「全部更新」：把剩余有更新的插件逐个升级，提示写明成功清单；没有可更新的插件时
  *     按钮置灰、徽章归零。
+ *  4. 工具条是两枚图标方钮（悬停气泡写功能名）；任一动作进行中，检查/全部更新/行内
+ *     更新/开关全部锁死（互斥），发起动作的那枚图标转圈，做完恢复。
  *
  * 跑在普通浏览器里（假后端预览台 scripts/mock-preview.mjs），不起 Tauri 窗口。
  * 前置：先 `pnpm build`（预览台读 dist/index.html）。
@@ -71,11 +73,14 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 /**
  * 打开一页并停在「环境/插件」分区，等插件清单渲染、自动检查更新完成
  * （徽章出现「N 个可更新」）。自动检查失败时这个等待会超时——那本身就是失败信号。
+ * `state` 会拼到 URL 的 ?state= 上（预览台在首轮渲染前覆盖假状态），
+ * 互斥测试用它给假命令加人工延时，拿到确定的忙态窗口。
  */
-async function openPluginPanel(browser) {
+async function openPluginPanel(browser, state = null) {
+  const url = state ? `${PAGE_URL}?state=${encodeURIComponent(JSON.stringify(state))}` : PAGE_URL;
   const page = await browser.newPage();
   await page.setViewport({ width: 1240, height: 900 });
-  await page.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
+  await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForSelector('[data-panel-btn="env"]');
   await page.click('[data-panel-btn="env"]');
   await page.waitForFunction(
@@ -172,6 +177,36 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
       assert.equal(cell, null, `${out} 不该出现在插件列表里`);
     }
 
+    // 版本徽章挤在包名末尾的标题行里；插件自带的说明（description）单独一行，
+    // 悬停看全文；工具条是两枚图标方钮，功能名走气泡（aria-label 与 title 一致）。
+    const layout = await page.evaluate(() => {
+      const row = document.querySelector('#plugin-list [data-row="billion-context"]');
+      const badge = row.querySelector(".plugin-ver");
+      const title = row.querySelector(".plugin-title");
+      const desc = row.querySelector(".plugin-desc");
+      const icons = ["#btn-plugin-check-updates", "#btn-plugin-update-all"].map((sel) => {
+        const btn = document.querySelector(sel);
+        return { hasSvg: Boolean(btn.querySelector("svg")), label: btn.getAttribute("aria-label") };
+      });
+      return {
+        badgeInTitle: Boolean(badge && title && title.contains(badge)),
+        descText: desc ? desc.textContent : null,
+        descTitle: desc ? desc.getAttribute("title") : null,
+        icons,
+      };
+    });
+    assert.equal(layout.badgeInTitle, true, "版本徽章应在包名末尾的标题行里");
+    assert.ok(layout.descText && layout.descText.length > 0, "插件自带的说明应显示出来");
+    assert.equal(layout.descText, layout.descTitle, "说明全文应收在 title 里（悬停可看）");
+    assert.deepEqual(
+      layout.icons,
+      [
+        { hasSvg: true, label: "检查更新" },
+        { hasSvg: true, label: "全部更新" },
+      ],
+      "工具条应是两枚图标钮，气泡写功能名",
+    );
+
     const state = await readPanelState(page);
     assert.match(state.summary, /3 个可更新/, `徽章应报 3 个可更新，实际「${state.summary}」`);
     assert.equal(state.allDisabled, false, "有可更新插件时「全部更新」应可用");
@@ -249,5 +284,72 @@ test("全部更新：逐个升级并汇总成功清单；没有可更新的之�
     assert.equal(state.allDisabled, true, "没有可更新插件时「全部更新」应置灰");
   } finally {
     await page.close();
+  }
+});
+
+test("工具条互斥：任一动作进行中全部操作锁死，发起的那枚图标转圈，做完恢复", { skip: skipReason }, async () => {
+  // 假命令带 600ms 人工延时（URL ?state= 覆盖），拿到确定的忙态窗口。
+  // 元素全部可选链：行内更新按钮在更新完成后会被合法移除，读不到不报错。
+  // 页面显式传入：两段流程各开一页，闭包抓死第一页的引用会读到已关闭的帧。
+  const busyState = (page2) =>
+    page2.evaluate(() => {
+      const q = (sel) => document.querySelector(sel);
+      const spin = (sel) => q(sel)?.classList.contains("is-spinning") ?? false;
+      return {
+        checkDisabled: q("#btn-plugin-check-updates")?.disabled ?? null,
+        checkSpinning: spin("#btn-plugin-check-updates"),
+        allDisabled: q("#btn-plugin-update-all")?.disabled ?? null,
+        allSpinning: spin("#btn-plugin-update-all"),
+        rowBtnGone: !q('#plugin-list [data-row="billion-context"] .plugin-update'),
+        switchDisabled: q('#plugin-list [data-row="billion-context"] .switch')?.disabled ?? null,
+      };
+    });
+  const waitSpin = (page2, sel, want) =>
+    page2.waitForFunction(
+      (sel2, want2) =>
+        Boolean(document.querySelector(sel2)?.classList.contains("is-spinning")) === want2,
+      { timeout: 3000 },
+      sel,
+      want,
+    );
+
+  // 「全部更新」进行中：另一枚图标、行内更新按钮、开关全部锁死；只有它自己转圈。
+  const page = await openPluginPanel(browser, { pluginUpdateDelay: 600 });
+  try {
+    await page.click("#btn-plugin-update-all");
+    await waitSpin(page, "#btn-plugin-update-all", true);
+    const busy = await busyState(page);
+    assert.equal(busy.checkDisabled, true, "全部更新期间「检查更新」应锁死");
+    assert.equal(busy.allDisabled, true, "全部更新期间按钮本身应置灰");
+    assert.equal(busy.allSpinning, true, "「全部更新」自己的图标应转圈");
+    assert.equal(busy.checkSpinning, false, "「检查更新」不该跟着转圈");
+    assert.equal(busy.rowBtnGone, false, "行内更新按钮应还在（只是锁死）");
+    assert.equal(busy.switchDisabled, true, "开关应锁死");
+
+    await waitSpin(page, "#btn-plugin-update-all", false);
+    const done = await busyState(page);
+    assert.equal(done.checkDisabled, false, "做完「检查更新」应解锁");
+    assert.equal(done.switchDisabled, false, "做完开关应解锁");
+  } finally {
+    await page.close();
+  }
+
+  // 「检查更新」进行中：同样的互斥面，转圈的是检查这枚。
+  const page2 = await openPluginPanel(browser, { pluginCheckDelay: 600 });
+  try {
+    await page2.click("#btn-plugin-check-updates");
+    await waitSpin(page2, "#btn-plugin-check-updates", true);
+    const busy = await busyState(page2);
+    assert.equal(busy.checkSpinning, true, "「检查更新」的图标应转圈");
+    assert.equal(busy.allDisabled, true, "检查期间「全部更新」应锁死");
+    assert.equal(busy.rowBtnGone, false, "检查期间行内更新按钮应锁死");
+    assert.equal(busy.switchDisabled, true, "检查期间开关应锁死");
+
+    await waitSpin(page2, "#btn-plugin-check-updates", false);
+    const done = await busyState(page2);
+    assert.equal(done.checkDisabled, false, "做完应解锁");
+    assert.equal(done.switchDisabled, false, "做完开关应解锁");
+  } finally {
+    await page2.close();
   }
 });

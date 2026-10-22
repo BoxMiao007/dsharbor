@@ -198,8 +198,8 @@ button.danger:hover:not(:disabled) {
   gap: 6px;
 }
 
-/* 插件行：名字在左，右端一枚开关。开关本身就是唯一的状态表达，
-   不再另写「已启用 / 已停用」——同一件事说两次，还挤掉名字的宽度。 */
+/* 插件行：标题行（包名 + 标记 + 版本徽章）与说明行叠在左侧主列，右端一枚开关。开关
+   本身就是唯一的状态表达，不再另写「已启用 / 已停用」——同一件事说两次，还挤掉名字的宽度。 */
 .plugin-row {
   display: flex;
   align-items: center;
@@ -212,13 +212,38 @@ button.danger:hover:not(:disabled) {
   user-select: none;
 }
 
-.plugin-name {
+/* 左侧主列：吃掉剩余宽度，行内的换行/截断都在这一列里发生。 */
+.plugin-main {
   flex: 1;
+  min-width: 0;
+}
+
+/* 标题行：包名 + 身份标记 + 版本徽章挤同一行；徽章紧跟名字末尾，不右对齐。 */
+.plugin-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plugin-name {
   min-width: 0;
   color: var(--fg);
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 12.5px;
   word-break: break-all;
+}
+
+/* 插件自带的说明（package.json 的 description）：单行截断，悬停看全文；
+   没有描述的包不渲染这一行，行高随内容，不做假两行。 */
+.plugin-desc {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .plugin-row.is-off .plugin-name {
@@ -303,23 +328,34 @@ button.danger:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 
-/* 插件更新工具条：「检查更新 / 全部更新」两枚小按钮，比默认 ghost 紧凑一档。 */
+/* 插件更新工具条：两枚图标方钮（悬停出「检查更新 / 全部更新」气泡），
+   比通用 34px 方钮收一档，贴着插件卡的密度。 */
 .plugin-toolbar {
   display: flex;
   gap: 6px;
   margin-bottom: 8px;
 }
 
-.plugin-toolbar .ghost {
-  padding: 4px 10px;
-  font-size: 12px;
+.plugin-toolbar .square-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
 }
 
-/* 行内版本号：比包名再淡一档，等宽字体与包名对齐。 */
+.plugin-toolbar .square-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 行内版本号徽章：底色取条目底色（--card-2）往文字色混 10%——浅色主题自动是
+   「加深」、深色主题自动是「减淡」，两个主题用同一条公式保持协调可辨。 */
 .plugin-ver {
   flex: none;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 10%, var(--card-2));
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--fg-dim);
 }
 

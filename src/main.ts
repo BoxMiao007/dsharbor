@@ -2434,6 +2434,8 @@ async function main(): Promise<void> {
       bridge: boolean;
       manual: boolean;
       switchable: boolean;
+      /** 插件自带的说明文字（后端从包 package.json 的 description 读的，读不到是 null）。 */
+      description: string | null;
     }
 
     /** 与 Rust 侧 `plugin_switch::ToggleOutcome` 对应。 */
@@ -2475,6 +2477,16 @@ async function main(): Promise<void> {
     let pluginUpdatesChecked = false;
     /** 插件更新动作是否在跑（忙时更新按钮与开关全部置灰，防重复提交）。 */
     let pluginUpdateBusy = false;
+    /** 这轮更新是不是「全部更新」发起的：只有它让工具条上那枚图标转起来，单行更新不转。 */
+    let pluginUpdateRunningAll = false;
+    /** 检查更新是否在跑（「检查更新」按钮发起的强制重查；进卡自动查不锁界面）。 */
+    let pluginCheckBusy = false;
+
+    /** 插件卡上还有没有别的动作在跑（检查更新或任意一轮更新）：
+     *  是的话开关与更新按钮全部置灰——维护者要求这些操作互斥，做完才放开。 */
+    function pluginActionBusy(): boolean {
+      return pluginUpdateBusy || pluginCheckBusy;
+    }
 
     /**
      * 插件清单：一行一个插件，右端一枚**总开关**（开/关整个插件）。
@@ -2500,9 +2512,10 @@ async function main(): Promise<void> {
       return pluginUpdateItems.find((item) => item.name === name) ?? null;
     }
 
-    /** 行里「版本号 + 更新按钮」那段：查过更新才有；版本读不出来时亮「版本未知」。
-     *  目标版本照实写在按钮上（含预发布），点不点由维护者定。 */
-    function pluginUpdateCellHtml(item: PluginItem): string {
+    /** 行标题里的版本徽章：查过更新才有；版本读不出来时亮「版本未知」。
+     *  检查失败（registry 查不到/断网）必须露出来，不能只留版本号装没事——
+     *  本地 tgz、私有包装的插件就落在这条分支上。 */
+    function pluginVerBadgeHtml(item: PluginItem): string {
       if (!pluginUpdatesChecked) {
         return "";
       }
@@ -2510,30 +2523,46 @@ async function main(): Promise<void> {
       if (!upd) {
         return "";
       }
-      let html = "";
       if (upd.error && !upd.current) {
-        html += `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">版本未知</span>`;
-      } else if (upd.current) {
-        html += `<span class="plugin-ver">v${escapeHtml(upd.current)}</span>`;
-        // 版本读得出来但检查失败（registry 查不到/断网）：错误必须露出来，不能只留版本号装没事。
-        // 本地 tgz、私有包装的插件就落在这条分支上。
-        if (upd.error) {
-          html += `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">检查失败</span>`;
-        }
+        return `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">版本未知</span>`;
       }
-      if (upd.hasUpdate && upd.target) {
-        const busy = pluginUpdateBusy || pluginBusy ? " disabled" : "";
-        html += `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新到 ${escapeHtml(upd.target)}</button>`;
+      if (!upd.current) {
+        return "";
       }
-      return html;
+      const bad = upd.error
+        ? `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">检查失败</span>`
+        : "";
+      return `<span class="plugin-ver">v${escapeHtml(upd.current)}</span>${bad}`;
+    }
+
+    /** 行里的「更新到 x.y.z」按钮：有更新才出现；目标版本照实写在按钮上（含预发布），
+     *  点不点由维护者定。 */
+    function pluginUpdateCellHtml(item: PluginItem): string {
+      if (!pluginUpdatesChecked) {
+        return "";
+      }
+      const upd = updateItemFor(item.name);
+      if (!upd || !upd.hasUpdate || !upd.target) {
+        return "";
+      }
+      const busy = pluginActionBusy() || pluginBusy ? " disabled" : "";
+      return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新到 ${escapeHtml(upd.target)}</button>`;
     }
 
     function pluginRowHtml(item: PluginItem): string {
       // 只留「桥接」这一枚身份标签：开关本身已经说明启用与否，再写一遍「已启用/已停用」
       // 是同一件事说两次；「手写禁用」这点信息收进行提示，不占位。
       const marks = item.bridge ? `<span class="plugin-tag plugin-tag-bridge">桥接</span>` : "";
+      // 描述是插件自己带的元信息（package.json 的 description），单行截断、悬停看全文；
+      // 没有的包就不渲染这一行，行高随内容，不做假两行。
+      const desc = item.description
+        ? `<div class="plugin-desc" title="${escapeHtml(item.description)}">${escapeHtml(item.description)}</div>`
+        : "";
+      // 检查/更新进行中把开关也锁上（互斥）：正常开关忙态不锁——那条链路逐行重绘，锁
+      // 整表会让别的行在开关结束后残留在禁用态。
+      const lock = pluginActionBusy() ? " disabled" : "";
       const label = item.enabled ? "停用" : "启用";
-      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${pluginRowTitle(item)}><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"><span class="switch-knob"></span></button></div>`;
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}</div>${desc}</div>${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
     }
 
     function renderPluginList(): void {
@@ -2557,12 +2586,17 @@ async function main(): Promise<void> {
       renderPluginUpdatesToolbar();
     }
 
-    /** 工具条两枚按钮的可用状态：在忙、还没查过、没有可更新的插件就置灰。 */
+    /** 工具条两枚图标的可用状态与动效：在忙（含检查/更新互斥）、还没查过、
+     *  没有可更新的插件就置灰；正在跑的那一枚转起来（复用 .square-btn 的旋转）。 */
     function renderPluginUpdatesToolbar(): void {
       const pending = pluginUpdateItems.filter((item) => item.hasUpdate).length;
-      btnPluginCheckUpdates.disabled = pluginBusy || pluginUpdateBusy || !pluginLoaded;
-      btnPluginUpdateAll.disabled =
-        pluginBusy || pluginUpdateBusy || !pluginUpdatesChecked || pending === 0;
+      const busy = pluginActionBusy() || pluginBusy;
+      btnPluginCheckUpdates.disabled = busy || !pluginLoaded;
+      btnPluginUpdateAll.disabled = busy || !pluginUpdatesChecked || pending === 0;
+      // 转圈只认「自己这枚按钮发起的动作」：检查转检查的，全部更新转全部更新的；
+      // 单行更新只置灰工具条，不让「全部更新」的图标空转。
+      btnPluginCheckUpdates.classList.toggle("is-spinning", pluginCheckBusy);
+      btnPluginUpdateAll.classList.toggle("is-spinning", pluginUpdateBusy && pluginUpdateRunningAll);
     }
 
     /**
@@ -2616,10 +2650,15 @@ async function main(): Promise<void> {
     }
 
     /** 检查一次更新：进插件卡自动查（每个环境一次，后端会话缓存兜着），
-     *  「检查更新」按钮强制重查。失败只提示，不打断开关插件等其它动作。 */
+     *  「检查更新」按钮强制重查。失败只提示，不打断开关插件等其它动作。
+     *  强制重查期间锁住插件卡的全部操作（互斥），自动查不锁——它是背景动作。 */
     async function refreshPluginUpdates(name: string, force: boolean): Promise<void> {
-      if (!name) {
+      if (!name || (force && pluginCheckBusy)) {
         return;
+      }
+      if (force) {
+        pluginCheckBusy = true;
+        renderPluginList();
       }
       try {
         const items = await invoke<PluginUpdateItem[]>("plugin_updates_list", {
@@ -2649,6 +2688,11 @@ async function main(): Promise<void> {
           setPluginNote(`检查插件更新失败：${String(err)}`);
         }
         logAction(`检查插件更新失败：${String(err)}`);
+      } finally {
+        if (force) {
+          pluginCheckBusy = false;
+          renderPluginList();
+        }
       }
     }
 
@@ -2662,10 +2706,11 @@ async function main(): Promise<void> {
      */
     async function updatePlugin(name: string | null): Promise<void> {
       const target = prefs.profile;
-      if (!target || pluginBusy || pluginUpdateBusy || manageBusy || patchBusy) {
+      if (!target || pluginBusy || pluginActionBusy() || manageBusy || patchBusy) {
         return;
       }
       pluginUpdateBusy = true;
+      pluginUpdateRunningAll = name === null;
       setPluginNote(null);
       setPluginWarning(null);
       renderPluginList();
@@ -2698,6 +2743,7 @@ async function main(): Promise<void> {
         logAction(`更新插件失败：${String(err)}`);
       } finally {
         pluginUpdateBusy = false;
+        pluginUpdateRunningAll = false;
         renderPluginList();
         renderPluginSummary();
       }
@@ -2731,7 +2777,9 @@ async function main(): Promise<void> {
      */
     async function togglePlugin(name: string, enabled: boolean): Promise<void> {
       const target = prefs.profile;
-      if (!target || !name || pluginBusy || manageBusy || patchBusy) {
+      // 检查/更新进行中不允许动开关（互斥）：更新要改 node_modules，开关要写补丁层，
+      // 两边同时落盘没有意义，还容易让「更新后保持停用」的判断踩到刚翻的状态。
+      if (!target || !name || pluginBusy || pluginActionBusy() || manageBusy || patchBusy) {
         return;
       }
       pluginBusy = true;
@@ -2818,9 +2866,9 @@ async function main(): Promise<void> {
       void runEnvAction(() => installDeps(prefs.profile), { output: true });
     });
 
-    // 「检查更新」：强制重查（后端绕过会话缓存真发网络）。
+    // 「检查更新」：强制重查（后端绕过会话缓存真发网络）；跑完前插件卡整体互斥。
     btnPluginCheckUpdates.addEventListener("click", () => {
-      if (!prefs.profile || pluginBusy || pluginUpdateBusy) {
+      if (!prefs.profile || pluginBusy || pluginActionBusy()) {
         return;
       }
       void refreshPluginUpdates(prefs.profile, true);

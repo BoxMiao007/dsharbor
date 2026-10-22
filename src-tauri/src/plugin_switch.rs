@@ -134,6 +134,30 @@ fn read_patch_layer(target: &Target, dir: &str) -> Result<String, String> {
     }
 }
 
+/// 读插件自带的说明文字：包 `package.json` 里的 `description` 字段。
+///
+/// 清单是展示用途，单个包读失败（没装好、坏 JSON、没这个字段）不拦清单——那一项
+/// 少一行说明而已，所以一切失败都静默给 `None`。名字先过 `safe_bundle_name`，
+/// 防止拼出奇怪的路径。
+fn read_description(target: &Target, dir: &str, name: &str) -> Option<String> {
+    if !safe_bundle_name(name) {
+        return None;
+    }
+    let path = join_path(target, dir, &format!("{NODE_MODULES}/{name}/package.json"));
+    let text = read_file(target, &path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let desc = value.get("description")?.as_str()?.trim().to_string();
+    (!desc.is_empty()).then_some(desc)
+}
+
+/// 给清单逐项补上说明文字；其余字段原样保留。
+fn with_descriptions(target: &Target, dir: &str, mut items: Vec<PluginItem>) -> Vec<PluginItem> {
+    for item in &mut items {
+        item.description = read_description(target, dir, &item.name);
+    }
+    items
+}
+
 /// 列出某个环境当前加载的插件（带启用状态、是否桥接、是否可开关）。
 pub fn items(
     _app: &AppHandle,
@@ -146,7 +170,11 @@ pub fn items(
     let bundles = plugin_switch::bundle_names(&manifest)?;
     let mounts = read_mounts(&target, &dir, &bundles)?;
     let patch = read_patch_layer(&target, &dir)?;
-    plugin_switch::items(&manifest, &mounts, &patch)
+    Ok(with_descriptions(
+        &target,
+        &dir,
+        plugin_switch::items(&manifest, &mounts, &patch)?,
+    ))
 }
 
 /// 开关一个插件：自动备份补丁层 → 改写补丁层 → 回报刷新后的清单。
@@ -196,7 +224,13 @@ pub fn toggle(
         write_file(&target, &patch_path, &updated)?;
     }
 
-    let items = plugin_switch::items(&manifest, &mounts, &updated)?;
+    // 清单同样要补说明文字：开关回包里的行会整行替换界面上的行，漏了描述
+    // 开关一次描述就消失。
+    let items = with_descriptions(
+        &target,
+        &dir,
+        plugin_switch::items(&manifest, &mounts, &updated)?,
+    );
     let mut message = plugin_switch::toggle_message(name, enabled);
     message.push_str(&format!("已自动备份补丁层：{}", backup.path));
     Ok(ToggleOutcome {
@@ -278,6 +312,117 @@ mod tests {
         let mounts =
             plugin_switch::mount_points(&host_bundle_patch_texts(&dir, &["dsh-one".to_string()]));
         assert_eq!(mounts[0].1, vec!["one-row".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn description_is_read_from_the_package_json_and_failures_stay_silent() {
+        let root =
+            std::env::temp_dir().join(format!("dsharbor-plugin-desc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.to_string_lossy().to_string();
+        let target = Target::Host;
+
+        // 正常路径：package.json 里带 description（含首尾空白，读出来要 trim）。
+        let good = root.join(NODE_MODULES).join("dsh-good");
+        std::fs::create_dir_all(&good).unwrap();
+        std::fs::write(
+            good.join("package.json"),
+            r#"{"name":"dsh-good","version":"1.0.0","description":"  给 DSH 加一排侧边栏  "}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_description(&target, &dir, "dsh-good").as_deref(),
+            Some("给 DSH 加一排侧边栏"),
+            "描述取 description 字段并去掉首尾空白"
+        );
+
+        // 空字符串等于没有描述。
+        let empty = root.join(NODE_MODULES).join("dsh-empty-desc");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::write(
+            empty.join("package.json"),
+            r#"{"name":"dsh-empty-desc","description":"   "}"#,
+        )
+        .unwrap();
+        assert_eq!(read_description(&target, &dir, "dsh-empty-desc"), None);
+
+        // 其余失败都静默给 None：没有 package.json、坏 JSON、没这个字段。
+        std::fs::create_dir_all(root.join(NODE_MODULES).join("dsh-no-json")).unwrap();
+        std::fs::write(
+            root.join(NODE_MODULES)
+                .join("dsh-no-json")
+                .join("package.json"),
+            "{ not json",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(NODE_MODULES).join("dsh-no-desc")).unwrap();
+        std::fs::write(
+            root.join(NODE_MODULES)
+                .join("dsh-no-desc")
+                .join("package.json"),
+            r#"{"name":"dsh-no-desc"}"#,
+        )
+        .unwrap();
+        assert_eq!(read_description(&target, &dir, "dsh-missing"), None);
+        assert_eq!(read_description(&target, &dir, "dsh-no-json"), None);
+        assert_eq!(read_description(&target, &dir, "dsh-no-desc"), None);
+
+        // 不安全的包名连路径都不该拼出去。
+        assert_eq!(read_description(&target, &dir, "../../etc/passwd"), None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn descriptions_are_attached_to_items_without_changing_the_rest() {
+        let root =
+            std::env::temp_dir().join(format!("dsharbor-plugin-desc-rich-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.to_string_lossy().to_string();
+        let target = Target::Host;
+
+        let pkg = root.join(NODE_MODULES).join("dsh-rich");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"dsh-rich","description":"带说明的插件"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg.join(PATCH_CANDIDATES[0]),
+            "- insert:\n    - id: rich-row\n",
+        )
+        .unwrap();
+
+        let items = with_descriptions(
+            &target,
+            &dir,
+            vec![
+                PluginItem {
+                    name: "dsh-rich".to_string(),
+                    entries: vec!["rich-row".to_string()],
+                    enabled: true,
+                    bridge: false,
+                    manual: false,
+                    switchable: true,
+                    description: None,
+                },
+                PluginItem {
+                    name: "dsh-bare".to_string(),
+                    entries: vec![],
+                    enabled: true,
+                    bridge: false,
+                    manual: false,
+                    switchable: false,
+                    description: None,
+                },
+            ],
+        );
+        assert_eq!(items[0].description.as_deref(), Some("带说明的插件"));
+        assert_eq!(items[1].description, None, "读不到的包留空，不编造");
+        assert_eq!(items[0].name, "dsh-rich", "其余字段原样保留");
 
         let _ = std::fs::remove_dir_all(&root);
     }

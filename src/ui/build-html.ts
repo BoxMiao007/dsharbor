@@ -1,6 +1,6 @@
 /* 整页静态骨架 buildHtml：由 AppInfo 渲染左栏与右栏全部初始 DOM（id 不变，绑定代码共用） —— 自 main.ts 原样搬出（2026-10 模块化拆分），声明加 export，其余未改。 */
 
-import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_FOLDER, ICON_REVERT } from "./icons";
+import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_UPDATE_ALL, ICON_FOLDER, ICON_REVERT } from "./icons";
 import type { AppInfo } from "./types";
 import { CUSTOM_DEFAULT_COMMAND, TOGGLE_TEXT_REST, TOOLTIP_RESTART, npxCommandOf } from "./config";
 import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, colHead, badgeLine } from "./markup";
@@ -155,8 +155,8 @@ export function buildHtml(info: AppInfo): string {
     <p class="hint">「检查更新」对比 npm 上的最新版本（第一次进这张卡会自动查一次）：可更新的插件行内出现「更新到 版本号」按钮，预发布版本会照实写在按钮上；更新前自动备份环境文件，装完回读校验，官方骨架包与桥接插件不参与。</p>
     <div id="profile-plugins" class="plugin-panel">
       <div class="plugin-toolbar">
-        <button id="btn-plugin-check-updates" class="ghost" type="button" title="重新对比 registry 上的最新版本">检查更新</button>
-        <button id="btn-plugin-update-all" class="ghost" type="button" title="把所有有更新的插件逐个升到目标版本（单个失败不影响其余）">全部更新</button>
+        <button id="btn-plugin-check-updates" class="square-btn" type="button" title="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${ICON_REFRESH}</button>
+        <button id="btn-plugin-update-all" class="square-btn" type="button" title="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${ICON_UPDATE_ALL}</button>
       </div>
       <div id="plugin-list" class="plugin-list"></div>
       <div id="plugin-empty" class="plugin-empty hidden">

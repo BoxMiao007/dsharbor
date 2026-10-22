@@ -139,19 +139,19 @@ const state = {
       一个空数组预览「零插件 + 去安装依赖」；lab 删掉就能预览「读到了但一项也没有」。 */
   plugins: {
     web: [
-      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
-      { name: "@deepseek-ai/dsh-web-app", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
-      { name: "billion-context", entries: ["bili-native"], enabled: true, bridge: false, manual: false, switchable: true },
-      { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true },
-      { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true },
-      { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true },
-      { name: "dsh-local-tools", entries: ["local-tools"], enabled: true, bridge: false, manual: true, switchable: true },
-      { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true },
-      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true },
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。" },
+      { name: "@deepseek-ai/dsh-web-app", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方 Web 界面包，浏览器里那套界面本体。" },
+      { name: "billion-context", entries: ["bili-native"], enabled: true, bridge: false, manual: false, switchable: true, description: "十亿级上下文记忆检索：压缩、折叠与按需还原历史对话。" },
+      { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true, description: "上下文管理与注入策略面板。" },
+      { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true, description: "增强版侧边栏：分组、置顶与拖拽排序。" },
+      { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true, description: "免 Key 聚合网络搜索，多引擎自动回退。" },
+      { name: "dsh-local-tools", entries: ["local-tools"], enabled: true, bridge: false, manual: true, switchable: true, description: "本地打包的工具集（不上 registry，永远查不到版本）。" },
+      { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true, description: "技能与 MCP 服务的管理面板。" },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。" },
     ],
     lab: [
-      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
-      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true },
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。" },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。" },
     ],
     headless: [],
     desktop: [],
@@ -169,6 +169,10 @@ const state = {
       { name: "dsh-skill-mcp-panel", current: "1.0.0", target: "1.1.0", error: null, hasUpdate: true },
     ],
   },
+  /** 假命令的人工延时（毫秒，URL ?state= 可覆盖）：给「操作互斥」的接缝测试一个
+      确定的忙态窗口——同步假结果会让忙态在两次 CDP 往返之间就消失，测不到中间态。 */
+  pluginUpdateDelay: 0,
+  pluginCheckDelay: 0,
   calls: {},
 };
 
@@ -614,7 +618,10 @@ window.__mockUnimplemented = [];
     // ---- 插件更新 --------------------------------------------------------------
     plugin_updates_list: (a) => {
       seen("plugin_updates_list:" + (a && a.name ? a.name : "?") + "/" + (a && a.force ? "force" : "cached"));
-      return (S.pluginUpdates && S.pluginUpdates[a && a.name]) || [];
+      const rows = (S.pluginUpdates && S.pluginUpdates[a && a.name]) || [];
+      return S.pluginCheckDelay > 0
+        ? new Promise((done) => setTimeout(() => done(rows), S.pluginCheckDelay))
+        : rows;
     },
     plugin_update: (a) => {
       const name = a && a.name;
@@ -642,11 +649,14 @@ window.__mockUnimplemented = [];
         : done.length === 0
           ? "没有需要更新的插件。"
           : "全部更新完成：成功 " + done.length + " 个（" + done.join("、") + "）。重启 DSH 后生效。";
-      return {
+      const result = {
         ok: true,
         message: message,
         backupDir: "C:\\Users\\mock\\AppData\\Roaming\\DSHarbor\\backups\\backup-mock",
       };
+      return S.pluginUpdateDelay > 0
+        ? new Promise((done) => setTimeout(() => done(result), S.pluginUpdateDelay))
+        : result;
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,

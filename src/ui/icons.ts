@@ -77,6 +77,9 @@ export const ICON_MORE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx
 /** 版本列表右侧方钮：一圈带箭头的回转，配「重新获取官方版本列表」气泡。 */
 export const ICON_REFRESH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1" /><path d="M20.5 4.4V10H15" /></svg>`;
 
+/** 插件工具条「全部更新」：升起的箭头 + 底线（升级、批量到位），与「检查更新」的回转刷新区分开。 */
+export const ICON_UPDATE_ALL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18.5v-13" /><path d="m6.5 11 5.5-5.5L17.5 11" /><path d="M5.5 21h13" /></svg>`;
+
 /** 「指定程序路径」方钮里的文件夹：点开系统「打开文件」框。 */
 export const ICON_FOLDER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7a2 2 0 0 1 2-2h3.4l1.9 2.4H18.8a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z" /></svg>`;
 

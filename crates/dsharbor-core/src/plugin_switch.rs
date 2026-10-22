@@ -93,6 +93,10 @@ pub struct PluginItem {
     pub manual: bool,
     /// 能不能开关（读不到挂载点的内置骨架包不能）。
     pub switchable: bool,
+    /// 插件自带的说明文字（包 package.json 里的 description）。核心库只负责
+    /// 传递：读文件是外壳的事，读不到就留 None，序列化成 null。
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// 行首缩进（空格数；制表符按一个算，补丁层里实际只用空格）。
@@ -356,6 +360,7 @@ pub fn items(
                 manual,
                 name,
                 entries,
+                description: None,
             }
         })
         .collect())
