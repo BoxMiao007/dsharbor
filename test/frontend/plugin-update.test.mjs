@@ -307,7 +307,7 @@ test("全部更新：逐个升级并汇总成功清单；没有可更新的之�
   }
 });
 
-test("工具条互斥：任一动作进行中全部操作锁死，发起的那枚图标转圈，做完恢复", { skip: skipReason }, async () => {
+test("操作互斥：任一动作进行中全部操作锁死，发起的那枚图标转圈（单个更新谁也不转），做完恢复", { skip: skipReason }, async () => {
   // 假命令带 600ms 人工延时（URL ?state= 覆盖），拿到确定的忙态窗口。
   // 元素全部可选链：行内更新按钮在更新完成后会被合法移除，读不到不报错。
   // 页面显式传入：两段流程各开一页，闭包抓死第一页的引用会读到已关闭的帧。
@@ -321,6 +321,7 @@ test("工具条互斥：任一动作进行中全部操作锁死，发起的那�
         allDisabled: q("#btn-plugin-update-all")?.disabled ?? null,
         allSpinning: spin("#btn-plugin-update-all"),
         rowBtnGone: !q('#plugin-list [data-row="billion-context"] .plugin-update'),
+        rowBtnDisabled: q('#plugin-list [data-row="billion-context"] .plugin-update')?.disabled ?? null,
         switchDisabled: q('#plugin-list [data-row="billion-context"] .switch')?.disabled ?? null,
       };
     });
@@ -344,6 +345,7 @@ test("工具条互斥：任一动作进行中全部操作锁死，发起的那�
     assert.equal(busy.allSpinning, true, "「全部更新」自己的图标应转圈");
     assert.equal(busy.checkSpinning, false, "「检查更新」不该跟着转圈");
     assert.equal(busy.rowBtnGone, false, "行内更新按钮应还在（只是锁死）");
+    assert.equal(busy.rowBtnDisabled, true, "全部更新期间行内更新按钮应置灰");
     assert.equal(busy.switchDisabled, true, "开关应锁死");
 
     await waitSpin(page, "#btn-plugin-update-all", false);
@@ -363,13 +365,46 @@ test("工具条互斥：任一动作进行中全部操作锁死，发起的那�
     assert.equal(busy.checkSpinning, true, "「检查更新」的图标应转圈");
     assert.equal(busy.allDisabled, true, "检查期间「全部更新」应锁死");
     assert.equal(busy.rowBtnGone, false, "检查期间行内更新按钮应锁死");
+    assert.equal(busy.rowBtnDisabled, true, "检查期间行内更新按钮应置灰");
     assert.equal(busy.switchDisabled, true, "检查期间开关应锁死");
 
     await waitSpin(page2, "#btn-plugin-check-updates", false);
     const done = await busyState(page2);
     assert.equal(done.checkDisabled, false, "做完应解锁");
+    assert.equal(done.rowBtnDisabled, false, "做完行内更新按钮应解锁");
     assert.equal(done.switchDisabled, false, "做完开关应解锁");
   } finally {
     await page2.close();
+  }
+
+  // 「单个更新」进行中：工具条两枚锁死、谁也不转圈（单行更新不该带动「全部更新」的图标）。
+  const page3 = await openPluginPanel(browser, { pluginUpdateDelay: 600 });
+  try {
+    await page3.click('#plugin-list [data-row="billion-context"] .plugin-update');
+    await page3.waitForFunction(
+      () =>
+        document.querySelector('#plugin-list [data-row="billion-context"] .plugin-update')?.disabled ===
+        true,
+      { timeout: 3000 },
+    );
+    const busy = await busyState(page3);
+    assert.equal(busy.checkDisabled, true, "单个更新期间「检查更新」应锁死");
+    assert.equal(busy.checkSpinning, false, "单个更新不该带动「检查更新」图标转圈");
+    assert.equal(busy.allDisabled, true, "单个更新期间「全部更新」应锁死");
+    assert.equal(busy.allSpinning, false, "单个更新不该带动「全部更新」图标转圈");
+    assert.equal(busy.rowBtnDisabled, true, "正在更新的那行按钮应置灰");
+    assert.equal(busy.switchDisabled, true, "开关应锁死");
+
+    await page3.waitForFunction(
+      () => !document.querySelector('#plugin-list [data-row="billion-context"] .plugin-update'),
+      { timeout: 5000 },
+    );
+    const done = await busyState(page3);
+    assert.equal(done.checkDisabled, false, "做完「检查更新」应解锁");
+    assert.equal(done.allDisabled, false, "做完「全部更新」应解锁（还剩 2 个可更新）");
+    assert.equal(done.rowBtnGone, true, "更新完成后该行的更新按钮应收掉");
+    assert.equal(done.switchDisabled, false, "做完开关应解锁");
+  } finally {
+    await page3.close();
   }
 });
