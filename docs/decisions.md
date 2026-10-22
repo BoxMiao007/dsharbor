@@ -542,3 +542,12 @@
 | 2026-10-22 | `src/ui/picker.ts` 的 `renderOptions()` 在**行数不变**时只做就地更新（新增 `paintRow()`：改 class / `aria-selected` / 勾选符 / 文字 / 徽章，节点一个都不换），行数真的变了才重建 `<li>` | 展开版本下拉会异步扫一次 npx 缓存（`onOpen` → `refreshCachedVersions`），扫回来要重铺候选；原来 `renderOptions()` 整表 `innerHTML` 重建。用户恰好在「扫描返回前按下、返回后抬起」时，按下的 `<li>`（甚至连行内 `.text`）已被移除，浏览器判定按下与抬起不在同一节点链上，**不发 click** —— 表现为「要点两次」。先按鼠标在 `<li>` 上不行，连行内 `<span>` 也要保住，所以最终的 `paintRow` 连文本节点都就地改 | 只保住 `<li>` 却仍替换 `innerHTML`（行内 `.text` 被换掉，点击照样丢，已实测失败）；给 `onOpen` 的扫描加 debounce 或延迟（治标：用户随时可能在扫描返回的那一刻点击）；缓存结果后不再重铺（首开仍会重铺一次，问题照旧） |
 | 2026-10-22 | 新增前端用例「缓存扫描在按下与抬起之间返回时，一次点击就能选中」：在 `evaluateOnNewDocument` 里把 `npx_cached_versions` 拖慢 300ms，用 `mouse.down()` → 等 500ms → `mouse.up()` 复现跨扫描的点击 | 假后端 `invoke` 是同步返回的，慢扫描在预览台里根本复现不出来；不把延迟注入进去，这条回归只能靠手点真机发现。用例同时断言坐标确实落在目标行（`elementFromPoint` 命中行内），否则「没选中」会被误判成实现问题 | 只靠手点验收（这类时序 bug 手点也常常碰不上）；用 `element.click()` 模拟（派发的是合成事件，不经过按下/抬起匹配，检测不到这个 bug） |
 | 2026-10-22 | 「本机已经装过」提示分两种口径：`npx_cached_versions` 返回改 `{versions, pinServed}` 两份清单（core 新增 `pin_served_versions`：manifest 里登记的是钉版本写法 `dsh@<版本>` 的才算「选了不重下」），钉版本命中提示「不会再下载」，只是裸包名写法留下的如实提示「会再下载一份——npx 按命令写法各存一份缓存」 | 原提示（522 行）把「不拦用户」说成了「不会再下载」，与 npx 缓存键=spec 字符串的事实相反：选具体版本启动发的是 `dsh@<版本>`，裸包名写法留下的目录服务不了它，首次会再下载一份（本机实证同版本两目录，manifest 分别登记两种写法） | 改 npx 缓存本身去重（前面已否决：牵扯缓存归属与并发下载）；把裸包名那份当「没装过」不提示（界面仍在下拉下方明说会再下载，用户不至于被静默多下） |
+
+## 2026-10-22 修「desktop 环境更新插件必失败」：保留名环境改走 `profiles/` 下的目录别名
+
+维护者报：`web` 环境更新插件正常，`desktop` 环境每次都失败，报 `error: profile "desktop" is managed exclusively by the Electron application`，装完回读还是旧版本。
+
+| 日期 | 决策 | 为什么 | 放弃了什么 |
+|------|------|--------|------------|
+| 2026-10-22 | 保留名环境（`desktop`）的插件命令改走别名：在同一个 `profiles/` 下建一条 `<home>/profiles/.dsh-alias-desktop` 指向真实目录的 junction，命令里的 `--profile` 换成别名（`dsharbor_core::profiles::cli_profile_name`），别名在 `plugin_command` 里统一确保（建链失败、真目录未初始化、别名被别的实体占用都当场报错，不动用户的东西） | `dsh` 只在参数解析阶段按名字拒 `desktop`（`if (!manageDesktopProfile) rejectElectronProfile(...)`，只有 Electron 载体传 `manageDesktopProfile: true`），既不解析真实路径也没有「传目录」的入口；npx 通道拿到的就是普通 CLI，必被拒。实测 `plugin --profile .dsh-alias-desktop install` 能正常跑（临时 DSH_HOME + 真装 `is-odd` 验过落盘在真实目录） | 把 `desktop` 从环境列表里藏掉（用户就管不了官方桌面端的插件了）；在前端只把插件入口置灰（功能缺失，且报错解释不清）；为它单独绕开 CLI 直接调 pnpm（等于自己复刻 CLI 的 profile 约定，官方内部实现一变就错） |
+| 2026-10-22 | `is_reserved` 改成大小写不敏感（CLI 自己用 `toLowerCase()` 比，Windows 文件名也不分大小写）；WSL 分支明确拒绝而不是建链 | 大小写不一致时 `DESKTOP` 会被壳放行、又被 CLI 拒，报错比现在还难懂；WSL 里没有官方桌面端，`desktop` 只可能是手建目录，建链会让 CLI 就地初始化出一份空环境 | 让 WSL 侧也建符号链接（Linux 下建链可行，但目标环境本就不该由壳代管，且本机无发行版可实测） |

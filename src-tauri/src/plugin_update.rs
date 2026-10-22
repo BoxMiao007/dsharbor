@@ -273,12 +273,13 @@ fn update_one(
         Err(err) => format!("{err} ✗"),
     };
     let message = format!(
-        "更新命令：dsh plugin --profile {profile} add {package}（经 {}）\n\
+        "更新命令：dsh plugin --profile {} add {package}（经 {}）\n\
          插件包：{package}\n\
          退出码：{code}\n\
          校验：{verify_text}\n\
          输出：\n{}\n\
          备份目录：{}{}",
+        plugin::cli_profile_label(profile),
         target.label(),
         plugin::tail_chars(&output, 4000),
         backup.dir,

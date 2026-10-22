@@ -12,7 +12,7 @@
 //!   Wsl → 经 `wsl.exe -d <distro> --` 在发行版内部读写。插件包（tgz）位于
 //!   Windows 磁盘上的应用资源目录，WSL 场景装换为 /mnt/<盘>/… 路径交给发行版。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -515,6 +515,111 @@ fn is_installed(target: &Target, profile: &str) -> Result<bool, String> {
     Ok(in_bundles)
 }
 
+// ---------------------------------------------------------------------------
+// 保留名环境的 CLI 别名（desktop）
+// ---------------------------------------------------------------------------
+
+/// 确保保留名环境（`desktop`）的别名目录存在。
+///
+/// `dsh` 在参数解析阶段就拒掉 `plugin --profile desktop`（"managed exclusively by
+/// the Electron application"），而它只按名字找环境、没有「传目录」的入口。绕法是
+/// 在同一个 `profiles/` 下给它一条指向真实目录的链接，命令改走那个名字（名字由
+/// `dsharbor_core::profiles::cli_profile_name` 决定）。链接用 Windows 的 junction：
+/// 目录符号链接要管理员或开发者模式，junction 普通用户就能建，`dsh` 读起来一样。
+///
+/// 非保留名直接放行——绝大多数操作走这里，不碰磁盘。
+fn ensure_cli_alias(target: &Target, profile: &str) -> Result<(), String> {
+    if !profiles::is_reserved(profile) {
+        return Ok(());
+    }
+    match target {
+        Target::Host => {
+            let root = PathBuf::from(host_dsh_home()?).join("profiles");
+            ensure_alias_at(&root, profile)
+        }
+        // WSL 里没有官方桌面端，`desktop` 只可能是手建的目录：那里不建链接，
+        // 免得 CLI 真的在发行版里就地初始化出一份同名的空环境。
+        Target::Wsl { distro } => Err(format!(
+            "WSL（{distro}）里的 {profile} 环境不能从壳里管理插件：\
+             官方 CLI 只允许桌面端自己管它"
+        )),
+    }
+}
+
+/// 在 `root` 下确保 `<root>/<别名>` 指向 `<root>/<profile>`。
+///
+/// 幂等：已经是正确链接就直接返回；那里有别的实体（真目录、指向别处的链接）就
+/// 报错而不去动它——那是用户的东西，壳只建自己该建的那一条。
+fn ensure_alias_at(root: &Path, profile: &str) -> Result<(), String> {
+    let real = root.join(profile);
+    if !real.join("package.json").is_file() {
+        return Err(format!(
+            "{} 环境还没初始化（{} 里没有 package.json）：先在官方桌面端里启动它一次，再回来管插件",
+            profile,
+            real.display()
+        ));
+    }
+    let alias = root.join(profiles::alias_profile_name(profile));
+    if std::fs::symlink_metadata(&alias).is_err() {
+        return create_alias_link(&alias, &real);
+    }
+    // 已经在了：比对真实路径，确认指向的就是这份环境。
+    let want = std::fs::canonicalize(&real)
+        .map_err(|err| format!("解析 {} 失败：{err}", real.display()))?;
+    match std::fs::canonicalize(&alias) {
+        Ok(got) if got == want => Ok(()),
+        _ => Err(format!(
+            "别名目录 {} 已存在，但不是指向 {} 的链接；先手动处理掉它再重试",
+            alias.display(),
+            real.display()
+        )),
+    }
+}
+
+/// 建一条指向真实环境目录的链接（Windows 用 mklink 建 junction）。
+#[cfg(windows)]
+fn create_alias_link(alias: &Path, real: &Path) -> Result<(), String> {
+    // std 没有建 junction 的 API（`symlink_dir` 是符号链接、要提权），mklink 是
+    // cmd 的内建命令。参数逐个交给 argv，不要自己拼成一整串：Rust 拼命令行时会把
+    // 内含的引号转义成 `\"`，cmd 不认这种写法，会把路径读成非法字符而报
+    // 「文件名、目录名或卷标语法不正确」。
+    let mut command = Command::new("cmd");
+    command
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(alias)
+        .arg(real);
+    let (code, output) = run_capture(command, Duration::from_secs(30))
+        .map_err(|err| format!("建别名目录 {} 失败：{err}", alias.display()))?;
+    if code != 0 || std::fs::symlink_metadata(alias).is_err() {
+        return Err(format!(
+            "建别名目录 {} 失败（mklink 退出码 {code}）：{}",
+            alias.display(),
+            tail_chars(&output, 600)
+        ));
+    }
+    Ok(())
+}
+
+/// 建一条指向真实环境目录的符号链接（非 Windows 平台）。
+#[cfg(not(windows))]
+fn create_alias_link(alias: &Path, real: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(real, alias)
+        .map_err(|err| format!("建别名目录 {} 失败：{err}", alias.display()))
+}
+
+/// 命令回显里该写的环境名：保留名换成实际用的别名，并注明它指向谁，
+/// 用户照着这一行原样执行时不会再撞上 CLI 的保留名拒绝。
+pub(crate) fn cli_profile_label(profile: &str) -> String {
+    let cli = profiles::cli_profile_name(profile);
+    if cli == profile {
+        profile.to_string()
+    } else {
+        format!("{cli}（别名 → {profile}）")
+    }
+}
+
 /// 组装插件安装/卸载命令。
 ///
 /// `env` 是下载源与代理算出的环境变量（`dsharbor_core::net::plan_env` 的产物）：
@@ -526,6 +631,9 @@ pub(crate) fn plugin_command(
     op: &PluginOp,
     env: &[(String, String)],
 ) -> Result<Command, String> {
+    // 保留名环境的命令会落到别名目录上，所以别名必须先存在（在真跑命令之前失败，
+    // 免得 CLI 拿别名名字在别处初始化出一份空环境）。
+    ensure_cli_alias(&Target::of(config), profile)?;
     let spawn = build_plugin_plan(config, profile, op)?;
     Ok(command_for_plan(&LaunchPlan {
         spawn,
@@ -647,13 +755,14 @@ pub fn install(
         "未在 dsh.profile.bundles 中找到 dsharbor-bridge ✗（安装可能未生效）"
     };
     let message = format!(
-        "安装命令：dsh plugin --profile {profile} add file:{package_ref}（经 {}）\n\
+        "安装命令：dsh plugin --profile {} add file:{package_ref}（经 {}）\n\
          插件包：{tgz}\n\
          暂存路径：{package_ref}\n\
          退出码：{code}\n\
          校验：{verify}\n\
          输出：\n{}\n\
          备份目录：{backup_dir}{}",
+        cli_profile_label(profile),
         target.label(),
         tail_chars(&output, 4000),
         prune_note(&pruned)
@@ -701,11 +810,12 @@ pub fn uninstall(
         "已从 dsh.profile.bundles 摘除 ✓"
     };
     let message = format!(
-        "卸载命令：dsh plugin --profile {profile} remove dsharbor-bridge（经 {}）\n\
+        "卸载命令：dsh plugin --profile {} remove dsharbor-bridge（经 {}）\n\
          退出码：{code}\n\
          校验：{verify}\n\
          输出：\n{}\n\
          备份目录：{backup_dir}{}",
+        cli_profile_label(profile),
         target.label(),
         tail_chars(&output, 4000),
         prune_note(&pruned)
@@ -788,4 +898,64 @@ pub fn state(
         detail,
         latest_backup: latest_backup(app),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 造一份最小环境：`<tmp>/desktop/package.json`，每个用例独立目录。
+    fn scratch(tag: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("dsharbor-alias-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("desktop")).unwrap();
+        std::fs::write(root.join("desktop").join("package.json"), "{}").unwrap();
+        root
+    }
+
+    #[test]
+    fn alias_is_created_once_and_reads_the_same_profile() {
+        let root = scratch("create");
+        ensure_alias_at(&root, "desktop").unwrap();
+        let alias = root.join(".dsh-alias-desktop");
+        assert!(
+            alias.join("package.json").is_file(),
+            "通过别名要能读到同一份环境"
+        );
+        // 幂等：再调一次不报错，也不把链接重建一遍。
+        ensure_alias_at(&root, "desktop").unwrap();
+        // 摘链接用 remove_dir，别碰目标目录。
+        std::fs::remove_dir(&alias).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn alias_is_refused_before_any_link_when_the_profile_is_uninitialised() {
+        let root = scratch("missing");
+        std::fs::remove_dir_all(root.join("desktop")).unwrap();
+        let err = ensure_alias_at(&root, "desktop").unwrap_err();
+        assert!(err.contains("还没初始化"), "{err}");
+        assert!(std::fs::symlink_metadata(root.join(".dsh-alias-desktop")).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_foreign_entry_at_the_alias_path_is_left_alone() {
+        let root = scratch("conflict");
+        std::fs::create_dir_all(root.join(".dsh-alias-desktop")).unwrap();
+        let err = ensure_alias_at(&root, "desktop").unwrap_err();
+        assert!(err.contains("先手动处理掉它"), "{err}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn non_reserved_profiles_go_straight_through() {
+        // 绝大多数操作走这条：既不建链接，也不碰磁盘。
+        assert_eq!(cli_profile_label("web"), "web");
+        assert_eq!(
+            cli_profile_label("desktop"),
+            ".dsh-alias-desktop（别名 → desktop）"
+        );
+    }
 }

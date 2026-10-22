@@ -8,8 +8,10 @@ use crate::launch::PROFILE_NAME;
 
 /// 官方桌面端（Electron 外壳）独占的环境名。
 ///
-/// 它同样能起网页界面，但 DSH 的 CLI 明确拒绝针对它的启动与插件管理请求；
-/// 列进「启动用」下拉只会让用户选到一个必然失败的环境，因此整份隐藏。
+/// 它同样能起网页界面，但 DSH 的 CLI 按名字硬拒它的**启动**与插件管理请求
+/// （`plugin --profile desktop` 直接报 "managed exclusively by the Electron
+/// application"）；列进「启动用」下拉只会让用户选到一个必然失败的环境，因此
+/// 不参与启动。插件管理另有出路：命令改走同一份目录的别名，见 [`cli_profile_name`]。
 pub const DESKTOP_PROFILE: &str = "desktop";
 
 /// 提供网页界面的 bundle。只有登记了它的环境才能起 DSH Web。
@@ -53,8 +55,39 @@ pub fn validate_name(name: &str) -> Result<(), String> {
 }
 
 /// 是否是被壳保留、永远不会出现在「启动用」下拉里的环境名。
+///
+/// 不分大小写：`dsh` 自己就是按 `profile.toLowerCase()` 比的，而 Windows 的
+/// 目录名同样不区分大小写——`Desktop` 与 `desktop` 是同一份数据，一并算保留。
 pub fn is_reserved(name: &str) -> bool {
-    name == DESKTOP_PROFILE
+    name.eq_ignore_ascii_case(DESKTOP_PROFILE)
+}
+
+/// 保留名环境的 CLI 别名目录名前缀。
+///
+/// `dsh` 只按名字找环境（`<home>/profiles/<名字>`），没有「传目录」的入口，
+/// 而保留名在参数解析阶段就被拒。绕法是在同一个 `profiles/` 下给它第二个
+/// 名字：那个目录是指向真实环境目录的链接，读写的是同一份数据，命令却不必
+/// 再带保留名。前缀以点开头，名字校验会挡掉它，它不会出现在环境清单里。
+pub const ALIAS_PREFIX: &str = ".dsh-alias-";
+
+/// 保留名环境对应的别名目录名。
+///
+/// 统一转小写：`dsh` 自己的判断是 `profile.toLowerCase() === "desktop"`，
+/// 而 Windows 的文件名大小写不敏感——同一条命令换个大小写写法不该再建出第二份别名。
+pub fn alias_profile_name(profile: &str) -> String {
+    format!("{ALIAS_PREFIX}{}", profile.to_ascii_lowercase())
+}
+
+/// 真正交给 `dsh --profile` 的名字：保留名换成别名目录，其余原样。
+///
+/// 别名目录必须先在 `profiles/` 里建好（指向真实环境的链接），建链属于读盘
+/// 一侧的工作，由外壳在拉起插件命令前完成；这里只决定「命令里写哪个名字」。
+pub fn cli_profile_name(profile: &str) -> String {
+    if is_reserved(profile) {
+        alias_profile_name(profile)
+    } else {
+        profile.to_string()
+    }
 }
 
 /// 一份环境的摘要（界面展示与选中判定都用它）。
@@ -286,9 +319,37 @@ mod tests {
     fn desktop_profile_is_never_selectable_even_though_it_has_the_web_bundle() {
         let desktop = summarize(DESKTOP_PROFILE, &manifest(&[WEB_APP_BUNDLE])).unwrap();
         assert!(desktop.web_capable, "desktop 确实挂了网页 bundle");
-        assert!(!desktop.is_selectable(), "但它必须被隐藏");
+        assert!(!desktop.is_selectable(), "但它不能当启动目标");
         assert!(is_reserved(DESKTOP_PROFILE));
         assert!(!is_reserved("web"));
+    }
+
+    #[test]
+    fn reserved_profile_is_addressed_by_its_alias_in_cli_commands() {
+        assert_eq!(alias_profile_name(DESKTOP_PROFILE), ".dsh-alias-desktop");
+        assert_eq!(cli_profile_name(DESKTOP_PROFILE), ".dsh-alias-desktop");
+        // dsh 自己按小写比较保留名；别名同样归一，免得 Windows 上建出第二份链接。
+        assert_eq!(cli_profile_name("Desktop"), ".dsh-alias-desktop");
+        // 普通环境原样传，不改用户起的名字。
+        assert_eq!(cli_profile_name("web"), "web");
+        assert_eq!(cli_profile_name("My-Lab"), "My-Lab");
+    }
+
+    #[test]
+    fn alias_directory_never_shows_up_in_the_environment_listing() {
+        // 别名目录就躺在 profiles/ 下，名字校验必须挡掉它：
+        // 否则环境卡里会多出一份和 desktop 指向同一数据的假环境。
+        assert!(validate_name(ALIAS_PREFIX).is_err());
+        assert!(validate_name(&alias_profile_name(DESKTOP_PROFILE)).is_err());
+
+        let listing = format!(
+            "{DESKTOP_PROFILE}\t1\t{desktop}\n{alias}\t1\t{desktop}\n",
+            desktop = manifest(&[WEB_APP_BUNDLE]),
+            alias = alias_profile_name(DESKTOP_PROFILE)
+        );
+        let profiles = parse_listing(&listing);
+        assert_eq!(profiles.len(), 1, "别名目录不能进环境清单");
+        assert_eq!(profiles[0].name, DESKTOP_PROFILE);
     }
 
     #[test]

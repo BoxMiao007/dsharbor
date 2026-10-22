@@ -21,6 +21,7 @@
 | 日志兜底 | log fallback | 从 DSH 启动日志解析 `dsh web: <url> (LAN: <url>)` 的降级通道；日志格式属实现细节、无稳定性承诺。 |
 | nonce | 一次性随机数 | 壳每次启动生成的 128-bit hex，经环境变量 `DSHARBOR_BRIDGE_NONCE` 注入 DSH 供桥接接口校验；不落盘，缺失时接口回 503。 |
 | profile | DSH profile | DSH 的环境目录 `~/.dsh/profiles/<名字>`；由 package.json 声明 bundles、cordis.patch.yml 覆写配置；壳默认操作 `web`。 |
+| 环境别名 | profile alias | 保留名环境（`desktop`）在 `profiles/` 下的目录链接 `.dsh-alias-desktop`：官方 CLI 只按名字拒绝 `desktop`、不解析真实路径，壳把命令的 `--profile` 换成别名以绕开该限制；由壳在 `plugin_command` 里自动创建，列表扫描不认（点开头的名字被校验挡掉）。 |
 | 桥接安装 | `dsh plugin add/remove file:<tgz>` | 官方插件安装/卸载入口；安装后 plugin-manager 自动把包登记进 `dsh.profile.bundles`，移除自动摘除。 |
 | 托管块 | managed block | 用户 cordis.patch.yml 里由插件生成、标注「托管，勿改」的配置段（如 webserver 的 host/port）。壳只读，从不写。 |
 | 端口覆盖 | port overlay | 壳生成的 launcher 层 patch 文件（以 `--patch` 附加启动命令），把 webserver 端口改为用户自定义值；不改动 DSH 任何配置文件，host 等其余键保留。 |
