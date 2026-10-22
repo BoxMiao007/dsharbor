@@ -5,6 +5,9 @@
   z-index: 90;
   background: rgba(4, 8, 14, 0.55);
   backdrop-filter: blur(2px);
+  /* 打开时遮罩先淡入（--m-scrim），把背景压暗一档再托出面板；
+     关闭时遮罩与面板一起用更快的 --m-exit 淡出。 */
+  animation: modal-scrim-in var(--m-scrim) var(--ease-out);
 }
 
 /* 三张浮窗各自 fixed 居中（与遮罩并列，不是它的子元素；靠 z-index 压在上面）。
@@ -31,6 +34,46 @@
   background: var(--card);
   box-shadow: var(--shadow);
   overflow: hidden;
+  /* 入场：从略小、略低处淡入（scale 0.97 + 下移 4px 的起点，落定到原位置），
+     不是硬蹦出来。关闭时 .is-closing 换成更快的出场（见下方）。
+     display:none → 显示时动画自动重播，打开不需要额外加类。 */
+  animation: modal-panel-in var(--m-enter) var(--ease-out);
+}
+
+/* 关闭：先让出场动画播完，再由 main.ts 的 setModal 加回 .hidden。
+   若直接加 .hidden，display:none 会当场截断动画，看着就是「啪一下没了」。 */
+.modal-scrim.is-closing {
+  animation: modal-scrim-out var(--m-exit) var(--ease-out) forwards;
+}
+
+.modal.is-closing {
+  animation: modal-panel-out var(--m-exit) var(--ease-out) forwards;
+}
+
+@keyframes modal-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+}
+
+@keyframes modal-panel-out {
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+  }
 }
 
 .modal-head {
