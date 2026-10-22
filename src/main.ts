@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./style.css";
 import { PANELS, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
+import { prepareCopyButton, flashCopy, copyIconStack, copyTextChrome } from "./ui/copy-feedback";
 import { isStarting } from "./ui/types";
 import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, InstalledDsh } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
@@ -960,16 +961,18 @@ async function main(): Promise<void> {
     }
 
     /** 按钮上的「复制」：复制某个元素里的文本，并在按钮上短暂回显结果。
-        日志面板的「复制日志」与命令行集成的「手动命令」「垫片内容」共用这一套。 */
+        日志面板的「复制日志」与命令行集成的「手动命令」「垫片内容」共用这一套（见 ui/copy-feedback.ts）。 */
     function copyLog(source: HTMLElement, button: HTMLButtonElement): void {
       void (async () => {
         const ok = await writeText(source.textContent ?? "");
-        button.textContent = ok ? "已复制" : "复制失败";
-        window.setTimeout(() => {
-          button.textContent = "复制";
-        }, 1500);
+        flashCopy(button, ok);
       })();
     }
+
+    // 一次性把三颗复制按钮装上反馈结构（图标叠层 + 定宽文案层 + 隐藏播报区）。
+    prepareCopyButton(btnCopyLog, "复制日志");
+    prepareCopyButton(btnCliCopy, "复制");
+    prepareCopyButton(btnCliCopyShim, "复制");
 
     btnCopyLog.addEventListener("click", () => copyLog(logEl, btnCopyLog));
     for (const [button, source] of [
@@ -1527,8 +1530,17 @@ async function main(): Promise<void> {
     /** 主按钮回填当前方式；菜单里的勾选也跟着走。 */
     function paintOpenMode(): void {
       const mode = OPEN_MODES.find((item) => item.key === openMode) ?? OPEN_MODES[0];
-      openIco.innerHTML = mode.icon;
-      openText.textContent = mode.label;
+      // 「复制登录链接」与其它复制按钮同一套结构（图标叠层 + 定宽文案层，见 ui/copy-feedback.ts）；
+      // 其它方式仍是单图标 + 单文案。切换方式时重建，顺带清掉上一次的复制反馈态。
+      const copyMode = mode.key === "copy";
+      openIco.innerHTML = copyMode ? copyIconStack() : mode.icon;
+      openText.innerHTML = copyMode ? copyTextChrome(mode.label) : escapeHtml(mode.label);
+      // 复制方式的文案层带 aria-hidden（三行叠放，读屏会连着念），名字改由 aria-label 给；
+      // 其它方式没有这层，名字仍走可见文字。
+      if (copyMode) btnOpen.setAttribute("aria-label", mode.label);
+      else btnOpen.removeAttribute("aria-label");
+      btnOpen.classList.toggle("copy-mode", copyMode);
+      btnOpen.classList.remove("copied", "copy-failed");
       for (const item of Array.from(openMenu.querySelectorAll<HTMLButtonElement>("[data-open-mode]"))) {
         item.setAttribute("aria-checked", item.dataset.openMode === openMode ? "true" : "false");
       }
@@ -1562,16 +1574,12 @@ async function main(): Promise<void> {
       });
     }
 
-    /** 复制登录链接：链接每次都重新取（token 是一次性铸造的），成功后按钮上短暂回显。 */
+    /** 复制登录链接：链接每次都重新取（token 是一次性铸造的），成功后按钮上短暂回显。
+        失败也只在按钮内表达（全局提示归 #34，这里不重复弹）。 */
     async function copyLoginUrl(): Promise<void> {
       const url = await invoke<string>("dsh_login_url");
       const ok = await writeText(url);
-      if (!ok) throw new Error("复制失败：剪贴板不可用");
-      const label = openText.textContent;
-      openText.textContent = "已复制链接";
-      window.setTimeout(() => {
-        if (openText.textContent === "已复制链接") openText.textContent = label;
-      }, 1500);
+      flashCopy(btnOpen, ok);
     }
 
     // 主按钮：按当前方式真的去打开（应用内 / 浏览器 / 复制）。
