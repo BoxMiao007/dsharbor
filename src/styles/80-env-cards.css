@@ -33,7 +33,32 @@
   transition:
     border-color 140ms,
     background 140ms,
-    box-shadow 140ms;
+    box-shadow 160ms,
+    transform 160ms;
+}
+
+/* 悬停抬升（#36）：卡片往上让 1px、阴影加深一档、右上角「更多」入口淡入。
+   1px 只够让人觉出「这张是活的」，再多就变成会晃的列表。
+   只给指针设备挂 hover：触屏上 tap 会残留 hover 态，卡片会一直浮着。
+   键盘用户走下面的 :focus-within（等效，但不依赖鼠标），所以两条都写。
+   `.is-active` 卡片也可抬升——它靠底色与描边辨认，不靠位置。 */
+@media (hover: hover) and (pointer: fine) {
+  .env-card:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lift);
+  }
+}
+
+.env-card:focus-within {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+
+/* 动效关闭时不许有位移中间态：直接把抬升收掉，悬停只留颜色反馈。 */
+html[data-motion="off"] .env-card:hover,
+html[data-motion="off"] .env-card:focus-within {
+  transform: none;
+  box-shadow: var(--shadow-soft);
 }
 
 .env-card.is-active {
@@ -79,7 +104,10 @@
   color: var(--fg-dim);
 }
 
-/* 三点按钮：叠在卡片右上角，本身不占布局宽度。 */
+/* 三点按钮：叠在卡片右上角，本身不占布局宽度。
+   平时淡出、往右让 4px，指针进卡（或焦点进卡）才浮出来（#36）：一排卡片各挂一颗
+   三点会把「环境卡」读成一排工具条，收起来后卡片先看名字，要用时才给入口。
+   淡出不等于不可用——它始终在 tab 序里可聚焦，键盘走到它时 :focus-within 会把它显出来。 */
 .env-more {
   position: absolute;
   top: 4px;
@@ -95,6 +123,47 @@
   background: var(--elev);
   color: var(--fg-dim);
   cursor: pointer;
+  opacity: 0;
+  transform: translateX(4px);
+  transition:
+    opacity var(--m-quick) var(--ease-out),
+    transform var(--m-quick) var(--ease-out),
+    background 140ms,
+    color 140ms;
+}
+
+/* 指针进卡 / 焦点进卡 / 菜单已展开：入口浮到面前。 */
+@media (hover: hover) and (pointer: fine) {
+  .env-card:hover .env-more {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.env-card:focus-within .env-more,
+.env-more:focus-visible,
+.env-more[aria-expanded="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* 触屏没有 hover，上面那条永远不生效：入口改为常显，否则会变成一颗看不见但可点的按钮。 */
+@media (hover: none) {
+  .env-more {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 关掉动效：直接显隐，不留半透明中间态；悬停也照常给入口（这是可用性，不是装饰）。 */
+html[data-motion="off"] .env-more {
+  transition: none;
+}
+
+html[data-motion="off"] .env-card:focus-within .env-more,
+html[data-motion="off"] .env-card:hover .env-more {
+  opacity: 1;
+  transform: none;
 }
 
 .env-more:hover,

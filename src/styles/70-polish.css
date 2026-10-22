@@ -271,6 +271,38 @@ html::-webkit-scrollbar {
   background: var(--card-2);
 }
 
+/* 展开/收起的过程（#36）：<details> 原生是瞬时长出来、瞬时消失，没有高度可言。
+   内容的真实显隐仍由 <details> 的 open 管（语义、键盘、Enter 全不动），这里只补高度动画。
+   做法：给浏览器包在内容外面的那层 ::details-content 做 block-size 过渡，从 0 长到 auto
+   ——interpolate-size 让 `auto` 能参与插值，这是把 <details> 做出「滑出」效果唯一不破坏
+   原生语义的写法（0fr/1fr 那套要自己包一层 wrapper，就不是原生 <details> 了）。
+   收起时内容如果立刻 content-visibility:hidden 就只剩一个空壳在缩，所以收起窗口内由
+   main.ts 挂 data-closing 顶住可见，动画跑完再摘掉（见那边注释）。 */
+.log-box {
+  interpolate-size: allow-keywords;
+}
+
+.log-box::details-content {
+  block-size: 0;
+  overflow: hidden;
+  content-visibility: hidden;
+  transition: block-size var(--m-base) var(--ease-out);
+}
+
+.log-box[open]::details-content {
+  block-size: auto;
+  content-visibility: visible;
+}
+
+.log-box[data-closing]::details-content {
+  content-visibility: visible;
+}
+
+/* 关掉动效：高度直接到位，不跑收缩窗口，也不留可见的空内容。 */
+html[data-motion="off"] .log-box::details-content {
+  transition: none;
+}
+
 .log-box summary {
   display: flex;
   align-items: center;
@@ -281,6 +313,8 @@ html::-webkit-scrollbar {
   list-style: none;
   cursor: pointer;
   user-select: none;
+  /* 展开时标题与正文之间让出 10px：让它跟高度一起长，而不是「啪」地跳出一段空白。 */
+  transition: margin-bottom var(--m-base) var(--ease-out);
 }
 
 .log-box summary::-webkit-details-marker {
@@ -291,11 +325,13 @@ html::-webkit-scrollbar {
   color: var(--fg);
 }
 
+/* 箭头跟着开合转（#36）：150ms 提到 --m-base，和高度那条过渡同一个节奏，
+   免得内容还在长、箭头已经转完了。 */
 .log-box .chev {
   display: inline-block;
   font-size: 11px;
   color: var(--fg-mute);
-  transition: transform 0.15s ease;
+  transition: transform var(--m-base) var(--ease-out);
 }
 
 .log-box[open] .chev {
