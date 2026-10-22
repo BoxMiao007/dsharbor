@@ -120,27 +120,56 @@
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, var(--card));
 }
 
 .profile-confirm .hint {
   margin: 0 0 8px;
 }
 
-/* 删除确认：整张浮窗染危险色。删除环境是不可撤销的操作，光靠按钮变红不够醒目——
-   边框与底色都带上危险色，让人在按下之前就知道这张浮窗是「删除」。
-   只作用于 .modal-danger（由 openNameModal 在 deleting 时加上）。 */
-.modal.modal-danger {
-  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
-  background: color-mix(in srgb, var(--danger) 6%, var(--card));
-  box-shadow:
-    var(--shadow),
-    0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent);
+/* 删除浮窗里这一行不再自成一格：外层 .modal-danger 已经是红底，再套一层带边框的小框
+   就成了「卡中卡」。这里把它还原成普通正文——去掉描边、底色与内边距，文字直接与
+   下方的动作按钮从同一条左右边线起排（按钮在 .modal-foot、文字在 .modal-body，
+   两者都吃 .modal 的内边距，去掉内层 padding 后左右才对得齐）。 */
+.modal.modal-danger .profile-confirm {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
 }
 
-/* 标题也跟着染危险色：整张浮窗「是红的」，一眼就知道在删东西。 */
-.modal.modal-danger .modal-title {
-  color: var(--danger);
+.modal.modal-danger .profile-confirm .hint {
+  margin: 0;
+}
+
+/* 删除确认：整张浮窗染危险色。删除环境是不可撤销的操作，光靠按钮变红不够醒目——
+   边框与底色都带上危险色，让人在按下之前就知道这张浮窗是「删除」。
+   底色用不掺主题色的深红实色（--danger-surface），浅色/深色下都是同一个红，
+   不会因为混了 card 而在两套外观里变成两种深浅。
+   只作用于 .modal-danger（由 openNameModal 在 deleting 时加上）。 */
+.modal.modal-danger {
+  border-color: var(--danger-line);
+  background: var(--danger-surface);
+  box-shadow:
+    var(--shadow),
+    0 0 0 1px var(--danger-line);
+}
+
+/* 红底上的字统一走浅色（--danger-on）：深红实色在两套外观里都是暗底，
+   若沿用主题正文色，浅色外观的近黑字压上去会看不清。 */
+.modal.modal-danger .modal-title,
+.modal.modal-danger .hint {
+  color: var(--danger-on);
+}
+
+.modal.modal-danger .modal-close {
+  color: color-mix(in srgb, var(--danger-on) 72%, transparent);
+}
+
+.modal.modal-danger .modal-close:hover {
+  background: color-mix(in srgb, var(--danger-on) 14%, transparent);
+  color: var(--danger-on);
 }
 
 /* 危险动作按钮：实心红 + 白字。原先只有描边红字（白字压浅红对比不足），
