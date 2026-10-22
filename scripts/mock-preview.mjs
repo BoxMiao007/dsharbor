@@ -175,6 +175,8 @@ const state = {
       确定的忙态窗口——同步假结果会让忙态在两次 CDP 往返之间就消失，测不到中间态。 */
   pluginUpdateDelay: 0,
   pluginCheckDelay: 0,
+  /** 版本列表查询的人工延时：给方钮忙态（环形 spinner / 完成勾）测一个确定的忙态窗口。 */
+  registryDelay: 0,
   calls: {},
 };
 
@@ -666,8 +668,22 @@ window.__mockUnimplemented = [];
     // 下载源记进 calls（键名形如 query_dsh_versions:official），预览时一眼能看出这次请求带的是哪个源。
     query_dsh_versions: (a) => {
       seen("query_dsh_versions:" + (a && a.source ? a.source : "?") + (a && a.force ? ":force" : ""));
-      if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
-      return S.registry;
+      const settle = () => {
+        if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
+        return S.registry;
+      };
+      // 延时把成功与失败都包住：测方钮忙态时（成功打勾 / 失败不打勾）都要有确定的忙态窗口。
+      return S.registryDelay > 0
+        ? new Promise((done, fail) => {
+            setTimeout(() => {
+              try {
+                done(settle());
+              } catch (err) {
+                fail(err);
+              }
+            }, S.registryDelay);
+          })
+        : settle();
     },
     // 本机 npx 缓存里现有的版本：「已缓存」徽章的数据源（预览里固定给一组假版本）；
     // pinServed 是钉版本写法能直接复用的部分（不重合的版本提示「选了还会再下载」）。
