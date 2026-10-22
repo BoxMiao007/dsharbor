@@ -130,13 +130,13 @@
   min-height: 2lh;
 }
 
-/* 卡片：淡底 + 细边框 + 圆角 + 轻阴影，浮在页面背景上。
+/* 卡片：淡底 + 圆角 + 分层柔和阴影浮在页面背景上，代替硬描边。
    块头左边标题、右边徽章或说明。 */
 .block {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
   background: var(--card);
   box-shadow: var(--shadow-soft);

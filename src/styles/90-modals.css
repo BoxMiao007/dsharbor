@@ -44,6 +44,8 @@
   font-size: 14px;
   font-weight: 700;
   color: var(--fg);
+  /* 标题换行时平衡各行长度，避免最后一行只剩一个词。 */
+  text-wrap: balance;
 }
 
 .modal-close {
@@ -359,6 +361,8 @@ button.danger:hover:not(:disabled) {
   font-weight: 600;
   line-height: 15px;
   text-align: center;
+  /* 显示可更新插件数，等宽数字让计数变化时微标不忽宽忽窄。 */
+  font-variant-numeric: tabular-nums;
 }
 
 .plugin-head-actions .square-btn svg {
@@ -376,6 +380,8 @@ button.danger:hover:not(:disabled) {
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 11px;
   color: var(--fg-dim);
+  /* 等宽字族数字本就等宽，显式声明兜底非等宽回退。 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* 版本都读不出来（私有包、装坏等）：用警告色点一下，具体原因收在 title 里。 */

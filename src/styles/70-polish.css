@@ -64,6 +64,8 @@
   line-height: 1.5;
   color: var(--fg-dim);
   background: var(--elev);
+  /* 徽章里可能放版本号 / 计数，等宽数字让变化时宽度不跳。 */
+  font-variant-numeric: tabular-nums;
 }
 
 .picker-badge-latest {
@@ -118,7 +120,8 @@
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  border-radius: 8px;
+  /* 同心圆角：外层 .picker-list 12px、内边距 6px，内层取 12−6=6px。 */
+  border-radius: 6px;
   font-size: 13px;
   color: var(--fg-dim);
   cursor: pointer;

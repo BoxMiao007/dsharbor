@@ -19,9 +19,13 @@
   --btn-sweep-ms: 500ms;
   --btn-lead-ms: 200ms; /* 提前起势量（延迟 = 一轮时长 − 提前量 = 300ms） */
   --btn-hl-ms: 200ms; /* 悬停提亮与按下图标缩放的过渡 */
-  /* 卡片圆角与轻阴影：悬浮卡片骨架里左栏、工具条、主卡、次卡共用。 */
+  /* 卡片圆角与轻阴影：悬浮卡片骨架里左栏、工具条、主卡、次卡共用。
+     阴影用「贴地 + 环境」两层叠出来，代替一条硬描边：换背景色时阴影自然融合，
+     不用再跟着调边框色。 */
   --radius-card: 14px;
-  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.18);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.1), 0 6px 20px rgba(0, 0, 0, 0.16);
+  /* 发丝轮廓：需要给卡片保底边缘时用它，比 1px 实线淡一档，不抢阴影的层次。 */
+  --hairline: color-mix(in srgb, var(--line) 55%, transparent);
   /* 卡片之间的统一间距：顶栏→卡片、左栏↔右栏、工具条↔主卡一律取这一个值，
      三张卡片的相互间隔才对得上（原来工具条到主卡是 8px、其余是 20px，看着不齐）。 */
   --gap-card: 16px;
@@ -78,7 +82,7 @@ html[data-mode="dark"] {
   --log-fg: #ccd2db;
   --log-line: rgba(255, 255, 255, 0.08);
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
-  --shadow-soft: 0 3px 14px rgba(0, 0, 0, 0.34);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px rgba(0, 0, 0, 0.36);
   --tip-bg: #16181c;
 }
 
@@ -113,7 +117,7 @@ html[data-mode="light"] {
   --log-fg: #2b3038;
   --log-line: rgba(20, 24, 32, 0.1);
   --shadow: 0 18px 48px rgba(21, 38, 60, 0.16);
-  --shadow-soft: 0 2px 10px rgba(21, 38, 60, 0.1);
+  --shadow-soft: 0 1px 2px rgba(21, 38, 60, 0.06), 0 6px 18px rgba(21, 38, 60, 0.09);
   --tip-bg: #ffffff;
 }
 

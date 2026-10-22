@@ -26,12 +26,14 @@
   flex: 0 1 168px;
   min-width: 0;
   display: flex;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   border-radius: 10px;
   background: var(--card-2);
+  box-shadow: var(--shadow-soft);
   transition:
     border-color 140ms,
-    background 140ms;
+    background 140ms,
+    box-shadow 140ms;
 }
 
 .env-card.is-active {
@@ -167,7 +169,8 @@
 .env-menu button {
   padding: 7px 10px;
   border: 0;
-  border-radius: 7px;
+  /* 同心圆角：外层 .env-menu 10px、内边距 6px，内层取 10−6=4px。 */
+  border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;

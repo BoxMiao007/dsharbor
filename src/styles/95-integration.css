@@ -92,6 +92,8 @@
   font-size: 14px;
   font-weight: 700;
   color: var(--fg);
+  /* 等宽字族数字本就等宽，显式声明兜底非等宽回退。 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* 「npx 缓存 / npm 全局」两个来源标签与「使用中」共用 .badge，这里只收紧尺寸。 */

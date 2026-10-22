@@ -19,7 +19,8 @@
   flex-direction: column;
   gap: 14px;
   padding: 16px 18px 10px;
-  border: 1px solid var(--line);
+  /* 卡片靠分层阴影立起来，只留一条发丝轮廓保底，不压阴影层次。 */
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
   background: var(--card);
   box-shadow: var(--shadow-soft);
@@ -44,6 +45,8 @@
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--fg);
+  /* 标题换行时平衡各行长度，避免最后一行只剩一个词。 */
+  text-wrap: balance;
 }
 
 .sidebar-sub {

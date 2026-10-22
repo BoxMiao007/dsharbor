@@ -61,6 +61,8 @@
   line-height: 1;
   font-weight: 600;
   white-space: nowrap;
+  /* 徽章里常放会变的计数 / 版本 / 状态数字，等宽数字让变化时宽度不跳。 */
+  font-variant-numeric: tabular-nums;
 }
 
 .badge-running {
@@ -84,6 +86,8 @@
   font-weight: 700;
   color: var(--fg);
   letter-spacing: 0.2px;
+  /* 标题换行时平衡各行长度，避免最后一行只剩一个词。 */
+  text-wrap: balance;
 }
 
 /* 徽章按内容取宽，不被 flex 压扁（压扁会让文字冲出胶囊）。 */
@@ -95,6 +99,8 @@
   font-size: 12.5px;
   color: var(--fg-mute);
   white-space: nowrap;
+  /* 里面是 PID / 端口 / 版本这类会变的数字，等宽数字让它们不左右晃。 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* 窗口拉窄时按重要性依次收起次要信息（先 PID/监听，再版本），
@@ -208,7 +214,8 @@
   width: 100%;
   padding: 7px 10px;
   border: 0;
-  border-radius: 7px;
+  /* 同心圆角：外层 .open-menu 10px、内边距 6px，内层取 10−6=4px。 */
+  border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
