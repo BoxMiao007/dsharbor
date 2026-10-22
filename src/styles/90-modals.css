@@ -204,7 +204,7 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 11px;
+  padding: 10px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card-2);
@@ -230,7 +230,7 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
   color: var(--fg);
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   word-break: break-all;
 }
@@ -240,7 +240,7 @@ button.danger:hover:not(:disabled) {
 .plugin-desc {
   margin-top: 4px;
   overflow: hidden;
-  color: var(--fg-dim);
+  color: color-mix(in srgb, var(--fg-dim) 60%, transparent); /* 变浅 40% */
   font-size: 11.5px;
   line-height: 1.45;
   white-space: nowrap;
@@ -330,15 +330,15 @@ button.danger:hover:not(:disabled) {
 }
 
 /* 插件更新工具条：两枚图标方钮（悬停出「检查更新 / 全部更新」气泡），
-   比通用 34px 方钮收一档，贴着插件卡的密度；靠右对齐，与卡头的计数徽章同一侧。 */
-.plugin-toolbar {
+   比通用 34px 方钮收一档，贴着插件卡的密度；挂在卡头标题行右侧（margin-left:auto 顶到行尾），
+   与「插件」标题同一行，不再单独占一行。 */
+.plugin-head-actions {
+  margin-left: auto;
   display: flex;
-  justify-content: flex-end;
   gap: 6px;
-  margin-bottom: 8px;
 }
 
-.plugin-toolbar .square-btn {
+.plugin-head-actions .square-btn {
   position: relative;
   width: 28px;
   min-width: 28px;
@@ -346,7 +346,7 @@ button.danger:hover:not(:disabled) {
 }
 
 /* 「全部更新」右上角的微标：可更新的插件数。骑在按钮外沿一点，不占按钮内部空间。 */
-.plugin-toolbar .btn-badge {
+.plugin-head-actions .btn-badge {
   position: absolute;
   top: -6px;
   right: -6px;
@@ -362,7 +362,7 @@ button.danger:hover:not(:disabled) {
   text-align: center;
 }
 
-.plugin-toolbar .square-btn svg {
+.plugin-head-actions .square-btn svg {
   width: 15px;
   height: 15px;
 }
@@ -384,23 +384,35 @@ button.danger:hover:not(:disabled) {
   color: var(--warn);
 }
 
-/* 行内「更新到 x.y.z」：主色小按钮，预发布版本照实写在按钮上，点不点由维护者定。 */
+/* 新旧版本对比：旧 → 新，箭头用淡色弱化；新版本徽章绿色底（--ok 混条目底色），
+   两主题各自的可读绿，更新目标一眼可见。 */
+.plugin-ver-arrow {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.plugin-ver-new {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 18%, var(--card-2));
+}
+
+/* 行内「更新」文字按钮：就两个字，主色文字无底框；目标版本在绿徽章与气泡里。 */
 .plugin-update {
   flex: none;
-  padding: 3px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  border-radius: 8px;
-  background: var(--accent-soft);
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
   color: var(--accent);
   font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .plugin-update:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--accent-fill);
-  color: #ffffff;
+  background: var(--accent-soft);
 }
 
 .plugin-update:disabled {

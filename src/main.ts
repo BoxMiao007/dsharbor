@@ -2533,11 +2533,15 @@ async function main(): Promise<void> {
       const bad = upd.error
         ? `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">检查失败</span>`
         : "";
+      // 有更新：旧版本 → 新版本两枚徽章并列，新版本用绿色突出；目标版本同时收在
+      // 「更新」按钮的气泡里，更新前后对比一眼可见。
+      if (upd.hasUpdate && upd.target) {
+        return `<span class="plugin-ver">v${escapeHtml(upd.current)}</span><span class="plugin-ver-arrow" aria-hidden="true">→</span><span class="plugin-ver plugin-ver-new" title="registry 上的最新版本">v${escapeHtml(upd.target)}</span>`;
+      }
       return `<span class="plugin-ver">v${escapeHtml(upd.current)}</span>${bad}`;
     }
 
-    /** 行里的「更新到 x.y.z」按钮：有更新才出现；目标版本照实写在按钮上（含预发布），
-     *  点不点由维护者定。 */
+    /** 行里的「更新」按钮：有更新才出现；目标版本在新版本徽章与气泡里，点不点由维护者定。 */
     function pluginUpdateCellHtml(item: PluginItem): string {
       if (!pluginUpdatesChecked) {
         return "";
@@ -2547,7 +2551,7 @@ async function main(): Promise<void> {
         return "";
       }
       const busy = pluginActionBusy() || pluginBusy ? " disabled" : "";
-      return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新到 ${escapeHtml(upd.target)}</button>`;
+      return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新</button>`;
     }
 
     function pluginRowHtml(item: PluginItem): string {

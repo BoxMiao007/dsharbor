@@ -775,7 +775,7 @@ input[type="number"] {
      到卡片宽度为止折行；折成多行时胶囊两端仍是圆的，视觉上依然成立。 */
   width: fit-content;
   max-width: 100%;
-  padding: 5px 14px;
+  padding: 2px 9px;
   border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--card));
   border-radius: 999px;
   background: color-mix(in srgb, var(--warn) 14%, var(--card));

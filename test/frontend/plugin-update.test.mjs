@@ -2,10 +2,11 @@
  * 前端接缝测试：插件更新（检查结果行内渲染 + 单个/全部更新 + 工具条互斥）。
  *
  * 只测四个接缝——插件卡里更新功能露在界面上的部分：
- *  1. 检查过后行内出现版本号；有更新的行出现「更新到 <目标版本>」按钮（目标版本照实展示，
- *     含预发布）；registry 查不到的行按两种样子亮出错误——版本读不出的亮「版本未知」、
- *     读得出的在版本号旁亮「检查失败」，原因都收进 title；官方骨架包与桥接插件不出现在
- *     更新范围里（行内没有版本号）。版本徽章挤在包名末尾同行，插件自带的说明单独一行。
+ *  1. 检查过后行内出现版本号；有更新的行是「旧版本 → 新版本（绿徽章）」加「更新」文字按钮
+ *     （目标版本在新徽章与按钮气泡里，含预发布）；registry 查不到的行按两种样子亮出错误——
+ *     版本读不出的亮「版本未知」、读得出的在版本号旁亮「检查失败」，原因都收进 title；
+ *     官方骨架包与桥接插件不出现在更新范围里（行内没有版本号）。版本徽章挤在包名末尾同行，
+ *     插件自带的说明单独一行。
  *  2. 点单个「更新」：按钮走忙态，完成后该行按钮消失、版本号变成目标版本，汇总提示出现；
  *     停用中的插件更新后保持停用，并出现「新版本若改了挂载点，停用可能失效」的提醒。
  *  3. 「全部更新」：把剩余有更新的插件逐个升级，提示写明成功清单；没有可更新的插件时
@@ -100,12 +101,17 @@ function readUpdateCell(page, name) {
     if (!row) return null;
     const ver = row.querySelector(".plugin-ver");
     const bad = row.querySelector(".plugin-ver-bad");
+    const verNew = row.querySelector(".plugin-ver-new");
+    const arrow = row.querySelector(".plugin-ver-arrow");
     const btn = row.querySelector(".plugin-update");
     return {
       ver: ver ? ver.textContent : null,
       badText: bad ? bad.textContent : null,
       badTitle: bad ? bad.getAttribute("title") : null,
+      verNew: verNew ? verNew.textContent : null,
+      arrow: arrow ? arrow.textContent : null,
       btnText: btn ? btn.textContent : null,
+      btnTitle: btn ? btn.getAttribute("title") : null,
       btnDisabled: btn ? btn.disabled : null,
       off: row.classList.contains("is-off"),
     };
@@ -147,10 +153,13 @@ after(async () => {
 test("检查后行内出现版本号与更新按钮；范围外插件与查不到的行各按各自的样子渲染", { skip: skipReason }, async () => {
   const page = await openPluginPanel(browser);
   try {
-    // 有更新的行：版本号 +「更新到 <目标版本>」（预发布照实展示，点不点由人定）。
+    // 有更新的行：旧版本 → 新版本（新版本绿徽章），按钮就「更新」两个字，目标版本在气泡里。
     const updatable = await readUpdateCell(page, "billion-context");
     assert.equal(updatable.ver, "v2.1.0", "已装版本应显示在行内");
-    assert.match(updatable.btnText, /更新到 2\.3\.0-rc\.1/, "更新按钮应写明目标版本（含预发布）");
+    assert.equal(updatable.verNew, "v2.3.0-rc.1", "新版本徽章应显示目标版本（含预发布）");
+    assert.equal(updatable.arrow, "→", "新旧版本之间应有箭头");
+    assert.equal(updatable.btnText, "更新", "更新按钮就「更新」两个字");
+    assert.match(updatable.btnTitle, /v2\.3\.0-rc\.1/, "目标版本应收在按钮气泡里");
     assert.equal(updatable.btnDisabled, false, "更新按钮默认可用");
 
     // 已最新的行：只有版本号，没有按钮。
