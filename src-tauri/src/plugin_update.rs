@@ -243,8 +243,6 @@ pub struct ProgressEvent {
     pub plugin: String,
     /// `done` 时是否成功；`start` 时为 `None`。
     pub ok: Option<bool>,
-    /// `done` 且成功时装上的版本号；失败或 `start` 时为 `None`。
-    pub version: Option<String>,
     /// `done` 时的结果说明（成功是版本提示，失败是错误首行）。
     pub message: Option<String>,
 }
@@ -367,7 +365,6 @@ pub fn update(
                         total,
                         plugin: name.clone(),
                         ok: None,
-                        version: None,
                         message: None,
                     },
                 );
@@ -384,7 +381,6 @@ pub fn update(
                             total,
                             plugin: name.clone(),
                             ok: Some(true),
-                            version: Some(version.clone()),
                             message: Some(format!("已更新到 {version}")),
                         }
                     }
@@ -396,7 +392,6 @@ pub fn update(
                             total,
                             plugin: name.clone(),
                             ok: Some(false),
-                            version: None,
                             message: Some(err.lines().next().unwrap_or(err.as_str()).to_string()),
                         }
                     }

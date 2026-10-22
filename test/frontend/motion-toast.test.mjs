@@ -326,6 +326,55 @@ test("关闭按钮：可访问名「关闭提示」，点一下就收掉", { ski
   }
 });
 
+test("环境动作失败也要回执：名字被拒时，浮窗红字与 error toast 同时在", { skip: skipReason }, async () => {
+  const page = await openEnvPanel(browser);
+  try {
+    // 「web」这个环境本来就存在，新建同名环境会被假后端拒绝（与真后端同一套名字规则）。
+    const rejected = await page.evaluate(async () => {
+      const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+      const deadline = Date.now() + 5000;
+      document.querySelector("#btn-profile-create").click();
+      let input = null;
+      while (Date.now() < deadline) {
+        input = document.querySelector("#profile-manage-name");
+        if (input && !document.querySelector("#modal-name").classList.contains("hidden")) {
+          break;
+        }
+        await wait(10);
+      }
+      if (!input) {
+        return null;
+      }
+      input.value = "web";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelector("#btn-name-confirm").click();
+      // 失败会把红字显出来、浮窗留着不关。
+      while (Date.now() < deadline) {
+        const err = document.querySelector("#profile-manage-error");
+        if (err && !err.classList.contains("hidden") && err.textContent.trim()) {
+          return err.textContent.trim();
+        }
+        await wait(10);
+      }
+      return null;
+    });
+    assert.ok(rejected && /已经有同名环境/.test(rejected), `浮窗里应留下名字被拒的原因，实际「${rejected}」`);
+
+    // 除了浮窗红字，还要有一条 error toast（规格：没做成也要回执）。
+    await waitToastCount(page, 1);
+    const stack = await readToasts(page);
+    assert.equal(stack.items[0].kind, "error", `失败回执语气应是 error，实际 ${stack.items[0].kind}`);
+    // 后端是直接抛字符串（而不是回 ok:false）时，toast 会带上「环境操作没有完成：」前缀；
+    // 它必须把同一句原因原样带出来，别让人在角落看到一句无法对照的话。
+    assert.ok(
+      stack.items[0].text.includes(rejected),
+      `toast 应原样带上浮窗里那句原因，实际「${stack.items[0].text}」`,
+    );
+  } finally {
+    await page.close();
+  }
+});
+
 test("关动效：toast 仍瞬时出现且看得见", { skip: skipReason }, async () => {
   const page = await openEnvPanel(browser, { state: { session: "running" }, motion: "off" });
   try {

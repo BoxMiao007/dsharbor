@@ -689,7 +689,7 @@ window.__mockUnimplemented = [];
       for (const it of scope) {
         if (!it.hasUpdate) continue;
         const index = okList.length + failList.length + 1;
-        push({ phase: "start", index, total, plugin: it.name, ok: null, version: null, message: null });
+        push({ phase: "start", index, total, plugin: it.name, ok: null, message: null });
         if (S.pluginUpdateStepDelay > 0) {
           await new Promise((r) => setTimeout(r, S.pluginUpdateStepDelay));
         }
@@ -704,7 +704,6 @@ window.__mockUnimplemented = [];
             total,
             plugin: it.name,
             ok: false,
-            version: null,
             message: "更新命令 npm install " + it.name + " 失败：E404 找不到包（假数据）",
           });
           continue;
@@ -718,7 +717,6 @@ window.__mockUnimplemented = [];
           total,
           plugin: it.name,
           ok: true,
-          version: it.current,
           message: "已更新到 " + it.current,
         });
       }

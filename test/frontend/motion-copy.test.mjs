@@ -331,6 +331,48 @@ test("登录链接（打开方式=复制）也用同一套反馈", { skip: skipR
   }
 });
 
+test("登录链接复制失败：按钮内红态之外，也补一条 error toast（与另外三颗一致）", { skip: skipReason }, async () => {
+  const page = await openPanel(browser, "log");
+  try {
+    await page.evaluate(() => window.localStorage.setItem("dsharbor.ui.openMode", "copy"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#btn-toggle");
+    await page.click("#btn-toggle");
+    await page.waitForFunction(() => document.querySelector("#btn-open")?.disabled === false, { timeout: 4000 });
+
+    // 让这次复制必定失败：writeText 抛错，兜底 execCommand 也拿不到文本。
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async () => {
+            throw new Error("mock: clipboard denied");
+          },
+        },
+      });
+      document.execCommand = () => false;
+    });
+
+    await clickAndWait(page, "#btn-open", "copy-failed");
+    const after = await readCopyState(page, "#btn-open");
+    assert.equal(after.shown, "复制失败", "失败时按钮内应切到「复制失败」那行");
+
+    // 除了按钮内红态，还要有一条 error toast——否则这颗按钮与另外三颗表现不一致。
+    await page.waitForSelector("#toasts .toast:not(.is-leaving)", { timeout: 4000 });
+    const toast = await page.evaluate(() => {
+      const el = document.querySelector("#toasts .toast:not(.is-leaving)");
+      return {
+        text: (el?.querySelector(".toast-body")?.textContent ?? "").trim(),
+        kind: el?.dataset.kind ?? null,
+      };
+    });
+    assert.match(toast.text, /复制失败/, `toast 文案应说明复制失败，实际「${toast.text}」`);
+    assert.equal(toast.kind, "error", `失败回执语气应是 error，实际 ${toast.kind}`);
+  } finally {
+    await page.close();
+  }
+});
+
 test("data-motion=off 下反馈同样可见（瞬时切换，不靠动画）", { skip: skipReason }, async () => {
   const page = await openPanel(browser, "log", "off");
   try {

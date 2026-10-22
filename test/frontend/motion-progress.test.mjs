@@ -225,6 +225,32 @@ test("全部更新：逐行依次排队/更新中/已更新，进度条按已完
   }
 });
 
+test("整轮在命令级就失败（如 DSH 正在运行）：进度条也要收尾，不悬在「已完成 0/N」", { skip: skipReason }, async () => {
+  // 让 DSH 处于「运行中」：批量更新一进来就被后端挡下（命令级抛错），一条进度事件都不会来。
+  // 这是最容易让进度条悬着的路径——没有任何行走到 done，只靠已完成数与总数相等收不了尾。
+  const page = await openPluginPanel(browser, { session: "running" });
+  try {
+    await page.click("#btn-plugin-update-all");
+    const { last } = await sampleUntil(page, (snap) =>
+      /已更新 \d+\/3，\d+ 个失败/.test(String(snap.sum)),
+    );
+
+    assert.match(
+      last.sum,
+      /已更新 0\/3，3 个失败/,
+      `命令级失败也要落一句收尾，实际「${last.sum}」`,
+    );
+    assert.equal(last.now, 100, "收尾时进度条应推到 100，不留在 0");
+    assert.equal(
+      last.rows.every((row) => row.phase !== "queue" && row.phase !== "busy"),
+      true,
+      "收尾时不应再有排队/更新中的行",
+    );
+  } finally {
+    await page.close();
+  }
+});
+
 test("有插件更新失败：收尾写明失败数，失败行留下原因并可单独重试", { skip: skipReason }, async () => {
   // 让 dsh-skill-mcp-panel 这一步失败一次（重试那一遍会成功，模拟偶发故障）。
   const page = await openPluginPanel(browser, {

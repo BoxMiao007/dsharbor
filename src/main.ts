@@ -815,7 +815,7 @@ async function main(): Promise<void> {
           box.removeAttribute("data-closing");
           return;
         }
-        if (document.documentElement.dataset.motion === "off") return; // 动效关掉：不收窗口，瞬时完成
+        if (motionOff()) return; // 动效关掉：不收窗口，瞬时完成
         box.setAttribute("data-closing", "");
         box.addEventListener(
           "transitionend",
@@ -1581,11 +1581,14 @@ async function main(): Promise<void> {
     }
 
     /** 复制登录链接：链接每次都重新取（token 是一次性铸造的），成功后按钮上短暂回显。
-        失败也只在按钮内表达（全局提示归 #34，这里不重复弹）。 */
+        失败与另外三颗复制按钮一致：按钮内红态之外再补一条 toast。 */
     async function copyLoginUrl(): Promise<void> {
       const url = await invoke<string>("dsh_login_url");
       const ok = await writeText(url);
       flashCopy(btnOpen, ok);
+      if (!ok) {
+        showToast("复制失败：剪贴板不可用，请手动选中文本复制。", "error");
+      }
     }
 
     // 主按钮：按当前方式真的去打开（应用内 / 浏览器 / 复制）。
@@ -2297,10 +2300,11 @@ async function main(): Promise<void> {
           setModal(null);
           void appendSystemNote(outcome.message);
           // 新建/复制/重命名/删除的结果：浮窗一收就没别的地方能看到了，补一条回执。
-          // 失败留在浮窗的 #profile-manage-error 里（多半是名字这类字段问题），不再重复报。
+          // 成功与失败都回执——没做成也要让人知道，浮窗里的红字照旧留着说明原因。
           showToast(outcome.message, "ok");
         } else {
           setManageError(outcome.message);
+          showToast(outcome.message, "error");
         }
         // 新建/复制/重命名都会改变清单，删掉的更得重读：一律重读一次。
         // 重装依赖同样可能让插件数从零变成若干，插件清单也得重新拉。
@@ -2312,6 +2316,7 @@ async function main(): Promise<void> {
         }
       } catch (err) {
         setManageError(String(err));
+        showToast(`环境操作没有完成：${String(err)}`, "error");
       } finally {
         manageBusy = false;
         btnNameConfirm.disabled = false;
@@ -2715,8 +2720,6 @@ async function main(): Promise<void> {
       plugin: string;
       /** 仅 `done`：这一步成功与否。 */
       ok: boolean | null;
-      /** 仅 `done` 且成功：装上的版本。 */
-      version: string | null;
       /** 仅 `done`：成功是版本提示，失败是原因（首行）。 */
       message: string | null;
     }
@@ -2977,28 +2980,58 @@ async function main(): Promise<void> {
           : "");
     }
 
-    /** 全部跑完时把收尾文案定下来：`已更新 N/M，K 个失败`（N 是成功的，M 是本轮总数）。 */
+    /** 兜底收尾：这一轮结束后仍有行没走到「已更新/失败」（整轮在命令级就失败、
+     *  或进度通道最后一条没送到），把它们按失败补齐，进度条推到 100%，汇总照实写。
+     *  只对批量生效——单插件的结果只认命令返回值。 */
+    function settleUnfinishedPluginRows(scope: string[], name: string | null): void {
+      if (name !== null || pluginProgressTotal <= 0 || pluginProgressDone >= pluginProgressTotal) {
+        return;
+      }
+      const successes = pluginProgressDone - pluginProgressFailed;
+      for (const plugin of scope) {
+        const state = pluginUpdatePhases.get(plugin);
+        if (state !== undefined && (state.phase === "done" || state.phase === "fail")) {
+          continue;
+        }
+        pluginUpdatePhases.set(plugin, { phase: "fail", message: "没有收到结果" });
+      }
+      pluginProgressFailed = pluginProgressTotal - successes;
+      pluginProgressDone = pluginProgressTotal;
+      pluginProgressSummary = `已更新 ${successes}/${pluginProgressTotal}，${pluginProgressFailed} 个失败`;
+    }
+
+    /** 全部跑完时把收尾文案定下来：`已更新 N/M，K 个失败`（N 是成功的，M 是本轮总数）。
+     *  已经有汇总文案（例如整轮在命令级就失败、由 settleUnfinishedPluginRows 收的尾）就不再改。 */
     function finishPluginProgressIfComplete(): void {
-      if (pluginProgressTotal > 0 && pluginProgressDone >= pluginProgressTotal) {
+      if (
+        pluginProgressTotal > 0 &&
+        pluginProgressDone >= pluginProgressTotal &&
+        pluginProgressSummary === null
+      ) {
         const ok = pluginProgressDone - pluginProgressFailed;
         pluginProgressSummary = `已更新 ${ok}/${pluginProgressTotal}，${pluginProgressFailed} 个失败`;
       }
     }
 
-    /** 吃一条后端进度事件：start 只把这一行点亮，done 记结果并推进进度条。 */
+    /** 吃一条后端进度事件：start 只把这一行点亮，done 记结果并推进进度条。
+     *  已完成数直接取后端给的 `index`（从 1 起），总数取 `total`——不靠前端自增，
+     *  这样漏收一条或顺序有变时进度条也不会和真实结果脱节。 */
     function applyUpdateProgress(event: UpdateProgressEvent): void {
+      if (event.total > 0) {
+        pluginProgressTotal = event.total;
+      }
       if (event.phase === "start") {
         pluginUpdatePhases.set(event.plugin, { phase: "busy", message: null });
       } else {
         const previous = pluginUpdatePhases.get(event.plugin);
-        // 同一行只算一次完成：后端理论上不会重发，这里挡一层，进度条不会超额。
-        if (previous && previous.phase !== "done" && previous.phase !== "fail") {
-          pluginProgressDone += 1;
-        }
-        const ok = event.ok === true;
-        if (!ok) {
+        const counted = previous !== undefined && previous.phase !== "done" && previous.phase !== "fail";
+        if (counted && event.ok !== true) {
           pluginProgressFailed += 1;
         }
+        if (event.index > pluginProgressDone) {
+          pluginProgressDone = event.index;
+        }
+        const ok = event.ok === true;
         pluginUpdatePhases.set(event.plugin, {
           phase: ok ? "done" : "fail",
           message: ok ? (event.message ?? null) : (event.message ?? "原因未知"),
@@ -3214,7 +3247,8 @@ async function main(): Promise<void> {
       } finally {
         pluginUpdateBusy = false;
         pluginUpdateRunningAll = false;
-        // 兜底：通道没把最后一条送到时，按已收到的结果把汇总定下来，不让进度条悬着。
+        // 兜底：没走完的行按失败补齐再定汇总，不让进度条悬在「已完成 x/N」。
+        settleUnfinishedPluginRows(scope, name);
         finishPluginProgressIfComplete();
         renderPluginList();
         renderPluginProgress();
