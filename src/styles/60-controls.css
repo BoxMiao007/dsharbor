@@ -26,9 +26,12 @@ button {
   font: inherit;
   font-size: 13px;
   cursor: pointer;
+  /* 缩放与阴影的时长取全站动效出口的即时档（--m-quick），按下、回弹各一次。 */
   transition:
     background 140ms,
-    border-color 140ms;
+    border-color 140ms,
+    transform var(--m-quick) var(--ease-out),
+    box-shadow var(--m-quick) var(--ease-out);
 }
 
 button:hover:not(:disabled) {
@@ -49,6 +52,18 @@ button:focus-visible,
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* 全站按压反馈（#28）：未禁用的按钮按下时轻微下沉一档 + 内阴影加深，松手回弹。
+   幅度刻意比圆形图标钮（0.94）浅——普通按钮面积大，缩太多会糊成一团。
+   内阴影取前景色：浅色下是把面压深，深色下是一道内高光，两套外观读起来都是
+   「陷进去」，且不必新增色值。禁用态不缩放，按下去只剩 not-allowed 的提示。
+   用 `button, button.primary` 双写把特指度提到 (0,2,1)：与 `button.primary` 的底色规则同级，
+   否则「启动 DSH」这类主按钮会被主按钮那条更高特指度的底色规则压过、按不下去。 */
+button:active:not(:disabled),
+button.primary:active:not(:disabled) {
+  transform: scale(0.972);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--fg) 16%, transparent);
 }
 
 /* 主按钮用深一档的实底（--accent-fill）+ 白字，白字对比 4.88/5.84；
@@ -156,8 +171,8 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 悬停漫过那一套（图标板漫过整颗按钮 + 文字被往右推出）随「停止 / 重启 DSH」改成
-   圆形图标钮一起删掉了：圆钮里没有文字段，没有可漫过的东西。图标自身的反馈还在——
-   停止是实心/空心闪动、重启是转一圈，见下面两颗圆钮各自的规则。 */
+   圆形图标钮一起删掉了：圆钮里没有文字段，没有可漫过的东西。圆钮的悬停反馈改成
+   外光环 + 图标下沉，见下面两颗圆钮各自的规则。 */
 
 /* 圆形图标钮：直径 = 按钮高度（--btn-h = 34px），纯图标、圆形底色，没有文字段。
    「停止」只在运行态是圆钮（停止态仍是 .swap 逐字切换的长条），「重启 DSH」出场即圆钮。
@@ -169,6 +184,14 @@ button.primary:hover:not(:disabled) {
   min-width: var(--btn-h);
   padding: 0;
   border-radius: 50%;
+  /* 圆钮自己的节奏（写在这里是因为外层 .toolbar-actions button 的过渡只包了背景与滤镜）：
+     缩放走即时档（按下与回弹），外光环走控件档（悬停 / 工作态亮起），提亮仍用 --btn-hl-ms。 */
+  transition:
+    transform var(--m-quick) var(--ease-out),
+    box-shadow var(--m-base) var(--ease-out),
+    background var(--btn-hl-ms),
+    border-color var(--btn-hl-ms),
+    filter var(--btn-hl-ms);
 }
 
 /* display 必须单独走 :where() 把它降到 0 特指度：ID 规则 (1,0,0) 会压过
@@ -185,14 +208,14 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 「停止」图标是实心方块：圆钮底色是亮的红，图标走 currentColor（白）。
-   描边与填充同色、且始终在场：常态看不出来（同色叠加仍是实心），闪到空心那半拍
-   就留下方框轮廓——没有它那一拍方块整个消失，看着像图标没了。
-   外沿尺寸按「矩形 + 描边」留好，见 icons.ts 的 ICON_STOP。 */
+   描边与填充同色、且始终在场：常态因同色叠加看不出来，它只负责把方块外沿撑出
+   半个描边宽——外沿尺寸按「矩形 + 描边」留好，见 icons.ts 的 ICON_STOP。 */
 #btn-toggle.round svg {
   fill: currentColor;
   stroke: currentColor;
   stroke-width: 2.4;
   stroke-linejoin: round;
+  transition: transform var(--m-quick) var(--ease-out);
 }
 
 #btn-restart svg {
@@ -201,41 +224,39 @@ button.primary:hover:not(:disabled) {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-  transition: transform var(--btn-hl-ms);
+  transition: transform var(--m-quick) var(--ease-out);
 }
 
-/* 「停止」图标：悬停时在实心与空心之间闪动一次——与「重启 DSH」的旋转同节奏
-   （时长与延迟同用 :root 动效变量）。fill 不是可插值属性，按离散步进切换：
-   实心 → 50% 处只剩描边（空心方框，轮廓靠上面那条同色 stroke） → 结束变回实心，
-   看上去就是一次来回闪动；结束位 = 实心常态，不跳变。 */
-@keyframes btn-stop-flash {
-  0%,
-  100% {
-    fill: currentColor;
-  }
-  50% {
-    fill: none;
-  }
+/* 圆钮的悬停 / 按住 / 工作态（#28，替掉原来的「停止闪方块」与「重启悬停转一圈」）：
+   那两套一次性动画与光环在表达同一件事，叠在一起反而散，已下线。现在只有三层递进：
+     悬停   → 一圈柔和外光环（说「可点」）+ 图标下沉 1px（说「按下去有反应」）
+     按住   → 缩到 0.94（比普通按钮的 0.972 深，圆钮面积小，缩深一点才看得出按实了）
+     重启中 → 光环常亮 + 图标持续转（下面 .is-restarting 那条），直到结果出来
+   光环从本色 --round-fill 用 color-mix 淡出来（26%），不另写一份色值；
+   停止钮悬停时 --round-fill 换成高亮红，光环跟着一起亮一档。 */
+#btn-toggle.round:hover:not(:disabled),
+#btn-restart:hover:not(:disabled),
+#btn-restart.is-restarting {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--round-fill) 26%, transparent);
 }
 
-#btn-toggle.round:hover:not(:disabled) svg {
-  animation: btn-stop-flash var(--btn-sweep-ms) ease
-    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
+/* 图标下沉：只给悬停态；工作态（.is-restarting）交由转动的 animation 独占 transform。 */
+#btn-toggle.round:hover:not(:disabled) svg,
+#btn-restart:hover:not(:disabled):not(.is-restarting) svg {
+  transform: translateY(1px);
 }
 
-/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 = 一轮时长 − 提前起势量
-   （500ms − 200ms = 300ms）；一次性动画，结束位 = 静止位（360deg），退出悬停时不跳变。
-   点击后进入持续转动（.is-restarting）交给下面那套规则，这里排除掉，免得两套 animation
-   抢同一个属性。 */
+/* 按住缩一圈，松手回弹（过渡见文件上方两颗圆钮的 transition）。 */
+#btn-toggle.round:active:not(:disabled),
+#btn-restart:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+/* 图标的转圈关键帧：只留给「重启进行中」与方钮忙态（.square-btn.is-spinning）复用。 */
 @keyframes btn-restart-spin {
   to {
     transform: rotate(360deg);
   }
-}
-
-#btn-restart:hover:not(:disabled):not(.is-restarting) svg {
-  animation: btn-restart-spin var(--btn-sweep-ms) ease
-    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
 }
 
 /* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁上，与鼠标是否
@@ -252,21 +273,25 @@ button.primary:hover:not(:disabled) {
    悬停 = 高亮加回（维护者要求）：停止提亮到 #ff3636（Uiverse 参考的高亮红），
    重启用 brightness 轻提亮（两套主题通用，不硬编码色值）。 */
 
-/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、.swap 逐字切换形态）。 */
+/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、.swap 逐字切换形态）。
+   底色收进局部变量 --round-fill：底色、描边与悬停外光环都从它算，
+   换色时三处一起动，光环不必另写一份色值。 */
 #btn-toggle.round {
-  background: #e62222;
-  border-color: #e62222;
+  --round-fill: #e62222;
+  background: var(--round-fill);
+  border-color: var(--round-fill);
   color: #fff;
 }
 
+/* 悬停提亮：只换 --round-fill，底色与光环跟着一起亮一档。 */
 #btn-toggle.round:hover:not(:disabled) {
-  background: #ff3636;
-  border-color: #ff3636;
+  --round-fill: #ff3636;
 }
 
 #btn-restart {
-  background: #f5ae51;
-  border-color: #f5ae51;
+  --round-fill: #f5ae51;
+  background: var(--round-fill);
+  border-color: var(--round-fill);
   color: #1b2536;
 }
 
@@ -362,6 +387,13 @@ button.primary:hover:not(:disabled) {
 #btn-toggle.swap:hover,
 #btn-toggle.swap:focus-visible {
   animation: dsharbor-shake 0.2s linear infinite both;
+}
+
+/* 按压的那一下让位给全站缩放（#28）：抖动动画会一直是「运行中」并把 transform 定在
+   抖动帧上，永久压过按下态的 scale，主按钮就按不下去。只在按住时停掉抖动，
+   松手立刻回到抖动——文字逐字切换的原行为不受影响。 */
+#btn-toggle.swap:active:not(:disabled) {
+  animation: none;
 }
 
 @keyframes dsharbor-shake {
