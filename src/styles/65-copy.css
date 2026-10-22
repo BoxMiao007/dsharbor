@@ -1,0 +1,141 @@
+/* 复制类按钮的完整反馈（#35）：图标「复制 → 勾」、文案上下滑换「已复制」、边框短暂转成功色。
+   结构由 src/ui/copy-feedback.ts 在准备阶段装进按钮，这里只管样式与状态切换；
+   1.4s 复原由 JS 定时器控制，CSS 过渡一律走 ≤300ms 的控件档。 */
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition:
+    background var(--m-base) var(--ease-out),
+    color var(--m-base) var(--ease-out),
+    border-color var(--m-base) var(--ease-out);
+}
+
+/* 图标叠层：同一格放复制形与勾，切 .copied 时一颗淡出、一颗弹入；
+   两枚都常驻，换图标不改变按钮宽度。 */
+.copy-ico {
+  position: relative;
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.copy-ico svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    opacity var(--m-quick) var(--ease-out),
+    transform var(--m-base) var(--ease-spring);
+}
+
+.copy-ico .i-check {
+  opacity: 0;
+  transform: scale(0.5) rotate(-25deg);
+}
+
+.copied .copy-ico .i-copy {
+  opacity: 0;
+  transform: scale(1.25) rotate(12deg);
+}
+
+.copied .copy-ico .i-check {
+  opacity: 1;
+  transform: none;
+}
+
+/* 文案叠层：原文案 / 已复制 / 复制失败 三行同格叠放。
+   网格轨道宽度取三者里最宽的一行 → 切换任何状态时按钮宽度恒定（原理见 copy-feedback.ts 文件头）。
+   上下滑用 transform，不参与布局。 */
+.copy-txt {
+  display: inline-grid;
+  overflow: hidden;
+  height: 1.25em;
+  line-height: 1.25em;
+  text-align: center;
+}
+
+.copy-txt > span {
+  grid-area: 1 / 1;
+  display: block;
+  white-space: nowrap;
+  transition:
+    transform 180ms var(--ease-out),
+    opacity 180ms var(--ease-out),
+    filter 180ms var(--ease-out);
+}
+
+.copy-txt .t-next,
+.copy-txt .t-fail {
+  transform: translateY(70%);
+  opacity: 0;
+  filter: blur(2px);
+}
+
+.copied .copy-txt .t-cur,
+.copy-failed .copy-txt .t-cur {
+  transform: translateY(-70%);
+  opacity: 0;
+  filter: blur(2px);
+}
+
+.copied .copy-txt .t-next {
+  transform: none;
+  opacity: 1;
+  filter: blur(0);
+}
+
+.copy-failed .copy-txt .t-fail {
+  transform: none;
+  opacity: 1;
+  filter: blur(0);
+}
+
+/* 成功 / 失败配色：只用令牌 mix 出来，不在别处写色值。
+   .log-copy 平时没有边框，成功时靠底色一起给出反馈。 */
+.copy-btn.copied {
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, var(--elev));
+  color: var(--ok);
+}
+
+.copy-btn.copy-failed {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, var(--elev));
+  color: var(--danger);
+}
+
+/* 登录链接（打开方式 = 复制）借用同一套图标叠层：那枚图标住在绝对定位的
+   34px 图标白板里，这里把叠层缩到 18px（与工具条其它图标同尺寸），由 .btn-ico 居中。
+   过渡单独写回，压过 60-controls.css 里只包了 transform 的那条。 */
+#btn-open .copy-ico {
+  width: 18px;
+  height: 18px;
+}
+
+#btn-open .copy-ico svg {
+  transition:
+    opacity var(--m-quick) var(--ease-out),
+    transform var(--m-base) var(--ease-spring);
+}
+
+/* 主按钮宽度已由工具条定死（--btn-w），复制方式下的成功 / 失败态只换配色。 */
+#btn-open.copy-mode.copied {
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, var(--elev));
+  color: var(--ok);
+}
+
+#btn-open.copy-mode.copy-failed {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, var(--elev));
+  color: var(--danger);
+}
