@@ -515,6 +515,9 @@ export function buildHtml(info: AppInfo): string {
       </div>
     </main>
   </div>
-  ${modals}`;
+  ${modals}
+  <!-- 动作回执的播报容器（#34）：固定右下角，礼貌播报；条目本身由 src/ui/toast.ts 造。
+       容器的角色与 aria-live 放在这里而不是每条上，加一条就自动播报一次。 -->
+  <div id="toasts" class="toasts" role="status" aria-live="polite" aria-atomic="false"></div>`;
 }
 

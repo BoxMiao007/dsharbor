@@ -19,6 +19,7 @@ import type { MotionPref } from "./ui/motion";
 import { escapeHtml, toggleSwapHtml } from "./ui/markup";
 import { applyRestartSpin, beginRestartSpin, endRestartSpin, updateRestartSpin, setStatusRefresher } from "./ui/spin";
 import { setSquareBusy, flashSquareDone } from "./ui/sqbusy";
+import { showToast } from "./ui/toast";
 import { buildHtml } from "./ui/build-html";
 
 async function main(): Promise<void> {
@@ -960,12 +961,17 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 按钮上的「复制」：复制某个元素里的文本，并在按钮上短暂回显结果。
-        日志面板的「复制日志」与命令行集成的「手动命令」「垫片内容」共用这一套（见 ui/copy-feedback.ts）。 */
+    /** 按钮上的「复制」：复制某个元素里的文本，按钮内回显结果（见 ui/copy-feedback.ts）。
+        日志面板的「复制日志」与命令行集成的「手动命令」「垫片内容」共用这一套。
+        成功只留在按钮里；失败另补一条 toast——按钮内的红态一闪就复原，复制没成功
+        得让人有机会知道该手动选中文本再复制。 */
     function copyLog(source: HTMLElement, button: HTMLButtonElement): void {
       void (async () => {
         const ok = await writeText(source.textContent ?? "");
         flashCopy(button, ok);
+        if (!ok) {
+          showToast("复制失败：剪贴板不可用，请手动选中文本复制。", "error");
+        }
       })();
     }
 
@@ -1668,6 +1674,8 @@ async function main(): Promise<void> {
         try {
           const outcome = await invoke<BridgeOutcome>(name, { config: collectConfig() });
           logAction(outcome.message);
+          // 安装/卸载的结果除了进日志，再补一条回执：浮窗与日志都可能没在眼前。
+          showToast(outcome.message, outcome.ok ? "ok" : "error");
           if (!outcome.ok) {
             bridgeError.textContent = "命令返回非成功状态，请看下方输出与备份目录。";
             bridgeError.classList.remove("hidden");
@@ -1675,6 +1683,7 @@ async function main(): Promise<void> {
         } catch (err) {
           bridgeError.textContent = String(err);
           bridgeError.classList.remove("hidden");
+          showToast(`桥接插件操作失败：${String(err)}`, "error");
         } finally {
           bridgeBusy = false;
           updateBridgeButtons();
@@ -1704,9 +1713,11 @@ async function main(): Promise<void> {
           });
           logAction(message);
           bridgeError.classList.add("hidden");
+          showToast(message, "ok");
         } catch (err) {
           bridgeError.textContent = String(err);
           bridgeError.classList.remove("hidden");
+          showToast(`恢复桥接插件备份失败：${String(err)}`, "error");
         } finally {
           bridgeBusy = false;
           updateBridgeButtons();
@@ -2285,6 +2296,9 @@ async function main(): Promise<void> {
         } else if (outcome.ok) {
           setModal(null);
           void appendSystemNote(outcome.message);
+          // 新建/复制/重命名/删除的结果：浮窗一收就没别的地方能看到了，补一条回执。
+          // 失败留在浮窗的 #profile-manage-error 里（多半是名字这类字段问题），不再重复报。
+          showToast(outcome.message, "ok");
         } else {
           setManageError(outcome.message);
         }
@@ -3169,6 +3183,9 @@ async function main(): Promise<void> {
         ok = outcome.ok;
         setPluginNote(outcome.message);
         logAction(outcome.message);
+        // 更新结果的回执（#34）：批量收尾的那句里带失败条数，这里只把后端的话搬出来，
+        // 进度事件与行级状态归 #33，这里不碰。
+        showToast(outcome.message, outcome.ok ? "ok" : "error");
         if (name !== null) {
           // 单插件：返回值的 ok 就是这一行的结果，失败原因就写在 message 里。
           pluginUpdatePhases.set(name, {
@@ -3190,6 +3207,7 @@ async function main(): Promise<void> {
       } catch (err) {
         setPluginNote(`更新插件失败：${String(err)}`);
         logAction(`更新插件失败：${String(err)}`);
+        showToast(`更新插件失败：${String(err)}`, "error");
         if (name) {
           pluginUpdatePhases.set(name, { phase: "fail", message: String(err) });
         }
@@ -3289,6 +3307,8 @@ async function main(): Promise<void> {
       } catch (err) {
         setPluginNote(`切换插件开关失败：${String(err)}`);
         logAction(`切换插件开关失败：${String(err)}`);
+        // 开关失败也要留回执：卡上那行提示会被下一次操作冲掉，toast 能兜住这一下。
+        showToast(`切换插件开关失败：${String(err)}`, "error");
         // 失败时开关已经被点过去了，先把它拨回真实状态，再让下面重铺一次与后端对齐。
         paintPluginRow(name, !enabled, false);
         pluginLoadedFor = null;
