@@ -28,7 +28,7 @@ const require = createRequire(import.meta.url);
 
 const PUPPETEER_CORE = process.env.DSHARBOR_PUPPETEER || "C:/Users/BOXMIAO/.pi/agent/npm/node_modules/puppeteer-core";
 const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
-const PORT = 8218; // 独占端口：本文件 8218（见 NOTES.md 端口表）
+const PORT = 8218; // 独占端口：本文件固定 8218，避免与其他前端测试的预览台抢端口
 const THEME_KEY = "dsharbor.ui.theme";
 const MOTION_KEY = "dsharbor.ui.motion";
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;

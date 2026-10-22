@@ -62,23 +62,28 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 4px;
+  /* 项高与项间距都提成变量：滑动指示块要按它们算位移，改尺寸时三处一起动，
+     不必再去追 54px 这种「44 + 10」的合成值。 */
+  --rail-item-h: 44px;
+  --rail-gap: 10px;
+  --rail-pad-top: 4px;
+  gap: var(--rail-gap);
+  padding-top: var(--rail-pad-top);
   overflow-y: auto;
 }
 
 /* 选中指示块：一块跟着选中项走的淡色底（#36）。选中项的底色不再由按钮自己铺，
    换分区时整块滑过去，视线先跟左边、再落到右边内容；按钮自己的 hover 仍在上层。
-   位置按按钮序号算：每项 44px + .rail 的 gap 10px = 54px；顶部 4px 对齐首项上沿。 */
+   位移按按钮序号算：一「步」= 项高 + 项间距，两者都取自 .rail 上的变量。 */
 .rail-ind {
   position: absolute;
-  top: 4px;
+  top: var(--rail-pad-top);
   left: 0;
   right: 0;
-  height: 44px;
+  height: var(--rail-item-h);
   border-radius: 10px;
   background: var(--accent-soft);
-  transform: translateY(calc(var(--i, 0) * 54px));
+  transform: translateY(calc(var(--i, 0) * (var(--rail-item-h) + var(--rail-gap))));
   transition: transform var(--m-base) var(--ease-spring);
   pointer-events: none;
 }
@@ -107,7 +112,7 @@
   align-items: center;
   gap: 11px;
   width: 100%;
-  height: 44px;
+  height: var(--rail-item-h);
   flex: none;
   padding: 0 12px;
   border: 0;
@@ -121,8 +126,8 @@
   text-align: left;
   cursor: pointer;
   transition:
-    color 140ms,
-    background 140ms;
+    color var(--m-quick),
+    background var(--m-quick);
 }
 
 .ico-item svg {

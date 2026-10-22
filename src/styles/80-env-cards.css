@@ -31,10 +31,10 @@
   background: var(--card-2);
   box-shadow: var(--shadow-soft);
   transition:
-    border-color 140ms,
-    background 140ms,
-    box-shadow 160ms,
-    transform 160ms;
+    border-color var(--m-quick),
+    background var(--m-quick),
+    box-shadow var(--m-base),
+    transform var(--m-base);
 }
 
 /* 悬停抬升（#36）：卡片往上让 1px、阴影加深一档、右上角「更多」入口淡入。
@@ -128,8 +128,8 @@ html[data-motion="off"] .env-card:focus-within {
   transition:
     opacity var(--m-quick) var(--ease-out),
     transform var(--m-quick) var(--ease-out),
-    background 140ms,
-    color 140ms;
+    background var(--m-quick),
+    color var(--m-quick);
 }
 
 /* 指针进卡 / 焦点进卡 / 菜单已展开：入口浮到面前。 */

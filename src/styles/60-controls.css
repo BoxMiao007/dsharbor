@@ -277,7 +277,7 @@ button.primary:hover:not(:disabled) {
    底色收进局部变量 --round-fill：底色、描边与悬停外光环都从它算，
    换色时三处一起动，光环不必另写一份色值。 */
 #btn-toggle.round {
-  --round-fill: #e62222;
+  --round-fill: var(--stop-fill);
   background: var(--round-fill);
   border-color: var(--round-fill);
   color: #fff;
@@ -285,11 +285,11 @@ button.primary:hover:not(:disabled) {
 
 /* 悬停提亮：只换 --round-fill，底色与光环跟着一起亮一档。 */
 #btn-toggle.round:hover:not(:disabled) {
-  --round-fill: #ff3636;
+  --round-fill: var(--stop-fill-hover);
 }
 
 #btn-restart {
-  --round-fill: #f5ae51;
+  --round-fill: var(--restart-fill);
   background: var(--round-fill);
   border-color: var(--round-fill);
   color: #1b2536;

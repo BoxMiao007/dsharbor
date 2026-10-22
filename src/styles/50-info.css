@@ -68,7 +68,8 @@
   max-width: 240px;
   padding: 6px 9px;
   border-radius: 8px;
-  border: 1px solid var(--line-strong);
+  /* 保底轮廓用发丝边，不用满强度 --line-strong（界面规范 4）。 */
+  border: 1px solid var(--hairline);
   background: var(--tip-bg);
   color: var(--fg);
   font-size: 12px;
@@ -99,8 +100,8 @@
   width: 7px;
   height: 7px;
   margin-left: -4px;
-  border-right: 1px solid var(--line-strong);
-  border-bottom: 1px solid var(--line-strong);
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
   background: var(--tip-bg);
   transform: rotate(45deg);
   opacity: 0;
@@ -136,7 +137,7 @@
   max-width: 300px;
   padding: 6px 9px;
   border-radius: 8px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--hairline);
   background: var(--tip-bg);
   color: var(--fg);
   font-size: 12px;
