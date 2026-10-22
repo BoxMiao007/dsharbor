@@ -445,6 +445,13 @@ button.danger:hover:not(:disabled) {
   height: 15px;
 }
 
+/* 工具条方钮的环形 spinner 跟这里 15px 的图标同尺寸（通用方钮是 17px），
+   忙态切换时视觉重量不变、不显得比旁边的图标大一圈。 */
+.plugin-head-actions .square-btn .sq-spinner {
+  width: 15px;
+  height: 15px;
+}
+
 /* 行内版本号徽章：底色取条目底色（--card-2）往文字色混 10%——浅色主题自动是
    「加深」、深色主题自动是「减淡」，两个主题用同一条公式保持协调可辨。 */
 .plugin-ver {
