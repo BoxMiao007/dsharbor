@@ -30,8 +30,9 @@
   line-height: 1.5;
   /* 回执里常带「成功 N 个」这类会变的数字：等宽数字，别让宽度抖。 */
   font-variant-numeric: tabular-nums;
-  /* 只有这条接点击（主要是给关闭按钮）。 */
-  pointer-events: auto;
+  /* 整条不吃点击：右下角这几十 px 底下可能正好压着插件行的「更新」按钮，
+     浮在上面几秒就把点击吞掉太难受；只有关闭按钮自己把点击收回来。 */
+  pointer-events: none;
   animation: toast-in var(--m-enter) var(--ease-out);
 }
 
@@ -99,9 +100,11 @@
   overflow-wrap: anywhere;
 }
 
-/* 关闭按钮：安静地待在右上角，悬停 / 键盘聚焦时才提亮。 */
+/* 关闭按钮：安静地待在右上角，悬停 / 键盘聚焦时才提亮。
+   整条 toast 是点击穿透的（见上），这里要把点击收回来，别的按钮才不会被挡住。 */
 .toast-close {
   flex: none;
+  pointer-events: auto;
   display: grid;
   place-items: center;
   width: 20px;
