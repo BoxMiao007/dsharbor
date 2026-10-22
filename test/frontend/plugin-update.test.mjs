@@ -193,11 +193,13 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
         descText: desc ? desc.textContent : null,
         descTitle: desc ? desc.getAttribute("title") : null,
         icons,
+        allBadge: document.querySelector("#plugin-update-all-badge")?.textContent ?? null,
       };
     });
     assert.equal(layout.badgeInTitle, true, "版本徽章应在包名末尾的标题行里");
     assert.ok(layout.descText && layout.descText.length > 0, "插件自带的说明应显示出来");
     assert.equal(layout.descText, layout.descTitle, "说明全文应收在 title 里（悬停可看）");
+    assert.equal(layout.allBadge, "3", "「全部更新」右上角微标应显示可更新的插件数");
     assert.deepEqual(
       layout.icons,
       [
@@ -282,6 +284,15 @@ test("全部更新：逐个升级并汇总成功清单；没有可更新的之�
     assert.equal(state.updateButtons, 0, "全部更新后行内不应再有更新按钮");
     assert.match(state.summary, /0 个可更新/, `徽章应归零，实际「${state.summary}」`);
     assert.equal(state.allDisabled, true, "没有可更新插件时「全部更新」应置灰");
+    const badgeAfter = await page.evaluate(() => {
+      const badge = document.querySelector("#plugin-update-all-badge");
+      return { text: badge?.textContent ?? null, hidden: badge?.classList.contains("hidden") };
+    });
+    assert.equal(
+      badgeAfter.text === "" && badgeAfter.hidden === true,
+      true,
+      "全部更新完成后微标应收掉",
+    );
   } finally {
     await page.close();
   }

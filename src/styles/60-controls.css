@@ -761,9 +761,9 @@ input[type="number"] {
   line-height: 1.7;
 }
 
-/* 醒目提示：空态、读取失败、平台限制这类「用户必须一眼看到」的一句提示。
-   普通 .hint 是灰字说明，和正文混在一起要仔细读才发现；这里换成警告色胶囊把它拎出来。
-   用圆角矩形而不是 999px 正圆胶囊：这些句子多数会折成两三行，正圆胶囊在多行时很难看。
+/* 醒目提示：空态、读取失败、「本机已经装过」这类「用户必须一眼看到」的一句提示。
+   普通 .hint 是灰字说明，和正文混在一起要仔细读才发现；这里做成胶囊（999px 圆角）
+   把它拎出来。全站统一走这一条规则，所有 .hint.notice 都是同一副胶囊长相。
    底与边框都混进不透明的 --card（不是透明色）：这样无论下面垫的是小卡（--cell）还是
    大卡（--card），文字与底色的对比度都是同一个值，浅色主题下也稳定达标（实测 4.58:1）。
    不加外边距——间距交给父容器的 gap，避免和 16px 卡片节奏打架。 */
@@ -771,13 +771,13 @@ input[type="number"] {
    拼不过 display:block，所以这里自己让开「被隐藏时」的情况，否则空提示会留个空胶囊。 */
 .hint.notice:not(.hidden) {
   display: block;
-  /* 宽度跟内容走：提示多数只有一两行短句，撑满整行会让淡黄底横贯整个卡片，
-     看着像「一个超长的空背景框」。到卡片宽度为止才折行。 */
+  /* 宽度跟内容走：提示多数是一两句短句，撑满整行会让淡黄底横贯整个卡片。
+     到卡片宽度为止折行；折成多行时胶囊两端仍是圆的，视觉上依然成立。 */
   width: fit-content;
   max-width: 100%;
-  padding: 8px 12px;
+  padding: 5px 14px;
   border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--card));
-  border-radius: 10px;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--warn) 14%, var(--card));
   color: var(--warn);
   line-height: 1.6;

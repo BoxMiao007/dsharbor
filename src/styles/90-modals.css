@@ -204,7 +204,7 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card-2);
@@ -230,18 +230,19 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
   color: var(--fg);
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 12.5px;
+  font-size: 13.5px;
+  font-weight: 600;
   word-break: break-all;
 }
 
 /* 插件自带的说明（package.json 的 description）：单行截断，悬停看全文；
-   没有描述的包不渲染这一行，行高随内容，不做假两行。 */
+   没有描述的包不渲染这一行，行高随内容，不做假两行。与加粗的包名拉开一档对比。 */
 .plugin-desc {
-  margin-top: 2px;
+  margin-top: 4px;
   overflow: hidden;
   color: var(--fg-dim);
   font-size: 11.5px;
-  line-height: 1.35;
+  line-height: 1.45;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -329,17 +330,36 @@ button.danger:hover:not(:disabled) {
 }
 
 /* 插件更新工具条：两枚图标方钮（悬停出「检查更新 / 全部更新」气泡），
-   比通用 34px 方钮收一档，贴着插件卡的密度。 */
+   比通用 34px 方钮收一档，贴着插件卡的密度；靠右对齐，与卡头的计数徽章同一侧。 */
 .plugin-toolbar {
   display: flex;
+  justify-content: flex-end;
   gap: 6px;
   margin-bottom: 8px;
 }
 
 .plugin-toolbar .square-btn {
+  position: relative;
   width: 28px;
   min-width: 28px;
   height: 28px;
+}
+
+/* 「全部更新」右上角的微标：可更新的插件数。骑在按钮外沿一点，不占按钮内部空间。 */
+.plugin-toolbar .btn-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
 }
 
 .plugin-toolbar .square-btn svg {

@@ -149,14 +149,14 @@ export function buildHtml(info: AppInfo): string {
   `;
 
   // 插件管理卡：跟着「选中的环境」走。开关改的是补丁层里的禁用表达，不卸载插件包。
+  // 开关与更新的规则说明不再整段铺在卡头（维护者要求收掉）；关键提醒都收在控件
+  // 自己的 title 气泡与完成后的提示行（#plugin-note / #plugin-warning）里。
   const pluginBody = `
     ${colHead("插件", badgeLine("plugin-summary", "读取中…"))}
-    <p class="hint">一行一个插件的<b>总开关</b>；开关改的是补丁层里的禁用表达，<b>不会卸载插件包</b>：关掉后重启 DSH 才不再加载它，重新打开也不需要重新下载。只列壳管得了的插件——官方内置的骨架包（没有可禁用的挂载点）与桥接插件（归「桥接插件」浮窗管）不在这里出现。每次开关前会自动备份一份补丁层（每个环境保留最近 5 份）；改完要重启 DSH 才生效，所以操作前请先停止 DSH。</p>
-    <p class="hint">「检查更新」对比 npm 上的最新版本（第一次进这张卡会自动查一次）：可更新的插件行内出现「更新到 版本号」按钮，预发布版本会照实写在按钮上；更新前自动备份环境文件，装完回读校验，官方骨架包与桥接插件不参与。</p>
     <div id="profile-plugins" class="plugin-panel">
       <div class="plugin-toolbar">
         <button id="btn-plugin-check-updates" class="square-btn" type="button" title="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${ICON_REFRESH}</button>
-        <button id="btn-plugin-update-all" class="square-btn" type="button" title="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${ICON_UPDATE_ALL}</button>
+        <button id="btn-plugin-update-all" class="square-btn" type="button" title="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${ICON_UPDATE_ALL}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button>
       </div>
       <div id="plugin-list" class="plugin-list"></div>
       <div id="plugin-empty" class="plugin-empty hidden">

@@ -2425,6 +2425,7 @@ async function main(): Promise<void> {
     const btnPluginDeps = $<HTMLButtonElement>("btn-plugin-deps");
     const btnPluginCheckUpdates = $<HTMLButtonElement>("btn-plugin-check-updates");
     const btnPluginUpdateAll = $<HTMLButtonElement>("btn-plugin-update-all");
+    const btnUpdateAllBadge = $<HTMLSpanElement>("plugin-update-all-badge");
 
     /** 与 Rust 侧 `plugin_switch::PluginItem` 对应。 */
     interface PluginItem {
@@ -2597,6 +2598,9 @@ async function main(): Promise<void> {
       // 单行更新只置灰工具条，不让「全部更新」的图标空转。
       btnPluginCheckUpdates.classList.toggle("is-spinning", pluginCheckBusy);
       btnPluginUpdateAll.classList.toggle("is-spinning", pluginUpdateBusy && pluginUpdateRunningAll);
+      // 右上角微标 = 当前可更新的插件数；没有可更新时收掉，按钮本身置灰已足够。
+      btnUpdateAllBadge.textContent = pending > 0 ? String(pending) : "";
+      btnUpdateAllBadge.classList.toggle("hidden", pending === 0);
     }
 
     /**
