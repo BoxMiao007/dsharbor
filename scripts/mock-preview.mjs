@@ -183,6 +183,11 @@ const state = {
   pluginUpdateFail: [],
   /** 版本列表查询的人工延时：给方钮忙态（环形 spinner / 完成勾）测一个确定的忙态窗口。 */
   registryDelay: 0,
+  /** 插件清单（`plugin_list`）的人工延时（毫秒，按「每条命令」计）：给骨架屏一个确定的
+      加载窗口，否则假后端同步回话，骨架刚画上就被真行换掉，测不到。默认 0。 */
+  pluginListDelay: 0,
+  /** 把插件清单这条命令改成读取失败：预览「骨架撤掉、只留失败提示」那条分支。 */
+  pluginListFails: false,
   calls: {},
 };
 
@@ -588,9 +593,27 @@ window.__mockUnimplemented = [];
       };
     },
     // ---- 插件开关 ------------------------------------------------------------
+    // 清单读取的人工延时把成功与失败都包住：骨架屏测试要一个确定的加载窗口，
+    // 读取失败的分支也要先有骨架、再看到它被撤掉。
     plugin_list: (a) => {
       seen("plugin_list:" + (a && a.name ? a.name : "?"));
-      return (S.plugins && S.plugins[a && a.name]) || [];
+      const settle = () => {
+        if (S.pluginListFails) {
+          throw "读取插件清单失败：ENOENT 找不到补丁层（假数据）";
+        }
+        return (S.plugins && S.plugins[a && a.name]) || [];
+      };
+      return S.pluginListDelay > 0
+        ? new Promise((done, fail) => {
+            setTimeout(() => {
+              try {
+                done(settle());
+              } catch (err) {
+                fail(err);
+              }
+            }, S.pluginListDelay);
+          })
+        : settle();
     },
     plugin_toggle: (a) => {
       const name = a && a.name;

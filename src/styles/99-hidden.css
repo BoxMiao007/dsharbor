@@ -44,6 +44,7 @@ html[data-motion="off"] *::after {
 html[data-motion="off"] #btn-restart.is-restarting svg,
 html[data-motion="off"] .square-btn.is-spinning .sq-spinner,
 html[data-motion="off"] .ico-count.ico-count-bump,
+html[data-motion="off"] .plugin-skel .sk-line,
 html[data-motion="off"] #btn-toggle.swap:hover,
 html[data-motion="off"] #btn-toggle.swap:focus-visible {
   animation: none !important;
