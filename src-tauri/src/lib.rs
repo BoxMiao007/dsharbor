@@ -1264,21 +1264,40 @@ async fn plugin_updates_list(
 /// 更新某个环境里的第三方插件：`plugin` 有值更新单个，`None` 更新全部有更新的
 /// （逐个执行，单个失败不影响其余，最后汇总）。
 ///
+/// `progress` 是可选进度通道：界面批量更新时传进来，每开一个插件发一条 `start`、
+/// 跑完发一条 `done`（见 [`plugin_update::ProgressEvent`]）；单个更新不需要它，
+/// 结果只从返回值读。Tauri 的 `Channel<T>` 只实现了「必填」的参数抽取，可选通道
+/// 按官方推荐收 `JavaScriptChannelId`，再用 webview 兑换成 `Channel`。
+///
 /// 要写 node_modules，所以要求会话已停止：运行中的 DSH 同时在用这些文件，
 /// 谁后写谁赢（与重装依赖同一理由）。
 #[tauri::command]
+// 参数是 Tauri 注入项与前端字段一一对应的命令入参（app/webview/state/config/name/
+// source/plugin/progress），拆成结构体只是把同一张表抄两遍，没有别的收益。
+#[allow(clippy::too_many_arguments)]
 async fn plugin_update(
     app: tauri::AppHandle,
+    webview: tauri::Webview,
     state: tauri::State<'_, AppState>,
     config: LaunchConfig,
     name: String,
     source: String,
     plugin: Option<String>,
+    progress: Option<tauri::ipc::JavaScriptChannelId>,
 ) -> Result<plugin_update::UpdateOutcome, String> {
     ensure_session_stopped(&state, "更新插件", &name)?;
     let source = parse_source_arg(source);
+    let progress: Option<tauri::ipc::Channel<plugin_update::ProgressEvent>> =
+        progress.map(|id| id.channel_on(webview));
     tauri::async_runtime::spawn_blocking(move || {
-        plugin_update::update(&app, &config, &name, source, plugin.as_deref())
+        plugin_update::update(
+            &app,
+            &config,
+            &name,
+            source,
+            plugin.as_deref(),
+            progress.as_ref(),
+        )
     })
     .await
     .map_err(|err| format!("后台更新插件失败：{err}"))?

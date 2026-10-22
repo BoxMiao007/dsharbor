@@ -175,6 +175,12 @@ const state = {
       确定的忙态窗口——同步假结果会让忙态在两次 CDP 往返之间就消失，测不到中间态。 */
   pluginUpdateDelay: 0,
   pluginCheckDelay: 0,
+  /** 「全部更新」每个插件之间的延时（毫秒）：让行级四态在浏览器里逐个走一遍，
+      测试与截图都能抓到「一半已更新、一半还在排队」这种中间态。默认 0。 */
+  pluginUpdateStepDelay: 0,
+  /** 这一段里注定失败的插件名（数组）：回放 done 时带 ok:false 与原因；
+      失败的名字会从数组里移除，所以「重试」那次会成功——和真后端一样，失败可重来。 */
+  pluginUpdateFail: [],
   /** 版本列表查询的人工延时：给方钮忙态（环形 spinner / 完成勾）测一个确定的忙态窗口。 */
   registryDelay: 0,
   calls: {},
@@ -627,7 +633,7 @@ window.__mockUnimplemented = [];
         ? new Promise((done) => setTimeout(() => done(rows), S.pluginCheckDelay))
         : rows;
     },
-    plugin_update: (a) => {
+    plugin_update: async (a) => {
       const name = a && a.name;
       const plugin = a && a.plugin;
       seen("plugin_update:" + name + "/" + (plugin || "all"));
@@ -639,28 +645,78 @@ window.__mockUnimplemented = [];
       if (plugin && scope.length === 0) {
         throw "环境「" + name + "」的更新清单里没有插件「" + plugin + "」，先「检查更新」再试。";
       }
-      const done = [];
+      // 进度通道：真后端把 Channel 序列化成 "__CHANNEL__:<id>"，假后端拿到的就是 Channel
+      // 实例本身，按 id 找回挂在 window 上的回调就能回放。index 必须从 0 递增，否则前端会
+      // 把它排队等前一条（真后端也是这个顺序约定）。
+      const channel = a && a.progress;
+      let seq = 0;
+      const push = (message) => {
+        if (!channel) return;
+        const cb = window["_" + channel.id];
+        if (typeof cb === "function") cb({ index: seq++, message });
+      };
+      const total = scope.filter((it) => it.hasUpdate).length;
+      const okList = [];
+      const failList = [];
+      // 人工延时放在**回放之前**：互斥用例靠它拿确定的忙态窗口，回放本身按
+      // pluginUpdateStepDelay 逐插件走，二者互不影响。
+      if (S.pluginUpdateDelay > 0) {
+        await new Promise((r) => setTimeout(r, S.pluginUpdateDelay));
+      }
       for (const it of scope) {
         if (!it.hasUpdate) continue;
+        const index = okList.length + failList.length + 1;
+        push({ phase: "start", index, total, plugin: it.name, ok: null, version: null, message: null });
+        if (S.pluginUpdateStepDelay > 0) {
+          await new Promise((r) => setTimeout(r, S.pluginUpdateStepDelay));
+        }
+        const failAt = (S.pluginUpdateFail || []).indexOf(it.name);
+        if (failAt >= 0) {
+          // 失败一次就把它从名单里划掉：行留着、原因留着，「重试」那次会成功。
+          S.pluginUpdateFail.splice(failAt, 1);
+          failList.push(it.name);
+          push({
+            phase: "done",
+            index,
+            total,
+            plugin: it.name,
+            ok: false,
+            version: null,
+            message: "更新命令 npm install " + it.name + " 失败：E404 找不到包（假数据）",
+          });
+          continue;
+        }
         it.current = it.target;
         it.hasUpdate = false;
-        done.push(it.name + "@" + it.current);
+        okList.push(it.name + "@" + it.current);
+        push({
+          phase: "done",
+          index,
+          total,
+          plugin: it.name,
+          ok: true,
+          version: it.current,
+          message: "已更新到 " + it.current,
+        });
       }
       const message = plugin
-        ? done.length
-          ? "已把「" + plugin + "」更新到 " + done[0].split("@").pop() + "。重启 DSH 后生效。"
-          : "已是最新版本，未做任何改动。"
-        : done.length === 0
-          ? "没有需要更新的插件。"
-          : "全部更新完成：成功 " + done.length + " 个（" + done.join("、") + "）。重启 DSH 后生效。";
+        ? failList.length
+          ? "更新「" + plugin + "」失败：" + failList[0] + "。原因见行内提示。"
+          : okList.length
+            ? "已把「" + plugin + "」更新到 " + okList[0].split("@").pop() + "。重启 DSH 后生效。"
+            : "已是最新版本，未做任何改动。"
+        : failList.length === 0
+          ? okList.length === 0
+            ? "没有需要更新的插件。"
+            : "全部更新完成：成功 " + okList.length + " 个（" + okList.join("、") + "）。重启 DSH 后生效。"
+          : "更新完成：成功 " + okList.length + " 个（" + okList.join("、") + "）；失败 " +
+            failList.length + " 个（" + failList.join("、") + "）。重启 DSH 后生效。";
       const result = {
-        ok: true,
+        ok: failList.length === 0,
         message: message,
         backupDir: "C:\\Users\\mock\\AppData\\Roaming\\DSHarbor\\backups\\backup-mock",
       };
-      return S.pluginUpdateDelay > 0
-        ? new Promise((done) => setTimeout(() => done(result), S.pluginUpdateDelay))
-        : result;
+      return result;
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,
