@@ -17,6 +17,7 @@ import { readStoredMotion, saveStoredMotion, applyMotion } from "./ui/motion";
 import type { MotionPref } from "./ui/motion";
 import { escapeHtml, toggleSwapHtml } from "./ui/markup";
 import { applyRestartSpin, beginRestartSpin, endRestartSpin, updateRestartSpin, setStatusRefresher } from "./ui/spin";
+import { setSquareBusy, flashSquareDone } from "./ui/sqbusy";
 import { buildHtml } from "./ui/build-html";
 
 async function main(): Promise<void> {
@@ -336,8 +337,9 @@ async function main(): Promise<void> {
       npxInstalledHint.textContent = installed;
       npxInstalledHint.classList.toggle("hidden", installed === "");
       // 读列表期间刷新按钮转圈并禁用：连点会让每次强制查询都真发一次 npm view。
+      // 转的是叠加的环形 spinner，不是语义图标本身（见 src/ui/sqbusy.ts）。
       npxVersionsRefresh.disabled = registryLoading;
-      npxVersionsRefresh.classList.toggle("is-spinning", registryLoading);
+      setSquareBusy(npxVersionsRefresh, registryLoading);
     }
 
     /** 现扫一次本机 npx 缓存里已有的版本，好把「已缓存」徽章挂到正确的行上。 */
@@ -378,12 +380,14 @@ async function main(): Promise<void> {
       registryLoading = true;
       registryError = null;
       renderVersionUI();
+      let ok = false;
       try {
         registry = await invoke<RegistryInfo>("query_dsh_versions", {
           runtime,
           source: prefs.downloadSource,
           force,
         });
+        ok = true;
       } catch (err) {
         registry = null;
         registryError = String(err);
@@ -394,6 +398,10 @@ async function main(): Promise<void> {
       // 换了一批候选，分页从头算：上一次展开过「更多…」不该让新列表一上来就全摊开。
       versionShown = VERSION_INITIAL_COUNT;
       renderVersionUI();
+      // 只有用户主动点的「重新获取」才落勾：启动/切环境的后台加载不闪一次反馈。
+      if (force && ok) {
+        flashSquareDone(npxVersionsRefresh);
+      }
     }
 
     const npxVersionPicker = new Picker("npx-version-picker", (value) => {
@@ -2636,9 +2644,9 @@ async function main(): Promise<void> {
       btnPluginCheckUpdates.disabled = busy || !pluginLoaded;
       btnPluginUpdateAll.disabled = busy || !pluginUpdatesChecked || pending === 0;
       // 转圈只认「自己这枚按钮发起的动作」：检查转检查的，全部更新转全部更新的；
-      // 单行更新只置灰工具条，不让「全部更新」的图标空转。
-      btnPluginCheckUpdates.classList.toggle("is-spinning", pluginCheckBusy);
-      btnPluginUpdateAll.classList.toggle("is-spinning", pluginUpdateBusy && pluginUpdateRunningAll);
+      // 单行更新只置灰工具条，不让「全部更新」的图标空转。转的是叠加的环形 spinner。
+      setSquareBusy(btnPluginCheckUpdates, pluginCheckBusy);
+      setSquareBusy(btnPluginUpdateAll, pluginUpdateBusy && pluginUpdateRunningAll);
       // 右上角微标 = 当前可更新的插件数；没有可更新时收掉，按钮本身置灰已足够。
       btnUpdateAllBadge.textContent = pending > 0 ? String(pending) : "";
       btnUpdateAllBadge.classList.toggle("hidden", pending === 0);
@@ -2694,17 +2702,21 @@ async function main(): Promise<void> {
       renderPluginList();
     }
 
-    /** 检查一次更新：进插件卡自动查（每个环境一次，后端会话缓存兜着），
+    /**
+     * 检查一次更新：进插件卡自动查（每个环境一次，后端会话缓存兜着），
      *  「检查更新」按钮强制重查。失败只提示，不打断开关插件等其它动作。
-     *  强制重查期间锁住插件卡的全部操作（互斥），自动查不锁——它是背景动作。 */
-    async function refreshPluginUpdates(name: string, force: boolean): Promise<void> {
+     *  强制重查期间锁住插件卡的全部操作（互斥），自动查不锁——它是背景动作。
+     *  返回这一轮是否成功（强制重查成功才落勾，见 #29）；换了环境丢弃结果算失败。
+     */
+    async function refreshPluginUpdates(name: string, force: boolean): Promise<boolean> {
       if (!name || (force && pluginCheckBusy)) {
-        return;
+        return false;
       }
       if (force) {
         pluginCheckBusy = true;
         renderPluginList();
       }
+      let ok = false;
       try {
         const items = await invoke<PluginUpdateItem[]>("plugin_updates_list", {
           config: collectConfig(),
@@ -2713,10 +2725,11 @@ async function main(): Promise<void> {
           force,
         });
         if (prefs.profile !== name) {
-          return; // 期间换了环境，丢弃这批结果
+          return false; // 期间换了环境，丢弃这批结果
         }
         pluginUpdateItems = items;
         pluginUpdatesChecked = true;
+        ok = true;
         renderPluginList();
         renderPluginSummary();
         const pending = items.filter((item) => item.hasUpdate).length;
@@ -2739,6 +2752,11 @@ async function main(): Promise<void> {
           renderPluginList();
         }
       }
+      // 用户主动点的「检查更新」成功后落一个勾停 0.9s；自动查（背景动作）不闪反馈。
+      if (force && ok) {
+        flashSquareDone(btnPluginCheckUpdates);
+      }
+      return ok;
     }
 
     /**
@@ -2754,8 +2772,10 @@ async function main(): Promise<void> {
       if (!target || pluginBusy || pluginActionBusy() || manageBusy || patchBusy) {
         return;
       }
+      // 只有「全部更新」会让工具条上那枚按钮转圈，所以也只有它结束才落勾（见 #29）。
+      const runningAll = name === null;
       pluginUpdateBusy = true;
-      pluginUpdateRunningAll = name === null;
+      pluginUpdateRunningAll = runningAll;
       setPluginNote(null);
       setPluginWarning(null);
       renderPluginList();
@@ -2763,6 +2783,7 @@ async function main(): Promise<void> {
       const scope = name
         ? [name]
         : pluginUpdateItems.filter((item) => item.hasUpdate).map((item) => item.name);
+      let ok = false;
       try {
         const outcome = await invoke<UpdateOutcome>("plugin_update", {
           config: collectConfig(),
@@ -2770,6 +2791,7 @@ async function main(): Promise<void> {
           source: prefs.downloadSource,
           plugin: name,
         });
+        ok = outcome.ok;
         setPluginNote(outcome.message);
         logAction(outcome.message);
         if (outcome.ok) {
@@ -2791,6 +2813,10 @@ async function main(): Promise<void> {
         pluginUpdateRunningAll = false;
         renderPluginList();
         renderPluginSummary();
+      }
+      // 全部更新成功：在工具条那枚按钮上落勾停 0.9s；失败直接还原，不做错误态图标。
+      if (runningAll && ok) {
+        flashSquareDone(btnPluginUpdateAll);
       }
     }
 

@@ -252,7 +252,7 @@ button.primary:hover:not(:disabled) {
   transform: scale(0.94);
 }
 
-/* 图标的转圈关键帧：只留给「重启进行中」与方钮忙态（.square-btn.is-spinning）复用。 */
+/* 图标的转圈关键帧：只留给「重启进行中」与方钮忙态的环形 spinner 复用。 */
 @keyframes btn-restart-spin {
   to {
     transform: rotate(360deg);
@@ -260,8 +260,8 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁上，与鼠标是否
-   还停在按钮上无关——图标按 --spin-ms 无限转，与「启动中」徽章的加载圈同速。
-   什么时候收工由 src/main.ts 定（徽章离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
+   还停在按钮上无关——图标按 --spin-ms 无限转。什么时候收工由 src/main.ts 定
+   （会话状态离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
    收工后这里的类一去掉就交回悬停规则。 */
 #btn-restart.is-restarting svg {
   animation: btn-restart-spin var(--spin-ms) linear infinite;
@@ -527,9 +527,69 @@ button.primary:hover:not(:disabled) {
   color: var(--fg);
 }
 
-/* 正在重新获取版本列表时持续转圈：与「启动中」徽章、「重启 DSH」点击后同速（--spin-ms）。 */
-.square-btn.is-spinning svg {
+/* 方钮忙态（#29）：忙时不转语义图标——箭头/刷新这类图形不是旋转对称的、墨迹中心也不在
+   盒子中心，绕中心转会「画圈晃」。改成把「环形」这一层单独叠上去匀速转；成功后落一个勾
+   停 0.9s 再还原。三层（语义图标 / 环形 / 勾）同尺寸同位置叠在同一格，切换只改可见性，
+   按钮不跳动。类名由 src/ui/sqbusy.ts 挂。 */
+.square-btn > .sq-icon,
+.square-btn > .sq-spinner,
+.square-btn > .sq-check {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+}
+
+.square-btn > .sq-spinner,
+.square-btn > .sq-check {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.square-btn > .sq-check {
+  transform: scale(0.6);
+  /* 勾落下来时弹一点点（单次 200ms）；关动效时全站把过渡压平，直接就是终态。 */
+  transition: transform var(--m-base) var(--ease-spring);
+}
+
+/* 环形 spinner：17px（与图标同尺寸）的细圆环，顶上一段实色弧，颜色跟 --fg 同族；
+   只有「忙」这一种状态允许无限循环（关动效时由 99-hidden.css 点名停掉，环形仍静态可见）。 */
+.sq-spinner {
+  width: 17px;
+  height: 17px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.8px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  border-top-color: var(--fg);
+}
+
+/* 完成勾：绿色，成功后短暂替代图标；停留结束由 sqbusy.ts 撤 .is-done。 */
+.sq-check svg {
+  stroke-width: 2.2;
+  color: var(--ok);
+}
+
+/* 忙：藏图标、显环形并转（一圈 --spin-ms，与「重启 DSH」同速）。 */
+.square-btn.is-spinning > .sq-icon {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.square-btn.is-spinning > .sq-spinner {
+  opacity: 1;
+  visibility: visible;
   animation: btn-restart-spin var(--spin-ms) linear infinite;
+}
+
+/* 完成：藏图标、显勾（弹回一点点，单次 200ms）。 */
+.square-btn.is-done > .sq-icon {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.square-btn.is-done > .sq-check {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
 }
 
 /* 「指定程序路径」行：输入框 + 「浏览…」按钮同一行。输入框在上方的 #binary-path
