@@ -85,7 +85,54 @@ async function pickEnvMenu(page, envName, act) {
   await page.click(`#env-menu [data-env-act="${act}"]`);
 }
 
-/** 等浮窗显示出来，并读回它此刻的状态（可见性、动画、焦点）。 */
+/**
+ * 从这一刻起记录页面里每一次动画开播（目标元素 id + 动画名），放进 window.__animLog。
+ * 事后读日志判断「进场/出场动画到底有没有跑」，比当场读 getAnimations() 稳：
+ * 短动画可能在断言前就播完了，动画启动事件却一定会被记下来。
+ */
+async function watchAnimations(page) {
+  await page.evaluate(() => {
+    window.__animLog = [];
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        const target = event.target;
+        window.__animLog.push({
+          id: target instanceof Element ? target.id : "",
+          name: event.animationName,
+        });
+      },
+      true,
+    );
+  });
+}
+
+/** 清空动画日志：每轮开合之前调用，只看这一轮的动画。 */
+async function resetAnimations(page) {
+  await page.evaluate(() => {
+    window.__animLog.length = 0;
+  });
+}
+
+/** 等某个元素（按 id）的动画开播；超时说明它压根没动画（硬蹦出来）。
+ *  从 Node 侧轮询日志：puppeteer 的 waitForFunction 跑在隔离世界，看不到主世界的 window 属性。 */
+async function waitAnimation(page, id, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const started = await page.evaluate(
+      (want) => window.__animLog.some((entry) => entry.id === want),
+      id,
+    );
+    if (started) return;
+    await sleep(16);
+  }
+  const seen = await page.evaluate(() =>
+    window.__animLog.map((entry) => `${entry.id || "(匿名)"}:${entry.name}`),
+  );
+  throw new Error(`没等到 #${id} 的动画开播；本轮记录：${seen.join("、") || "（无动画）"}`);
+}
+
+/** 等浮窗显示出来，并读回它此刻的状态（可见性、焦点、不透明度）。 */
 async function readOpenState(page, selector) {
   await page.waitForSelector(`${selector}:not(.hidden)`, { timeout: 4000 });
   return page.evaluate((sel) => {
@@ -99,8 +146,6 @@ async function readOpenState(page, selector) {
     return {
       panelVisible: getComputedStyle(panel).display !== "none",
       scrimVisible: scrim !== null && getComputedStyle(scrim).display !== "none",
-      panelAnimations: panel.getAnimations().length,
-      scrimAnimations: scrim ? scrim.getAnimations().length : 0,
       focusInPanel: panel.contains(active),
       activeId: active?.id ?? "",
       activeClose: active instanceof HTMLElement && active.hasAttribute("data-modal-close"),
@@ -180,6 +225,7 @@ after(async () => {
 
 test("四个浮窗打开时都有进出场动画、焦点进面板，关闭后焦点回到触发按钮", { skip: skipReason }, async () => {
   const page = await openEnvPanel(browser);
+  await watchAnimations(page);
   try {
     // 顺序有讲究：补丁层会把「管理目标」切到那个环境，切完就不能再删它了，所以删除排在前面。
     const cases = [
@@ -214,13 +260,16 @@ test("四个浮窗打开时都有进出场动画、焦点进面板，关闭后�
     ];
 
     for (const item of cases) {
+      const panelId = item.panel.slice(1);
+      await resetAnimations(page);
       await item.open();
-      const state = await readOpenState(page, item.panel);
+      // 进场：面板与遮罩各有一段动画（不是硬蹦出来）。
+      await waitAnimation(page, panelId);
+      await waitAnimation(page, "modal-scrim");
 
+      const state = await readOpenState(page, item.panel);
       assert.equal(state.panelVisible, true, `${item.name}：浮窗应显示`);
       assert.equal(state.scrimVisible, true, `${item.name}：遮罩应显示`);
-      assert.ok(state.panelAnimations > 0, `${item.name}：面板应带进场动画（不是硬蹦出来）`);
-      assert.ok(state.scrimAnimations > 0, `${item.name}：遮罩应带淡入动画`);
       assert.equal(state.focusInPanel, true, `${item.name}：焦点应落进浮窗`);
 
       if (item.focus === "first") {
@@ -234,7 +283,11 @@ test("四个浮窗打开时都有进出场动画、焦点进面板，关闭后�
       const settled = await readOpenState(page, item.panel);
       assert.equal(settled.panelOpacity, "1", `${item.name}：入场结束后浮窗应完全不透明`);
 
+      // 出场：关闭时面板与遮罩也要走一段更快的淡出，再真正隐藏。
+      await resetAnimations(page);
       await page.keyboard.press("Escape");
+      await waitAnimation(page, panelId);
+      await waitAnimation(page, "modal-scrim");
       await assertClosed(page, item.panel);
 
       const active = await readActive(page);
@@ -255,6 +308,7 @@ test("四个浮窗打开时都有进出场动画、焦点进面板，关闭后�
 
 test("点遮罩也能关：面板与遮罩都不残留，焦点回到触发按钮", { skip: skipReason }, async () => {
   const page = await openEnvPanel(browser);
+  await watchAnimations(page);
   try {
     await page.click("#btn-bridge");
     const opened = await readOpenState(page, "#modal-bridge");
@@ -262,7 +316,10 @@ test("点遮罩也能关：面板与遮罩都不残留，焦点回到触发按�
     await waitSettled(page, "#modal-bridge");
 
     // 点左上角：那里只有遮罩，不会落到面板上。
+    await resetAnimations(page);
     await page.mouse.click(8, 8);
+    await waitAnimation(page, "modal-bridge");
+    await waitAnimation(page, "modal-scrim");
     await assertClosed(page, "#modal-bridge");
 
     const active = await readActive(page);

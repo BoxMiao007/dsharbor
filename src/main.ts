@@ -1936,12 +1936,16 @@ async function main(): Promise<void> {
       return document.documentElement.dataset.motion === "off";
     }
 
-    /** 出场动画时长：直接读 --m-exit，避免 JS 里再写一份毫秒数。 */
+    /** 出场动画时长：直接读 --m-exit，避免 JS 里再写一份毫秒数。
+     *  浏览器把计算后的 <time> 序列化成秒（"0.13s"），不是变量里写的 "130ms"，
+     *  所以按单位换算，别把 0.13 当毫秒用。 */
     function modalExitMs(): number {
-      const ms = Number.parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue("--m-exit"),
-      );
-      return Number.isFinite(ms) ? ms : 130;
+      const raw = getComputedStyle(document.documentElement).getPropertyValue("--m-exit").trim();
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value) || value <= 0) {
+        return 130;
+      }
+      return raw.endsWith("ms") ? value : value * 1000;
     }
 
     function clearModalClose(): void {
