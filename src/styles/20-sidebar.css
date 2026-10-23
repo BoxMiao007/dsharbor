@@ -165,6 +165,26 @@
   color: var(--fg);
 }
 
+/* 导航项**不参与全站按压反馈**（不缩放、不加内阴影）——维护者反馈的「两个框」就是这条引起的：
+   全站那条 `button:active{transform:scale(.972) + inset 阴影}` 会把按钮缩到 177×42.8，而铺底的
+   .rail-ind 仍是 182×44 不动，于是按下/连点时看到「大框 + 里面一层带内描边的框」。
+   导航项的按压反馈本来就由「指示块滑过去」表达，不需要再缩一下。
+   特指度写足 (0,3,1)：全站那条是 `button:active:not(:disabled), button.primary:active:not(:disabled)`
+   （(0,2,1)），少一个类就压不住。 */
+.ico-item:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+/* 键盘焦点环收进按钮内侧（outline-offset 取负），贴着指示块的边线走：
+   原来 offset 是正的，环画在指示块外面 2px，看着又是一层框。内嵌之后选中项被键盘聚焦时，
+   视觉上仍只有「一块底 + 一根细边」，不再冒第二个框。 */
+.ico-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+
 /* 左栏「日志」条目上的未读数字：只在有未读时出现——没有未读时容器内容是空的，
    由下面的 :empty 收成不渲染，不需要界面再挂一个隐藏类。
    尺寸对齐工具条徽章（字号 13px、圆角 999px、等宽数字），但矮一档取 20px：

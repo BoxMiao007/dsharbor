@@ -792,11 +792,12 @@ async function main(): Promise<void> {
     for (const button of navButtons) {
       button.addEventListener("click", () => {
         const key = button.dataset.panelBtn as PanelKey;
-        // 点的就是当前这一页：不再重播切换动效。否则内容又淡入一次、而指示块还在原位，
-        // 加上悬停底就成了「两个框」的错觉（维护者反馈的重复点击叠加）。
-        if (key !== currentPanel) {
-          selectPanel(key, true);
-        }
+        const same = key === currentPanel;
+        // 点的就是当前这一页：整下动作当空操作——不改 aria-current、不动指示块、不重播入场动画。
+        // 维护者要的是「从源头消除重复点击叠加动效的可能」，所以直接返回。
+        // 唯一例外是「日志」：重复点它要的是「拉到底并清未读」，那是滚动位置与计数，不是切换动效。
+        if (same && key !== "log") return;
+        if (!same) selectPanel(key, true);
         // 点进日志就是来看最新的：直接拉到底，不用再手动滚；未读数同时归零。
         if (key === "log") {
           followLogTail();
