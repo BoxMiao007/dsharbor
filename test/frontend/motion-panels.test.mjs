@@ -206,7 +206,7 @@ test("快速连续点不同分区：指示块跟上，最终停在最后那个�
   }
 });
 
-test("内容区入场：切过去的分区带入场类、卡里的内容有入场动画，大卡片自己不动", { skip: skipReason }, async () => {
+test("内容区切换：新分区整块淡入、旧分区留在下面当底衬，大卡片自己不跑动画", { skip: skipReason }, async () => {
   const page = await openApp(browser, { panel: "launch" });
   try {
     await page.click('[data-panel-btn="traynet"]');
@@ -217,6 +217,7 @@ test("内容区入场：切过去的分区带入场类、卡里的内容有入�
       if (!panel || !card || !inner) return null;
       return {
         className: panel.className,
+        panelAnimation: getComputedStyle(panel).animationName,
         cardAnimation: getComputedStyle(card).animationName,
         innerAnimation: getComputedStyle(inner).animationName,
         height: inner.getBoundingClientRect().height,
@@ -224,49 +225,90 @@ test("内容区入场：切过去的分区带入场类、卡里的内容有入�
     });
     assert.ok(entering, "应能读到托盘与网络分区");
     assert.match(entering.className, /(^|\s)is-enter(\s|$)/, "切入的分区应挂上入场类");
-    assert.equal(entering.cardAnimation, "none", "大卡片本身固定不动，不跑入场动画");
-    assert.equal(entering.innerAnimation, "panel-enter", "卡里的内容才跑入场动画");
+    // 交叉淡化的粒度是「整个分区」：新块整块淡入，不做子项逐个错开（那会让画面里
+    // 一块块轮流冒出来，反而不像「换了一页」）。卡里的内容不各自跑动画。
+    assert.equal(entering.panelAnimation, "panel-fade-in", "新分区整块跑淡入");
+    assert.equal(entering.cardAnimation, "none", "大卡片本身不跑动画");
+    assert.equal(entering.innerAnimation, "none", "卡里的内容不再各自跑动画");
     assert.ok(entering.height > 0, "入场时内容应已可见");
+
+    // 旧分区在过渡期间仍在 DOM 里当底衬（绝对定位、不吃点击），否则两块都淡会漏底色。
+    const stack = await page.evaluate(() => {
+      const old = document.querySelector('.panel[data-panel="launch"]');
+      const next = document.querySelector('.panel[data-panel="traynet"]');
+      const cs = old ? getComputedStyle(old) : null;
+      return {
+        oldLeaving: old?.classList.contains("is-leaving") ?? false,
+        oldHidden: old?.classList.contains("hidden") ?? true,
+        oldPosition: cs?.position ?? "",
+        oldPointer: cs?.pointerEvents ?? "",
+        zOld: cs ? Number(cs.zIndex) || 0 : -1,
+        zNew: Number(getComputedStyle(next).zIndex) || 0,
+      };
+    });
+    assert.equal(stack.oldLeaving, true, "旧分区过渡期间应挂 .is-leaving 留在原地");
+    assert.equal(stack.oldHidden, false, "旧分区这时还不能被 .hidden 收掉");
+    assert.equal(stack.oldPosition, "absolute", "旧分区要脱离文档流，不占布局");
+    assert.equal(stack.oldPointer, "none", "旧分区不能吃点击（否则会挡住新分区）");
+    assert.ok(stack.zNew > stack.zOld, "新分区压在上面，旧的垫在下面");
 
     await sleep(500);
     const settled = await page.evaluate(() => {
-      const card = document.querySelector('.panel[data-panel="traynet"] .main-card');
+      const old = document.querySelector('.panel[data-panel="launch"]');
+      const next = document.querySelector('.panel[data-panel="traynet"]');
+      const card = next?.querySelector(".main-card");
       const inner = card?.querySelector(":scope > *");
       return {
+        oldGone: old?.classList.contains("hidden") ?? false,
+        oldLeaving: old?.classList.contains("is-leaving") ?? true,
+        panelOpacity: getComputedStyle(next).opacity,
+        panelTransform: getComputedStyle(next).transform,
         card: getComputedStyle(card).transform,
         inner: getComputedStyle(inner).transform,
         innerOpacity: getComputedStyle(inner).opacity,
       };
     });
+    assert.equal(settled.oldGone, true, "淡完之后旧分区要被收掉，不能一直躺在下面");
+    assert.equal(settled.oldLeaving, false, "退役后 .is-leaving 要摘干净");
+    assert.equal(settled.panelOpacity, "1", "落定后新分区完全实心");
+    assert.equal(settled.panelTransform, "none", "纯交叉淡化不做位移");
     assert.equal(settled.card, "none", "大卡片全程不产生位移");
-    assert.equal(settled.inner, "none", "入场动画跑完后内容位移应归零，不留中间态");
-    // 入场只做位移、不做透明度：带 opacity 的话每次切分区内容都先整块消失再淡回来，
-    // 连点几下就是「黑一下、亮一下」的频闪（维护者反馈过）。这里钉死「全程不透明」。
-    assert.equal(settled.innerOpacity, "1", "入场动画不能淡入淡出，内容必须始终不透明");
+    assert.equal(settled.inner, "none", "内容不自带位移");
+    assert.equal(settled.innerOpacity, "1", "内容始终不透明（透明度只由整块淡入表达）");
   } finally {
     await page.close();
   }
 });
 
-test("内容区入场不自带淡入：动画刚开始时内容就已经完全不透明", { skip: skipReason }, async () => {
+test("交叉淡化全程不会漏出页面底色：任一帧里至少有一块内容盖住内容区", { skip: skipReason }, async () => {
   const page = await openApp(browser, { panel: "launch" });
   try {
-    await page.click('[data-panel-btn="integ"]');
-    // 立刻读：此刻入场动画正跑在最开头（transform 还没归零），透明度必须已经是 1。
-    const atStart = await page.evaluate(() => {
-      const card = document.querySelector('.panel[data-panel="integ"] .main-card');
-      const kids = card ? [...card.children] : [];
-      return kids.map((el) => ({
-        opacity: getComputedStyle(el).opacity,
-        anims: el.getAnimations().length,
-        transform: getComputedStyle(el).transform,
-      }));
+    // 逐帧采样：新块透明度 + 旧块是否还在当底衬。只要旧的没被收掉，合成结果就始终
+    // 有一层不透明的内容在，不会出现「画面变空」的那一帧（那正是频闪的观感）。
+    const timeline = await page.evaluate(async () => {
+      const raf = () => new Promise((done) => requestAnimationFrame(done));
+      const out = [];
+      document.querySelector('[data-panel-btn="integ"]').click();
+      for (let i = 0; i < 16; i++) {
+        const next = document.querySelector('.panel[data-panel="integ"]');
+        const old = document.querySelector('.panel[data-panel="launch"]');
+        out.push({
+          newOpacity: Number(getComputedStyle(next).opacity),
+          oldPresent: !!old && !old.classList.contains("hidden"),
+          oldOpacity: old ? Number(getComputedStyle(old).opacity) : 0,
+        });
+        await raf();
+      }
+      return out;
     });
-    assert.ok(atStart.length > 0, "集成分区的卡里应有内容块");
-    for (const one of atStart) {
-      assert.equal(one.opacity, "1", `入场期间内容不该变透明（否则就是频闪），实测 ${one.opacity}`);
-      // 动画确实在跑（transform 已离开 none 或者已经归零），这边只关心 opacity 不被碰。
-      assert.ok(one.anims <= 1, `同一个元素上最多一条入场动画，实测 ${one.anims} 条`);
+    assert.ok(timeline.length > 4, "应能采到若干帧");
+    for (const [i, frame] of timeline.entries()) {
+      // 新块每次都不透明 → 没有过渡；否则旧块必须还在（且没跟着淡），画面才不会空。
+      const covered = frame.newOpacity >= 0.999 || (frame.oldPresent && frame.oldOpacity >= 0.999);
+      assert.ok(
+        covered,
+        `第 ${i} 帧漏出了页面底色：新块 ${frame.newOpacity}、旧块在场=${frame.oldPresent} 透明度=${frame.oldOpacity}`,
+      );
     }
   } finally {
     await page.close();

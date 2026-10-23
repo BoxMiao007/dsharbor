@@ -70,8 +70,10 @@
 }
 
 /* 内容区：卡片之间的间隙由 .content 的 gap 给（原来这里 8px 的 padding-top 让
-   工具条到主卡只有 8px，比左栏↔右栏的 20px 窄一截，看着不齐），这里清零。 */
+   工具条到主卡只有 8px，比左栏↔右栏的 20px 窄一截，看着不齐），这里清零。
+   position: relative 是给「正在淡出的旧分区」当定位上下文（见下方 .is-leaving）。 */
 .page {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -102,39 +104,38 @@
   gap: 12px;
 }
 
-/* 分区入场（#36）：换分区时内容往后落 8px 再滑回原位，和左栏滑块的移动接上节奏。
-   动的只是「卡里的内容」——大卡片本身固定不动（维护者要求：整张大卡跟着位移会像
-   整页在跳）。所以选择器分两支：主卡自己排除掉，它的子元素（单元格/卡头/正文框）
-   才拿动画；主卡之外若还有次卡，也照常入场。
-   子项按 0 / 24 / 48 / 72ms 依次起，前 4 块错开就够，再往后错开只是拖慢。
-   backwards 让等待期间就停在起点（否则会先满屏闪一下再动）；跑完 transform 回到
-   元素自己的 none，类留在身上也不会残留中间态，下次切回来重新挂一次即可。
+/* 分区切换：**纯交叉淡化**（维护者看过「只有位移」那版后选的）。
+   新分区从全透明淡到不透明，旧的留在下面当底衬、等新的铺满再摘掉，于是任何一帧
+   画面都不会变空——这正是频闪的反面：不是「先擦掉再画上」，而是「一块正好压过另一块」。
 
-   **只做位移，不做透明度**（维护者反馈「内容切换频闪」）：原来 from 里还有
-   `opacity: 0`，于是每次切分区的内容都先整块变没、再花 200ms 淡回来——逐帧量过，
-   切换那一帧画面平均亮度直接掉 18 个点，连点几下就是「黑一下、亮一下」的频闪。
-   位移不需要先把内容擦掉才看得见，所以把 opacity 去掉之后：
-   内容全程不透明，只有位置从下往上归位，观感是「滑上来」而不是「闪一下」。 */
-@keyframes panel-enter {
+   要真的平滑，有三条约束：
+   1. 两块必须同时可见。`.panel.hidden` 是 display:none，一挂上就没了，所以旧分区
+      在过渡期间改成 `.is-leaving`：脱离文档流（绝对定位铺满 .page）、不吃点击，
+      只负责垫在下面。定时器（见 main.ts 的 selectPanel）等新的淡完再把它摘掉。
+   2. **下面那块不许一起淡**。设旧块透明度为 1−t、新块为 t 且压在旧块上，合成结果
+      是 t·new + (1−t)·[(1−t)·old + t·底] —— 中间会漏出页面底色，亮度先掉一截再回来，
+      看着就是「暗一下」。旧块保持不透明、只让新块淡入，合成结果才是干净的
+      t·new + (1−t)·old，逐帧亮度是平的。
+   3. 缓动用 --ease-out，不用 linear：交叉淡化天生有一段「两块都半透明、文字叠字」的
+      窗口（这是交叉淡化和「先擦后画」的固有代价，不是 bug）。linear 会让这个窗口占满
+      全程；--ease-out 开头就冲到高不透明度，新内容很快压住旧的，叠字窗口只剩前 1/3，
+      收尾还能稳稳落定。不做位移、不做子项错开——交叉淡化本身就是节奏。 */
+@keyframes panel-fade-in {
   from {
-    transform: translateY(8px);
+    opacity: 0;
   }
 }
 
-.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *) {
-  animation: panel-enter var(--m-base) var(--ease-out) backwards;
+.panel.is-enter {
+  z-index: 1;
+  animation: panel-fade-in var(--m-base) var(--ease-out) both;
 }
 
-.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *):nth-child(2) {
-  animation-delay: 24ms;
-}
-
-.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *):nth-child(3) {
-  animation-delay: 48ms;
-}
-
-.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *):nth-child(4) {
-  animation-delay: 72ms;
+.panel.is-leaving {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
 }
 
 /* 主卡里并排的两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。

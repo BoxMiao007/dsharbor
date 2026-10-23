@@ -746,9 +746,28 @@ async function main(): Promise<void> {
 
     let currentPanel: PanelKey = readStoredPanel();
 
+    /** 读一个动效时长令牌（毫秒）。浏览器把计算后的 <time> 序列化成秒（"0.2s"），
+     *  不是变量里写的 "200ms"，所以按单位换算，别把 0.2 当毫秒用。 */
+    function motionMs(name: string, fallback: number): number {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value) || value <= 0) {
+        return fallback;
+      }
+      return raw.endsWith("ms") ? value : value * 1000;
+    }
+
+    /** 交叉淡化里「旧分区」的退役定时器：新的淡完（--m-base）就把它彻底摘掉。 */
+    let leavingTimer: number | null = null;
+
     /** 切换分区：同步 aria-current 与可见性，并把主卡滚回顶部（换内容时留着旧滚动位置很莫名）。
-        滚动容器是当前分区那张主卡（`.block.main-card`），不是 #page。 */
+        滚动容器是当前分区那张主卡（`.block.main-card`），不是 #page。
+
+        切换用**纯交叉淡化**（见 40-content.css）：旧分区在过渡期间改成绝对定位垫在下面，
+        新分区压在它上面从透明淡进来。旧块不跟着淡——两块一起淡会在中途漏出页面底色，
+        亮度先掉一截再爬回来，那正是维护者报的「频闪」。 */
     const selectPanel = (key: PanelKey, persist: boolean): void => {
+      const previous = currentPanel;
       currentPanel = key;
       for (const button of navButtons) {
         button.setAttribute("aria-current", button.dataset.panelBtn === key ? "true" : "false");
@@ -758,19 +777,46 @@ async function main(): Promise<void> {
         const index = navButtons.findIndex((button) => button.dataset.panelBtn === key);
         railIndicator.style.setProperty("--i", String(Math.max(index, 0)));
       }
+
+      // 上一轮的旧块先退役：连点几下时可能有不止一块还挂着，一并收掉，免得越叠越多。
+      if (leavingTimer !== null) {
+        window.clearTimeout(leavingTimer);
+        leavingTimer = null;
+      }
+      for (const panel of panelSections) {
+        panel.classList.remove("is-leaving");
+      }
+
+      const leaving = previous !== key ? panelSections.find((panel) => panel.dataset.panel === previous) : undefined;
+
       for (const panel of panelSections) {
         const showing = panel.dataset.panel === key;
         panel.classList.toggle("hidden", !showing);
         // 换内容时留着旧滚动位置很莫名：主卡（唯一的滚动容器）回到顶部。
         if (showing) {
           for (const host of panel.querySelectorAll<HTMLElement>(".block.main-card")) host.scrollTop = 0;
-          // 内容入场（#36）：先摘类、强制一次回流，再挂回去，同一个分区来回切也能重播。
-          // 动画是 backwards 且不 forwards，跑完 transform 自然回到 none，类留着也不残留中间态。
+          // 先摘类、强制一次回流，再挂回去：同一个分区来回切也能重播。
           panel.classList.remove("is-enter");
           void panel.offsetWidth;
           panel.classList.add("is-enter");
         }
       }
+
+      // 旧分区留在原地当底衬，新的淡完就摘。关掉动效时不必留：新版一帧就铺满了。
+      if (leaving) {
+        leaving.classList.remove("is-enter");
+        leaving.classList.remove("hidden");
+        leaving.classList.add("is-leaving");
+        leavingTimer = window.setTimeout(
+          () => {
+            leaving.classList.add("hidden");
+            leaving.classList.remove("is-leaving");
+            leavingTimer = null;
+          },
+          motionOff() ? 0 : motionMs("--m-base", 200),
+        );
+      }
+
       updateScrollThumbHook();
       if (persist) {
         try {
@@ -3983,9 +4029,11 @@ async function main(): Promise<void> {
   /**
    * 滚动容器是当前分区那张主卡（`.block.main-card`）：只有它内部滚，下方并排的小卡
    * 固定可见（2026-10-21 维护者定稿）。没有小卡的分区主卡同样吃掉整个高度。
+   * 交叉淡化期间旧分区还在 DOM 里（`.is-leaving`），要把它排除掉，否则滚动指示条会
+   * 认错容器、量到正在退役的那一块。
    */
   function activePanel(): HTMLElement | null {
-    return root.querySelector<HTMLElement>(".panel:not(.hidden) .block.main-card");
+    return root.querySelector<HTMLElement>(".panel:not(.hidden):not(.is-leaving) .block.main-card");
   }
 
   let scrollHost: HTMLElement | null = null;
