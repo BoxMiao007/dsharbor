@@ -5,11 +5,13 @@
 //! `dsharbor_core::lifecycle` 状态机决策，本文件只负责执行副作用。
 
 mod detect;
+mod dsh_versions;
 mod launcher;
 mod npxcache;
 mod patch;
 mod plugin;
 mod plugin_switch;
+mod plugin_update;
 mod profile;
 mod profile_ops;
 mod proxy;
@@ -21,7 +23,6 @@ mod wsl;
 
 use std::sync::Mutex;
 
-use dsharbor_core::cache_auto;
 use dsharbor_core::launch::{self, LaunchConfig};
 use dsharbor_core::lifecycle::{ShellAction, ShellEvent, ShellMachine, ShellState};
 use dsharbor_core::links::{navigation_decision, NavigationDecision};
@@ -75,24 +76,6 @@ struct AppState {
     /// 延迟销毁主窗口的世代号：每次重新计时或撤销计时都自增，
     /// 上一轮的计时线程醒来发现不是最新一代就直接放弃（见 arm_light_destroy）。
     light_generation: std::sync::atomic::AtomicU64,
-    /// 最近一次「启动后自动清理」的结果，等界面来取。
-    /// 不放日志里：清理是用户看不见又删了磁盘的事，必须在界面上告诉他清掉了什么。
-    auto_cleanup: Mutex<Option<AutoCleanupReport>>,
-    /// 自动清理的次数号（每跑完一次自增，写进 `AutoCleanupReport::seq`）。
-    auto_cleanup_seq: std::sync::atomic::AtomicU64,
-}
-
-/// 一次「启动后自动清理」的结果，留给界面来取。
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AutoCleanupReport {
-    /// 第几次自动清理。界面靠它只播报新增的那一次，不把同一次结果反复重建。
-    seq: u64,
-    /// 说明文字：成功时是「启动后自动清理：…」，失败时写明为什么没能清理。
-    message: String,
-    /// 成功时的逐条结果，界面复用它渲染「清掉哪些」并刷新占用数字；
-    /// 缓存根都定位不到时没有可展示的条目，界面只显示 `message`。
-    result: Option<npxcache::CleanupResult>,
 }
 
 #[tauri::command]
@@ -130,9 +113,12 @@ fn start_session(
 ) -> Result<(), String> {
     // 先过校验并持久化（保留托盘单击等壳偏好）：非法输入在这里报错——不写配置、不启动进程。
     settings::save_launch(app, config)?;
-    let profile = settings::load(app).prefs.profile;
-    let launcher_args = profile::port_overlay_args(app, config, &profile)?;
-    spawn_session(app, state, config, &profile, &launcher_args)?;
+    // 启动恒用 web 环境（`launch::PROFILE_NAME`）。「环境与插件」里选中哪个环境只是
+    // 插件与补丁层的管理目标，不参与启动——之前跟着选中项走，选中官方桌面端的
+    // `desktop` 会去跑 `dsh desktop`，那个环境起不了 web 服务，整个启动就失败。
+    let profile = launch::PROFILE_NAME;
+    let launcher_args = profile::port_overlay_args(app, config, profile)?;
+    spawn_session(app, state, config, profile, &launcher_args)?;
     remember_config(state, config);
     Ok(())
 }
@@ -169,9 +155,8 @@ fn spawn_session(
     launcher_args: &[String],
 ) -> Result<(), String> {
     let mut spawned_child = false;
-    // 配置只读一次：拉起进程要注入的那份环境变量、启动后要不要自动清理，
-    // 都按同一个快照判定。`settings::load` 是纯读盘，不会因为读得早而不同，
-    // 但一次快照能让两处口径天然一致（半路有人改配置也不会出现「按 A 启动、按 B 清理」）。
+    // 配置只读一次：拉起进程要注入的那份环境变量按这个快照算，
+    // 半路有人改配置也不会出现「按 A 启动、按 B 注入」。
     let prefs = settings::load(app).prefs;
     let result = {
         let mut guard = state
@@ -231,62 +216,8 @@ fn spawn_session(
     if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
         query_dsh_version_async(app, config, profile);
-        // 自动清理（开关在「集成」卡，默认关）：只在这一轮真的拉起了一个 DSH 进程之后跑。
-        // 壳外已有 DSH 时启动命令也返回成功，但那次什么也没起（`spawned_child` 仍为 false），
-        // 不是「这一轮拉起过进程」，不应因此删磁盘。
-        // 除此之外不再附加条件：进程随后是否健康退出由会话状态单独反映，不在这里等。
-        if cache_auto::should_run(prefs.cache_cleanup, spawned_child) {
-            run_auto_cleanup_async(app, config);
-        }
     }
     result
-}
-
-/// 真的拉起了一个 DSH 进程之后异步跑一次自动清理，结果存进 AppState 等界面来取。
-///
-/// 复用与「立即清理」按钮完全相同的 `npxcache::cleanup`：保留哪几份、删哪几份只在一处定义，
-/// 开关打开后不另有一套规则。
-fn run_auto_cleanup_async(app: &tauri::AppHandle, config: &LaunchConfig) {
-    let app = app.clone();
-    let config = config.clone();
-    std::thread::spawn(move || {
-        let outcome = npxcache::cleanup(&config);
-        let Some(state) = app.try_state::<AppState>() else {
-            return;
-        };
-        let seq = state
-            .auto_cleanup_seq
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        let report = match outcome {
-            Ok(result) => {
-                let message = cache_auto::auto_message(
-                    result.removed.len(),
-                    result.freed_bytes,
-                    result.failed.len(),
-                );
-                eprintln!("[dsharbor] {message}");
-                AutoCleanupReport {
-                    seq,
-                    message,
-                    result: Some(result),
-                }
-            }
-            Err(err) => {
-                // 缓存根都定位不到（npm 坏了 / 没装 Node）：不删任何东西，但要让用户看见。
-                let message = format!("启动后自动清理没做成：{err}");
-                eprintln!("[dsharbor] {message}");
-                AutoCleanupReport {
-                    seq,
-                    message,
-                    result: None,
-                }
-            }
-        };
-        if let Ok(mut slot) = state.auto_cleanup.lock() {
-            *slot = Some(report);
-        };
-    });
 }
 
 /// 启动成功后异步查询 DSH 版本号（失败只记日志：界面显示「DSH 版本未知」即可）。
@@ -428,6 +359,15 @@ async fn proxy_state(app: tauri::AppHandle) -> Result<proxy::ProxyState, String>
 /// 与真实下载走同一条注入路径。
 ///
 /// 不写入缓存（见 `registry::self_check`）：自检的结果是「此刻这条网络」的快照，
+/// 界面随请求传来的下载源字符串 → 强类型。认不出就按默认源处理并记日志：
+/// 界面传错值不该让整条查询失败。走网络的四条命令（自检/查版本/插件检查/插件更新）共用。
+fn parse_source_arg(source: String) -> dsharbor_core::prefs::DownloadSource {
+    dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
+        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
+        dsharbor_core::prefs::DownloadSource::default()
+    })
+}
+
 /// 与「有多少版本可选」是两回事，互相覆盖只会让两边都不准。
 #[tauri::command]
 async fn self_check_network(
@@ -435,10 +375,7 @@ async fn self_check_network(
     runtime: launch::Runtime,
     source: String,
 ) -> Result<dsharbor_core::net::SelfCheckReport, String> {
-    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
-        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
-        dsharbor_core::prefs::DownloadSource::default()
-    });
+    let source = parse_source_arg(source);
     let prefs = settings::load(&app).prefs;
     tauri::async_runtime::spawn_blocking(move || registry::self_check(&runtime, &prefs, source))
         .await
@@ -488,58 +425,52 @@ async fn set_cli_integration(
     Ok(next)
 }
 
-/// 「集成」卡缓存段：扫一遍 npx 缓存，返回本包占用与可回收量（只读）。
+/// 「DSH 版本」卡：扫一遍本机装了哪些 DSH（npx 缓存里的 + npm 全局装的）。
 ///
-/// async + spawn_blocking：要跑 `npm config get cache`、递归 stat 整棵目录，同步命令会堵主线程。
+/// async + spawn_blocking：要跑 `npm ls -g`、读 `_npx` 下每个目录，同步命令会堵主线程。
 #[tauri::command]
-async fn cache_state(config: LaunchConfig) -> Result<npxcache::CacheState, String> {
-    tauri::async_runtime::spawn_blocking(move || npxcache::scan(&config))
+async fn installed_dsh_versions(
+    config: LaunchConfig,
+) -> Result<Vec<dsh_versions::InstalledDsh>, String> {
+    tauri::async_runtime::spawn_blocking(move || dsh_versions::scan(&config))
         .await
-        .map_err(|err| format!("读取缓存占用失败：{err}"))
+        .map_err(|err| format!("读取已装 DSH 版本失败：{err}"))?
 }
 
-/// 「立即清理」：删掉判定为可回收的 npx 缓存目录，返回逐条结果与刷新后的状态。
+/// 卸载 npm 全局装的那一份 DSH（npx 缓存里的不删，见 `dsh_versions::uninstall_global`）。
 ///
-/// 与「启动后自动清理」跑的是同一个函数，两条路径的保留策略完全一致（开关在
-/// `prefs.cache_cleanup`，何时自动跑见 `spawn_session`）。
+/// async + spawn_blocking：`npm uninstall -g` 是一次真实的 npm 操作，会阻塞几十秒。
 #[tauri::command]
-async fn cleanup_cache(config: LaunchConfig) -> Result<npxcache::CleanupResult, String> {
-    tauri::async_runtime::spawn_blocking(move || npxcache::cleanup(&config))
+async fn uninstall_dsh_global(runtime: launch::Runtime) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || dsh_versions::uninstall_global(&runtime))
         .await
-        .map_err(|err| format!("清理缓存失败：{err}"))?
+        .map_err(|err| format!("卸载全局 DSH 失败：{err}"))?
 }
 
-/// 取最近一次「启动后自动清理」的结果。
+/// 删掉 npx 缓存里的某一份 DSH（`path` 必须是扫描结果里的那个 `_npx` 目录）。
 ///
-/// `since` 是界面已经播报过的序号：只有新一次的结果（`seq > since`）才返回，
-/// 否则返回 `None`。拉取式而不是推送：壳里没有事件通道，界面本来就每秒轮询状态，
-/// 再顺手问一句比新开一条推送通道简单。结果不取走即清：同一份结果可以被多个
-/// 页面读到，界面自己用 `seq` 去重。
+/// async + spawn_blocking：递归删目录可能要清几万个文件，同步会堵主线程。
 #[tauri::command]
-fn auto_cleanup_report(
-    state: tauri::State<'_, AppState>,
-    since: u64,
-) -> Result<Option<AutoCleanupReport>, String> {
-    let guard = state
-        .auto_cleanup
-        .lock()
-        .map_err(|_| "内部状态异常".to_string())?;
-    Ok(guard.as_ref().filter(|report| report.seq > since).cloned())
+async fn delete_dsh_npx(runtime: launch::Runtime, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || dsh_versions::remove_npx(&runtime, &path))
+        .await
+        .map_err(|err| format!("删除 npx 缓存中的 DSH 失败：{err}"))?
 }
 
-/// 读取当前目标环境 profile 里 webserver 的托管端口信息（界面展示用）。
+/// 读取启动用 web 环境里 webserver 的托管端口信息（界面展示用）。
 ///
 /// async 命令：同步命令跑在主线程上，而读 target 环境配置在 WSL 模式下要起 wsl.exe
 /// （几百毫秒到数秒）——主线程一堵，窗口的拖动/滚动/点击全跟着僵（切换启动方式卡顿的根因）。
 #[tauri::command]
 async fn profile_port_hint(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     config: LaunchConfig,
 ) -> Result<profile::PortHint, String> {
     // spawn_blocking 错掉（JoinError）或 port_hint 自己报错都要传给界面。
     let hint = tauri::async_runtime::spawn_blocking(move || {
-        let profile = settings::load(&app).prefs.profile;
-        profile::port_hint(&config, &profile)
+        // 端口提示要看的是真正会被拉起来的那个环境：启动恒用 web，
+        // 「环境与插件」里选中的只影响插件与补丁层管理，不能拿它的端口来提示。
+        profile::port_hint(&config, launch::PROFILE_NAME)
     })
     .await
     .map_err(|err| format!("后台读取端口信息失败：{err}"))??;
@@ -634,8 +565,8 @@ fn external_detection_status(app: &tauri::AppHandle, state: &AppState) -> Option
                     guard.clone()
                 };
                 if let Some(config) = config {
-                    let profile = settings::load(app).prefs.profile;
-                    let endpoint = detect::effective_endpoint(&config, &profile);
+                    // 探测地址按真正会启动的 web 环境算：选中项只影响插件/补丁层管理。
+                    let endpoint = detect::effective_endpoint(&config, launch::PROFILE_NAME);
                     if detect::port_alive(&endpoint)
                         && detect::dsh_fingerprint(&endpoint) == Some(true)
                     {
@@ -735,10 +666,7 @@ async fn query_dsh_versions(
     source: String,
     force: Option<bool>,
 ) -> Result<dsharbor_core::registry::RegistryInfo, String> {
-    let source = dsharbor_core::prefs::DownloadSource::parse(&source).unwrap_or_else(|| {
-        eprintln!("[dsharbor] 认不出的下载源 {source}，按默认处理");
-        dsharbor_core::prefs::DownloadSource::default()
-    });
+    let source = parse_source_arg(source);
     // 注入给 npm 的环境变量在这里算好：源用界面这次传的（它才是权威），
     // 代理用已保存的设置（见壳设置里的「网络」卡）。
     let prefs = settings::load(&app).prefs;
@@ -749,7 +677,20 @@ async fn query_dsh_versions(
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }
 
-/// 列出 npx 缓存里已经缓存过的本包版本号（给界面「已缓存」徽章用）。
+/// `npx_cached_versions` 的返回：两个口径的「本机已缓存版本」。
+///
+/// - `versions`：缓存里出现过的版本（「已缓存」徽章按它挂）；
+/// - `pinServed`：其中钉版本写法（`dsh@<版本>`）启动能直接复用的那部分——npx 按命令
+///   写法各存一份缓存，裸包名写法留下的目录服务不了钉版本的启动命令，所以两个清单
+///   不重合时，界面要如实告诉用户「选了还会再下载一份」。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedVersions {
+    versions: Vec<String>,
+    pin_served: Vec<String>,
+}
+
+/// 列出 npx 缓存里已经缓存过的本包版本号（给界面「已缓存」徽章与「本机已经装过」提示用）。
 ///
 /// 跟随当前运行环境：Windows 宿主扫宿主 npm 缓存，WSL 则进发行版里扫——
 /// 同一个版本号在宿主上是「已缓存」、在发行版里可能是要现下的，所以必须分环境算。
@@ -757,10 +698,17 @@ async fn query_dsh_versions(
 /// async + spawn_blocking：要问 npm 缓存根、递归扫 `_npx` 下每个目录（WSL 下还要
 /// 起 wsl.exe），同步命令会把主线程堵住。
 #[tauri::command]
-async fn npx_cached_versions(runtime: launch::Runtime) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || npxcache::cached_versions(&runtime))
-        .await
-        .map_err(|err| format!("后台读取已缓存版本失败：{err}"))?
+async fn npx_cached_versions(runtime: launch::Runtime) -> Result<CachedVersions, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // 已缓存徽章与「不会再下载」判定共用一次 `_npx` 扫描（WSL 下免得起两次 wsl.exe）。
+        let (versions, pin_served) = npxcache::cached_and_pin_served(&runtime)?;
+        Ok(CachedVersions {
+            versions,
+            pin_served,
+        })
+    })
+    .await
+    .map_err(|err| format!("后台读取已缓存版本失败：{err}"))?
 }
 
 /// 打开（或刷新）DSH 界面窗口——界面与托盘的「应用内打开」。
@@ -1291,6 +1239,70 @@ async fn plugin_toggle(
     .map_err(|err| format!("后台切换插件开关失败：{err}"))?
 }
 
+/// 检查某个环境里第三方插件的更新（当前版本 → registry 目标版本）。
+///
+/// 只读 + 会话级缓存：每个（环境, 包名）本次使用会话只在第一次进插件卡时查一次，
+/// `force=true`（「检查更新」按钮）绕过缓存重查。官方内置骨架包与桥接插件不参与。
+/// 下载源随请求传（与 `query_dsh_versions` 同一个理由：界面才是权威）。
+#[tauri::command]
+async fn plugin_updates_list(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    name: String,
+    source: String,
+    force: Option<bool>,
+) -> Result<Vec<dsharbor_core::plugin_update::PluginUpdateItem>, String> {
+    let source = parse_source_arg(source);
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_update::list(&app, &config, &name, source, force)
+    })
+    .await
+    .map_err(|err| format!("后台检查插件更新失败：{err}"))?
+}
+
+/// 更新某个环境里的第三方插件：`plugin` 有值更新单个，`None` 更新全部有更新的
+/// （逐个执行，单个失败不影响其余，最后汇总）。
+///
+/// `progress` 是可选进度通道：界面批量更新时传进来，每开一个插件发一条 `start`、
+/// 跑完发一条 `done`（见 [`plugin_update::ProgressEvent`]）；单个更新不需要它，
+/// 结果只从返回值读。Tauri 的 `Channel<T>` 只实现了「必填」的参数抽取，可选通道
+/// 按官方推荐收 `JavaScriptChannelId`，再用 webview 兑换成 `Channel`。
+///
+/// 要写 node_modules，所以要求会话已停止：运行中的 DSH 同时在用这些文件，
+/// 谁后写谁赢（与重装依赖同一理由）。
+#[tauri::command]
+// 参数是 Tauri 注入项与前端字段一一对应的命令入参（app/webview/state/config/name/
+// source/plugin/progress），拆成结构体只是把同一张表抄两遍，没有别的收益。
+#[allow(clippy::too_many_arguments)]
+async fn plugin_update(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    name: String,
+    source: String,
+    plugin: Option<String>,
+    progress: Option<tauri::ipc::JavaScriptChannelId>,
+) -> Result<plugin_update::UpdateOutcome, String> {
+    ensure_session_stopped(&state, "更新插件", &name)?;
+    let source = parse_source_arg(source);
+    let progress: Option<tauri::ipc::Channel<plugin_update::ProgressEvent>> =
+        progress.map(|id| id.channel_on(webview));
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_update::update(
+            &app,
+            &config,
+            &name,
+            source,
+            plugin.as_deref(),
+            progress.as_ref(),
+        )
+    })
+    .await
+    .map_err(|err| format!("后台更新插件失败：{err}"))?
+}
+
 /// 记录界面主题（Rust 侧镜像）。
 ///
 /// 主题本体记在 WebView 的 localStorage，Rust 读不到；但窗口装饰（主题 3 换系统
@@ -1683,15 +1695,17 @@ pub fn run() {
             patch_backups,
             plugin_list,
             plugin_toggle,
+            plugin_updates_list,
+            plugin_update,
             open_external,
             save_ui_theme,
             check_binary_path,
             open_shell_dir,
             cli_integration_state,
             set_cli_integration,
-            cache_state,
-            cleanup_cache,
-            auto_cleanup_report
+            installed_dsh_versions,
+            uninstall_dsh_global,
+            delete_dsh_npx
         ])
         .build(tauri::generate_context!())
         .expect("构建 DSHarbor 外壳失败")

@@ -603,7 +603,13 @@ pub fn build_plugin_plan(
 ) -> Result<SpawnPlan, String> {
     validate(config)?;
     crate::profiles::validate_name(profile)?;
-    let mut args: Vec<String> = vec!["plugin".into(), "--profile".into(), profile.to_string()];
+    // 保留名（desktop）在 CLI 的参数解析阶段就被拒，命令里因此换成它的别名目录；
+    // 那条别名链接由外壳在拉起命令前建好，这里只决定命令里写哪个名字。
+    let mut args: Vec<String> = vec![
+        "plugin".into(),
+        "--profile".into(),
+        crate::profiles::cli_profile_name(profile),
+    ];
     match op {
         PluginOp::Install { package } => {
             validate_package_ref(package)?;
@@ -1507,6 +1513,27 @@ mod tests {
             plan,
             SpawnPlan::ShellLine {
                 line: "npx --yes @deepseek-ai/dsh plugin --profile web add file:/tmp/dsharbor-bridge-0.1.0.tgz".into(),
+                wrap: ShellWrap::Cmd
+            }
+        );
+    }
+
+    #[test]
+    fn plugin_plan_addresses_the_reserved_profile_through_its_alias() {
+        // `dsh plugin --profile desktop ...` 会被 CLI 直接拒（"managed exclusively
+        // by the Electron application"），所以命令里换成别名目录的名字。
+        let plan = build_plugin_plan(
+            &cfg(LaunchMode::System, &[]),
+            "desktop",
+            &PluginOp::Install {
+                package: "dshmarket@1.67.0".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan,
+            SpawnPlan::ShellLine {
+                line: "dsh plugin --profile .dsh-alias-desktop add dshmarket@1.67.0".into(),
                 wrap: ShellWrap::Cmd
             }
         );

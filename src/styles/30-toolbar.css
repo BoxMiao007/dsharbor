@@ -1,10 +1,13 @@
 /* ---- 右栏：工具条卡片 / 日志开关条 / 内容区 ---- */
+/* 工具条卡片与下面内容区之间的间隙由这里的 gap 给（原来靠 .page 里 8px 的
+   padding-top，和左栏↔右栏的 20px 对不齐）。统一取 --gap-card。 */
 .content {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: var(--gap-card);
 }
 
 /* 工具条：一张独立卡片，左边徽章群、右边主操作。整块可拖动（顶部留出拖动带）。 */
@@ -58,11 +61,18 @@
   line-height: 1;
   font-weight: 600;
   white-space: nowrap;
+  /* 徽章里常放会变的计数 / 版本 / 状态数字，等宽数字让变化时宽度不跳。 */
+  font-variant-numeric: tabular-nums;
 }
 
+/* 绿色状态徽章（运行中 / 桥接就绪 / 依赖已装）。
+   底色与描边都混进不透明的 --card 再上屏：原来混的是 transparent，
+   同一颗徽章垫在工具条上和在主卡小卡上会算出两种深浅不同的绿（实测
+   浅色下 #e2ede9 与 #d3e0de），并排看着像"颜色跑偏"。混入实底后
+   无论垫在哪种面上都是同一个色值，浅色主题下也稳定达标（文字 5.37:1）。 */
 .badge-running {
-  border-color: color-mix(in srgb, var(--ok) 42%, transparent);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 34%, var(--card));
+  background: color-mix(in srgb, var(--ok) 14%, var(--card));
   color: var(--ok);
 }
 
@@ -81,6 +91,8 @@
   font-weight: 700;
   color: var(--fg);
   letter-spacing: 0.2px;
+  /* 标题换行时平衡各行长度，避免最后一行只剩一个词。 */
+  text-wrap: balance;
 }
 
 /* 徽章按内容取宽，不被 flex 压扁（压扁会让文字冲出胶囊）。 */
@@ -92,6 +104,8 @@
   font-size: 12.5px;
   color: var(--fg-mute);
   white-space: nowrap;
+  /* 里面是 PID / 端口 / 版本这类会变的数字，等宽数字让它们不左右晃。 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* 窗口拉窄时按重要性依次收起次要信息（先 PID/监听，再版本），
@@ -114,15 +128,8 @@
   color: var(--fg-dim);
 }
 
-/* 登录提示：出错时占满工具条下方一行，平时隐藏。 */
-.login-note {
-  flex: 1;
-  min-width: 0;
-  margin: 0 14px 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* 登录提示的样式统一在 60-controls.css 的 .login-note 里（本文件早先那条
+   margin:0 14px 8px 已被它整条覆盖，是死规则，删掉免得两处各改一半）。 */
 
 /* ---- 「打开方式」两段式：主按钮 + 右侧小三角，点小三角展开菜单 ---- */
 .open-split {
@@ -212,7 +219,8 @@
   width: 100%;
   padding: 7px 10px;
   border: 0;
-  border-radius: 7px;
+  /* 同心圆角：外层 .open-menu 10px、内边距 6px，内层取 10−6=4px。 */
+  border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;

@@ -32,6 +32,20 @@
         /* 读不到就按深色走 */
       }
     </script>
+    <script>
+      // 动效偏好同样存在 localStorage：首帧就同步读一次并贴属性，避免界面先动起来
+      // 再被 main.ts 关掉（会闪一下）。键名与取值是 src/ui/motion.ts 里
+      // MOTION_KEY / MotionPref 的复写（静态内联脚本没法 import），
+      // 改键名或取值必须两处同步。只在明确存了 "off" 时写属性，其余（没存过、
+      // 读坏、存储被禁用）都按「开」走，与 main.ts 的默认值一致。
+      try {
+        if (localStorage.getItem("dsharbor.ui.motion") === "off") {
+          document.documentElement.dataset.motion = "off";
+        }
+      } catch (err) {
+        /* 读不到就按「开」走，不写属性 */
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

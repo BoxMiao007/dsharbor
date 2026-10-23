@@ -3,7 +3,7 @@
  *
  * 只测这一个接缝——运行态与停止态下 `#btn-toggle`、`#btn-restart` 的形状与可见性：
  *  1. 运行态：两颗都是圆形图标钮（宽 = 高、`border-radius: 50%`），圆钮里没有可见文字，
- *     名字只靠 title / aria-label；「停止」是实心方块图标，且描边在场
+ *     名字只靠 aria-label、操作说明走自绘气泡（data-tip）；「停止」是实心方块图标，且描边在场
  *     （悬停闪动的空心那半拍只有描边能留下轮廓，stroke: none 时那一拍方块会整个消失）。
  *  2. 停止态：只剩蓝色长条「启动 DSH」，「重启 DSH」必须真的不显示（rect 为 0×0）。
  *     这条是回归点：`.round` 的 `display: grid` 曾用 ID 选择器写成 (1,0,0)，
@@ -95,6 +95,10 @@ function readButton(page, id) {
       background: style.backgroundColor,
       label: el.getAttribute("aria-label") ?? "",
       title: el.getAttribute("title") ?? "",
+      tip: el.getAttribute("data-tip") ?? "",
+      ariaBusy: el.getAttribute("aria-busy") ?? "",
+      /* 「启动中」那只细环：有它就说明走的是过渡态而不是停止态长条。 */
+      spin: el.querySelectorAll(".launch-spin").length,
       texts,
       svgRect: svg
         ? (() => {
@@ -107,6 +111,15 @@ function readButton(page, id) {
       svgStrokeWidth: svgStyle?.strokeWidth ?? null,
     };
   }, id);
+}
+
+/** 从令牌读按钮的基准尺寸（不把 --btn-w / --btn-h 的数字抄进断言，改令牌时测试跟着走）。 */
+function readTokens(page) {
+  return page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const px = (name) => Math.round(Number.parseFloat(cs.getPropertyValue(name)));
+    return { btnW: px("--btn-w"), btnH: px("--btn-h") };
+  });
 }
 
 let preview = null;
@@ -144,10 +157,13 @@ test("运行态：停止与重启都是圆形图标钮，钮里没有文字", { 
       assert.ok(btn.svgRect && btn.svgRect.width > 0, `「${name}」应有图标`);
     }
 
-    // 圆钮没有可见文字，名字只能靠 title / aria-label。
+    // 圆钮没有可见文字：可访问名靠 aria-label，操作说明走自绘气泡（data-tip），不再用原生 title。
     assert.match(stop.label, /停止/, "停止钮的 aria-label 应说明这是「停止」");
-    assert.match(stop.title, /停止/, "停止钮的 title 应说明这是「停止」");
+    assert.equal(stop.title, "", "停止钮不该再有原生 title（改用自绘气泡 data-tip）");
+    assert.match(stop.tip, /停止/, "停止钮的 data-tip 气泡应说明这是「停止」");
     assert.equal(restart.label, "重启 DSH");
+    assert.equal(restart.title, "", "重启钮不该再有原生 title（改用自绘气泡 data-tip）");
+    assert.match(restart.tip, /重启/, "重启钮的 data-tip 气泡应说明这是「重启 DSH」");
 
     // 回归点：悬停闪动的空心那半拍只靠描边留下方框轮廓。stroke 若退回 none，
     // 那一拍整个方块会消失（填充分与描边分同时为「无」），看上去像图标没了。
@@ -178,6 +194,39 @@ test("停止态：只剩「启动 DSH」，「重启 DSH」真的不显示", { s
     // 回归点：`.round` 的 display 用过 ID 特指度，把 .hidden 顶掉后这颗钮会一直露出来。
     assert.equal(restart.visible, false, "停止态「重启 DSH」必须隐藏（0×0）");
     assert.equal(restart.className.includes("hidden"), true, "停止态「重启 DSH」应带 .hidden");
+  } finally {
+    await page.close();
+  }
+});
+
+test("启动中：同一根长条换成「启动中…」+ 细环，重启仍不出现，尺寸与停止态一致", { skip: skipReason }, async () => {
+  // 启动中 = 进程起来了、登录链接还没就绪（isStarting）。假后端用 loginPending 造这个态。
+  const page = await openPage(browser, { session: "running", loginPending: true });
+  try {
+    const busy = await readButton(page, "btn-toggle");
+    const restart = await readButton(page, "btn-restart");
+    const { btnW, btnH } = await readTokens(page);
+
+    assert.equal(busy.visible, true, "启动中应看到按钮");
+    assert.ok(busy.className.includes("busy"), `启动中应挂 .busy，实际 ${busy.className}`);
+    assert.equal(busy.className.includes("round"), false, "启动中不该变圆钮（圆钮是运行态）");
+    assert.notEqual(busy.radius, "50%", "启动中仍是长条按钮");
+    assert.ok(
+      busy.texts.some((t) => t.text.includes("启动中")),
+      `启动中应显示「启动中…」，实际 ${JSON.stringify(busy.texts)}`,
+    );
+    assert.equal(busy.spin, 1, "启动中应有一只 .launch-spin 细环");
+    assert.equal(busy.ariaBusy, "true", "启动中应给读屏 aria-busy=true");
+    // 这一下按下去是空操作（命令在途时后端仍报 stopped），所以可访问名不能说「能停止」。
+    assert.match(busy.label, /启动中/, `启动中的可访问名应说明正在启动，实际「${busy.label}」`);
+    assert.equal(/停止/.test(busy.label), false, `启动中那一按按不动，可访问名不该承诺停止，实际「${busy.label}」`);
+    // 尺寸与停止态一致：形态切换不许让整排按钮跳位（基准取自 --btn-w / --btn-h 令牌）。
+    assert.equal(busy.width, btnW, `启动中宽度应为 --btn-w（${btnW}px），实际 ${busy.width}`);
+    assert.equal(busy.height, btnH, `启动中高度应为 --btn-h（${btnH}px），实际 ${busy.height}`);
+
+    // 关键回归点：登录链接没就绪之前，「重启 DSH」不能提前蹦出来。
+    assert.equal(restart.visible, false, "启动中「重启 DSH」必须仍隐藏（0×0）");
+    assert.equal(restart.className.includes("hidden"), true, "启动中「重启 DSH」应带 .hidden");
   } finally {
     await page.close();
   }

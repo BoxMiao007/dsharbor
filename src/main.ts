@@ -1,20 +1,25 @@
 /* 应用入口：只剩 main() —— 装配初始 DOM、绑定全部事件、轮询后端状态。
    静态骨架见 ui/build-html.ts；图标、类型、工具、主题、转动状态机等模块在 ui/。 */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import "./style.css";
-import { PANELS, ICON_SUN, ICON_MOON, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
+import { PANELS, ICON_MAXIMIZE, ICON_RESTORE, ICON_STOP, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_MORE, ICON_COPY } from "./ui/icons";
+import { prepareCopyButton, flashCopy, copyIconStack, copyTextChrome } from "./ui/copy-feedback";
 import { isStarting } from "./ui/types";
-import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, CacheState, CleanupResult, AutoCleanupReport } from "./ui/types";
+import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, InstalledDsh } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
-import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOOLTIP_STOP } from "./ui/config";
+import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOGGLE_TEXT_STARTING, TOOLTIP_STOP, TOOLTIP_STARTING } from "./ui/config";
 import { Picker } from "./ui/picker";
 import type { PickerBadge, PickerChoice } from "./ui/picker";
 import { THEME_KEY, readStoredTheme, applyMode } from "./ui/theme";
 import type { ThemeId } from "./ui/theme";
+import { readStoredMotion, saveStoredMotion, applyMotion } from "./ui/motion";
+import type { MotionPref } from "./ui/motion";
 import { escapeHtml, toggleSwapHtml } from "./ui/markup";
 import { applyRestartSpin, beginRestartSpin, endRestartSpin, updateRestartSpin, setStatusRefresher } from "./ui/spin";
+import { setSquareBusy, flashSquareDone } from "./ui/sqbusy";
+import { showToast } from "./ui/toast";
 import { buildHtml } from "./ui/build-html";
 
 async function main(): Promise<void> {
@@ -43,6 +48,9 @@ async function main(): Promise<void> {
   }
 
   let theme: ThemeId = readStoredTheme();
+  // 全站动效偏好：与外观同族，存在 localStorage。关闭时 <html> 带 data-motion="off"，
+  // 由 99-hidden.css 统一中和动画与过渡。
+  let motion: MotionPref = readStoredMotion();
   // 六个新字段的当前值：后端读回来之后换成它。本版只做承载，没有界面控件改它，
   // 但保存链路上必须原样带上，否则界面上任何一次保存都会把用户已改的值抹回默认。
   let prefs: ShellPrefs = { ...DEFAULT_PREFS };
@@ -56,6 +64,9 @@ async function main(): Promise<void> {
   /** 生成界面与全部绑定。只在启动时跑一次：切浅色/深色只改 <html data-mode>，不重建 DOM。 */
   async function mount(): Promise<void> {
     applyMode(theme);
+    // 动效偏好与外观一样只改 <html>，不重建界面。index.html 的内联脚本已在首帧贴过
+    // 一次，这里再贴一次是给「首帧之后才跑到的代码路径」兜底（幂等）。
+    applyMotion(motion);
     root.innerHTML = buildHtml(info);
 
     const $ = <T extends HTMLElement>(id: string): T => {
@@ -80,6 +91,7 @@ async function main(): Promise<void> {
     const customCommand = $<HTMLInputElement>("custom-command");
     const npxCommandPreview = $<HTMLElement>("npx-command-preview");
     const npxVersionsHint = $<HTMLDivElement>("npx-versions-hint");
+    const npxInstalledHint = $<HTMLDivElement>("npx-installed-hint");
     const npxVersionsRefresh = $<HTMLButtonElement>("npx-versions-refresh");
     const portInput = $<HTMLInputElement>("port");
     const portReset = $<HTMLButtonElement>("port-reset");
@@ -131,6 +143,8 @@ async function main(): Promise<void> {
     let selectedVersion: string | null = null;
     /** 本机 npx 缓存里已有的版本；每次展开版本下拉现扫一次。 */
     let cachedVersions: string[] = [];
+    /** 其中钉版本写法（`dsh@<版本>`）启动能直接复用的部分（`npx_cached_versions.pinServed`）。 */
+    let pinServedVersions: string[] = [];
     /** 版本下拉当前放出几个具体版本（不含首项与末尾的「更多…」）。 */
     let versionShown = VERSION_INITIAL_COUNT;
 
@@ -207,17 +221,17 @@ async function main(): Promise<void> {
     const latestVersion = (): string | null => registry?.distTags.latest ?? null;
 
     /**
-     * 版本行尾的徽章。顺序固定（最新 → 已装 → 已缓存），同一行反复渲染长得一样。
-     * 「已装」与「已缓存」不并列：已选中的那一行说「已装」就够了，再说一遍缓存是同一件事。
+     * 版本行尾的徽章。顺序固定（最新 → 已缓存），同一行反复渲染长得一样。
+     * 「已缓存」只按本机 npx 缓存里有没有这一版来判（`cachedVersions`），与「当前选中哪一行」无关：
+     * 选中只是下拉里的一个值，不代表这一版已经装在本机，所以不能再拿 `selectedVersion` 当「已装」。
+     * 选中的那一行靠行首的 ✓ 认，不需要额外的「已装」徽章（与「已缓存」也是同一件事）。
      */
     function versionBadges(version: string): PickerBadge[] {
       const badges: PickerBadge[] = [];
       if (version === latestVersion()) {
         badges.push({ text: "最新", tone: "latest" });
       }
-      if (version === selectedVersion) {
-        badges.push({ text: "已装", tone: "installed" });
-      } else if (cachedVersions.includes(version)) {
+      if (cachedVersions.includes(version)) {
         badges.push({ text: "已缓存", tone: "cached" });
       }
       return badges;
@@ -292,6 +306,25 @@ async function main(): Promise<void> {
       return "";
     }
 
+    /**
+     * 选中版本「本机已经装过」的提示。按实际版本号判等（不看 latest 标签），
+     * 只提示不禁用——用户仍可照常启动。两种口径都说实话：
+     * 缓存里那份就是钉版本写法（`dsh@<版本>`）留下的，选它启动直接复用；
+     * 否则（裸包名写法留下的）按 npx「每种写法各存一份缓存」的规则，选了还会再下一份。
+     */
+    function installedHint(): string {
+      if (selectedVersion === null) {
+        return "";
+      }
+      if (!cachedVersions.includes(selectedVersion)) {
+        return "";
+      }
+      if (pinServedVersions.includes(selectedVersion)) {
+        return `v${selectedVersion} 本机已经装过（缓存里就是 dsh@${selectedVersion} 写法的那份），选它启动不会再下载一份。`;
+      }
+      return `v${selectedVersion} 本机 npx 缓存里已有这一份，但选它启动会再下载一份——npx 按命令写法各存一份缓存，缓存里那份是裸包名写法（不带 @版本）留下的。`;
+    }
+
     /** 版本下拉、命令预览、提示行与刷新按钮的状态一处刷齐。 */
     function renderVersionUI(): void {
       npxVersionPicker.setChoices(versionChoices());
@@ -300,24 +333,35 @@ async function main(): Promise<void> {
       const hint = registryHint();
       npxVersionsHint.textContent = hint;
       npxVersionsHint.classList.toggle("hidden", hint === "");
-      // 读不到列表时这句要像错误一样显眼，读得到时就是普通灰字。
-      npxVersionsHint.classList.toggle("is-warn", registryError !== null && !registryLoading);
+      // 读不到列表时这句要像错误一样显眼（黄色胶囊），读得到时就是普通灰字。
+      npxVersionsHint.classList.toggle("notice", registryError !== null && !registryLoading);
+      const installed = installedHint();
+      npxInstalledHint.textContent = installed;
+      npxInstalledHint.classList.toggle("hidden", installed === "");
       // 读列表期间刷新按钮转圈并禁用：连点会让每次强制查询都真发一次 npm view。
+      // 转的是叠加的环形 spinner，不是语义图标本身（见 src/ui/sqbusy.ts）。
       npxVersionsRefresh.disabled = registryLoading;
-      npxVersionsRefresh.classList.toggle("is-spinning", registryLoading);
+      setSquareBusy(npxVersionsRefresh, registryLoading);
     }
 
     /** 现扫一次本机 npx 缓存里已有的版本，好把「已缓存」徽章挂到正确的行上。 */
     async function refreshCachedVersions(): Promise<void> {
       try {
-        cachedVersions = await invoke<string[]>("npx_cached_versions", { runtime });
+        const cached = await invoke<{ versions: string[]; pinServed: string[] }>(
+          "npx_cached_versions",
+          { runtime },
+        );
+        cachedVersions = cached.versions;
+        pinServedVersions = cached.pinServed;
       } catch (err) {
         // 缓存目录读不到只影响那枚徽章，不影响选版本；不打扰用户，日志里留痕。
         console.error("读取 npx 缓存版本失败:", err);
         cachedVersions = [];
+        pinServedVersions = [];
       }
       // 徽章是在 versionChoices() 里算的，扫回来必须重铺一遍候选；只调 relayout() 不会重算徽章。
-      npxVersionPicker.setChoices(versionChoices());
+      // 「本机已装过」的提示也依赖 cachedVersions，一并重刷。
+      renderVersionUI();
       npxVersionPicker.relayout();
     }
 
@@ -338,12 +382,14 @@ async function main(): Promise<void> {
       registryLoading = true;
       registryError = null;
       renderVersionUI();
+      let ok = false;
       try {
         registry = await invoke<RegistryInfo>("query_dsh_versions", {
           runtime,
           source: prefs.downloadSource,
           force,
         });
+        ok = true;
       } catch (err) {
         registry = null;
         registryError = String(err);
@@ -354,6 +400,10 @@ async function main(): Promise<void> {
       // 换了一批候选，分页从头算：上一次展开过「更多…」不该让新列表一上来就全摊开。
       versionShown = VERSION_INITIAL_COUNT;
       renderVersionUI();
+      // 只有用户主动点的「重新获取」才落勾：启动/切环境的后台加载不闪一次反馈。
+      if (force && ok) {
+        flashSquareDone(npxVersionsRefresh);
+      }
     }
 
     const npxVersionPicker = new Picker("npx-version-picker", (value) => {
@@ -374,9 +424,11 @@ async function main(): Promise<void> {
     // 左栏底部那颗浅/深切换：图标画的是「点下去会变成什么」，切换只改 <html data-mode>，
     // 界面不重建，正在填的字段与滚动位置都保住。
     const modeBtn = $<HTMLButtonElement>("mode-btn");
+    // 图标交接只由 html[data-mode] 驱动（见 20-sidebar.css 的 .theme-morph）：两颗图标
+    // 常驻 DOM，谁在场、谁转走全交给 CSS，JS 不再换 innerHTML，所以过渡能完整跑完、
+    // 连点也只会重算到目标终态。这里只同步无障碍标签。
     const renderModeButton = (): void => {
       const dark = theme === "dark";
-      modeBtn.innerHTML = dark ? ICON_SUN : ICON_MOON;
       const label = dark ? "切换到浅色模式" : "切换到深色模式";
       modeBtn.title = label;
       modeBtn.setAttribute("aria-label", label);
@@ -393,6 +445,20 @@ async function main(): Promise<void> {
       syncThemeToShell(theme);
     });
     renderModeButton();
+    // 「动效」总开关：与外观同一套做法——只改 <html data-motion>，不重建界面，
+    // 正在填的字段与滚动位置都保住。关掉后由 99-hidden.css 统一把动画与过渡中和，
+    // 转圈这类无限动画改为静止（图标仍在，不会出现「看不出在忙」）。
+    const motionToggle = $<HTMLButtonElement>("motion-toggle");
+    const renderMotionToggle = (): void => {
+      motionToggle.setAttribute("aria-checked", motion === "off" ? "false" : "true");
+    };
+    motionToggle.addEventListener("click", () => {
+      motion = motion === "off" ? "on" : "off";
+      applyMotion(motion);
+      saveStoredMotion(motion);
+      renderMotionToggle();
+    });
+    renderMotionToggle();
     // 下载源：「网络」卡的第一个控件。改完立刻生效于版本清单查询（选「官方源」
     // 就真的去官方地址拉），不必重启壳。
     /** 「网络与代理」卡的平台标记。卡头不再挂摘要徽章（各块一律只有标题）。*/
@@ -637,7 +703,7 @@ async function main(): Promise<void> {
     // 展示内容全部由后端算好（目录、垫片内容、手动命令、状态说明），界面只负责渲染，
     // 免得两边各算一套口径对不上。
     const cliSummary = $<HTMLSpanElement>("integrations-summary");
-    const cliToggle = $<HTMLInputElement>("cli-toggle");
+    const cliToggle = $<HTMLButtonElement>("cli-toggle");
     const cliBinDir = $<HTMLElement>("cli-bin-dir");
     const cliShimPath = $<HTMLElement>("cli-shim-path");
     const cliManual = $<HTMLElement>("cli-manual");
@@ -650,26 +716,20 @@ async function main(): Promise<void> {
     // 「自动接入」那两半截（开关 + 目录、垫片内容）只在 Windows 下有意义。
     const cliWindowsOnly = Array.from(root.querySelectorAll<HTMLElement>(".cli-windows-only"));
 
-    // ---- 集成面板：npx 缓存盘面 --------------------------------------------------
-    // 占用字节、可回收字节、目录明细、每次删除的结果都在后端算好，界面只渲染。
-    const CACHE_WINDOWS_ONLY = Array.from(root.querySelectorAll<HTMLElement>(".cache-windows-only"));
-    const cacheOwn = $<HTMLElement>("cache-own");
-    const cacheReclaimable = $<HTMLElement>("cache-reclaimable");
-    const cacheRoot = $<HTMLElement>("cache-root");
-    const btnCacheClean = $<HTMLButtonElement>("btn-cache-clean");
-    const cacheMessage = $<HTMLParagraphElement>("cache-message");
-    const cacheWarning = $<HTMLParagraphElement>("cache-warning");
-    const cacheError = $<HTMLParagraphElement>("cache-error");
-    const cacheDirs = $<HTMLPreElement>("cache-dirs");
-    const cacheResults = $<HTMLDivElement>("cache-results");
-    const cacheResultsBody = $<HTMLDivElement>("cache-results-body");
-    const cacheAutoToggle = $<HTMLInputElement>("cache-auto-toggle");
+    // ---- 集成面板：DSH 版本 ------------------------------------------------------
+    // 「本机装了哪几份 dsh」由后端扫出来（npx 缓存 + npm 全局），界面只渲染列表与卸载按钮。
+    const dshVersionsList = $<HTMLDivElement>("dsh-versions-list");
+    const dshVersionsError = $<HTMLParagraphElement>("dsh-versions-error");
+    const dshVersionsDup = $<HTMLSpanElement>("dsh-versions-dup");
 
     // 分区导航：点左侧图标切右侧面板。选择记在 localStorage，壳重启、轻量模式重建窗口后沿用。
     // 不放 config.json：那是整份回写的设置文件，界面偏好丢了不影响功能。
     const PANEL_KEY = "dsharbor.ui.panel";
     const navButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-panel-btn]"));
     const panelSections = Array.from(root.querySelectorAll<HTMLElement>("[data-panel]"));
+    // 左栏那块跟着选中项滑的底（#36）：位置由按钮序号算，序号写在 --i 上（见 20-sidebar.css）。
+    const railEl = navButtons[0]?.closest<HTMLElement>(".rail") ?? null;
+    const railIndicator = railEl?.querySelector<HTMLElement>(".rail-ind") ?? null;
     /** 内容区整体滚动（工具栏与左栏固定），滚动指示条挂在它的外层。 */
 
     function readStoredPanel(): PanelKey {
@@ -686,21 +746,83 @@ async function main(): Promise<void> {
 
     let currentPanel: PanelKey = readStoredPanel();
 
+    /** 读一个动效时长令牌（毫秒）。浏览器把计算后的 <time> 序列化成秒（"0.2s"），
+     *  不是变量里写的 "200ms"，所以按单位换算，别把 0.2 当毫秒用。 */
+    function motionMs(name: string, fallback: number): number {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value) || value <= 0) {
+        return fallback;
+      }
+      return raw.endsWith("ms") ? value : value * 1000;
+    }
+
+    /** 交叉淡化里「旧分区」的退役定时器：新的淡完（--m-base）就把它彻底摘掉。 */
+    let leavingTimer: number | null = null;
+
     /** 切换分区：同步 aria-current 与可见性，并把主卡滚回顶部（换内容时留着旧滚动位置很莫名）。
-        滚动容器是当前分区那张主卡（`.block.main-card`），不是 #page。 */
+        滚动容器是当前分区那张主卡（`.block.main-card`），不是 #page。
+
+        切换用**纯交叉淡化**（见 40-content.css）：旧分区在过渡期间改成绝对定位垫在下面，
+        新分区压在它上面从透明淡进来。旧块不跟着淡——两块一起淡会在中途漏出页面底色，
+        亮度先掉一截再爬回来，那正是维护者报的「频闪」。 */
     const selectPanel = (key: PanelKey, persist: boolean): void => {
+      const previous = currentPanel;
       currentPanel = key;
+      // 已经停在这一页、又没有别的分区要让位：没有「交接」可放，重播入场只会让整块内容
+      // 从全透明淡回一次——那正是维护者报的频闪。点击监听那边已挡过一次，但代码里还有
+      // 别的入口（桥接安装/卸载/恢复后要切到「环境」面板，用户可能本来就停在那儿），
+      // 所以在真正放动画的地方再挡一次，从源头保证「同一页不重播」。
+      const switching = previous !== key;
       for (const button of navButtons) {
         button.setAttribute("aria-current", button.dataset.panelBtn === key ? "true" : "false");
       }
+      // 左栏指示块按按钮序号滑过去：只写序号，位移与回弹交给 CSS 过渡（#36）。
+      if (railIndicator) {
+        const index = navButtons.findIndex((button) => button.dataset.panelBtn === key);
+        railIndicator.style.setProperty("--i", String(Math.max(index, 0)));
+      }
+
+      // 上一轮的旧块先退役：连点几下时可能有不止一块还挂着，一并收掉，免得越叠越多。
+      if (leavingTimer !== null) {
+        window.clearTimeout(leavingTimer);
+        leavingTimer = null;
+      }
+      for (const panel of panelSections) {
+        panel.classList.remove("is-leaving");
+      }
+
+      const leaving = switching ? panelSections.find((panel) => panel.dataset.panel === previous) : undefined;
+
       for (const panel of panelSections) {
         const showing = panel.dataset.panel === key;
         panel.classList.toggle("hidden", !showing);
         // 换内容时留着旧滚动位置很莫名：主卡（唯一的滚动容器）回到顶部。
         if (showing) {
           for (const host of panel.querySelectorAll<HTMLElement>(".block.main-card")) host.scrollTop = 0;
+          // 先摘类、强制一次回流，再挂回去：同一个分区来回切也能重播。
+          panel.classList.remove("is-enter");
+          void panel.offsetWidth;
+          // 真换了分区才挂入场；没换（含首帧、桥接操作顺带切回同一页）不重播。
+          if (switching) panel.classList.add("is-enter");
         }
       }
+
+      // 旧分区留在原地当底衬，新的淡完就摘。关掉动效时不必留：新版一帧就铺满了。
+      if (leaving) {
+        leaving.classList.remove("is-enter");
+        leaving.classList.remove("hidden");
+        leaving.classList.add("is-leaving");
+        leavingTimer = window.setTimeout(
+          () => {
+            leaving.classList.add("hidden");
+            leaving.classList.remove("is-leaving");
+            leavingTimer = null;
+          },
+          motionOff() ? 0 : motionMs("--m-base", 200),
+        );
+      }
+
       updateScrollThumbHook();
       if (persist) {
         try {
@@ -711,10 +833,23 @@ async function main(): Promise<void> {
       }
     };
 
+    // 首帧把指示块直接贴到存下来的分区上，不许它从第一个慢慢滑过去（#36）：
+    // 下一帧才给 .rail[data-ready]，从那时起换分区才有过渡。
+    if (railEl) {
+      window.requestAnimationFrame(() => {
+        railEl.dataset.ready = "";
+      });
+    }
+
     for (const button of navButtons) {
       button.addEventListener("click", () => {
         const key = button.dataset.panelBtn as PanelKey;
-        selectPanel(key, true);
+        const same = key === currentPanel;
+        // 点的就是当前这一页：整下动作当空操作——不改 aria-current、不动指示块、不重播入场动画。
+        // 维护者要的是「从源头消除重复点击叠加动效的可能」，所以直接返回。
+        // 唯一例外是「日志」：重复点它要的是「拉到底并清未读」，那是滚动位置与计数，不是切换动效。
+        if (same && key !== "log") return;
+        if (!same) selectPanel(key, true);
         // 点进日志就是来看最新的：直接拉到底，不用再手动滚；未读数同时归零。
         if (key === "log") {
           followLogTail();
@@ -723,6 +858,33 @@ async function main(): Promise<void> {
       });
     }
     selectPanel(currentPanel, false);
+
+    // ---- 折叠块：高度过渡（#36）--------------------------------------------------
+    // 语义与键盘仍归原生 <details>：这里只在它开合时补一段「内容长出来 / 收回去」的过程。
+    // 展开走纯 CSS（::details-content 的 block-size 0→auto，见 70-polish.css）；
+    // 收起时浏览器会立刻把内容当隐藏处理、内容量归零，高度动画就没有可缩的东西，
+    // 所以在关闭那一刻给整块挂 data-closing，等过渡跑完再摘——这一段是补原生做不到的一半。
+    const foldBoxes = Array.from(root.querySelectorAll<HTMLDetailsElement>(".log-box"));
+    for (const box of foldBoxes) {
+      // toggle 事件不分「用户点的」和「代码改 open」的，统一走这里，行为一致。
+      box.addEventListener("toggle", () => {
+        if (box.open) {
+          box.removeAttribute("data-closing");
+          return;
+        }
+        if (motionOff()) return; // 动效关掉：不收窗口，瞬时完成
+        box.setAttribute("data-closing", "");
+        box.addEventListener(
+          "transitionend",
+          (event) => {
+            if (event.target === box && event.propertyName === "block-size") {
+              box.removeAttribute("data-closing");
+            }
+          },
+          { once: true },
+        );
+      });
+    }
 
     // ---- 日志：左栏里的一个分区，日志正文在主卡里自己滚 ---------------------------
     // 不做窄条 / 浮层 / 遮罩：点左栏「日志」进来，与其他分区平等的进进出出。
@@ -856,17 +1018,24 @@ async function main(): Promise<void> {
       }
     }
 
-    /** 按钮上的「复制」：复制某个元素里的文本，并在按钮上短暂回显结果。
-        日志面板的「复制日志」与命令行集成的「手动命令」「垫片内容」共用这一套。 */
+    /** 按钮上的「复制」：复制某个元素里的文本，按钮内回显结果（见 ui/copy-feedback.ts）。
+        日志面板的「复制日志」与命令行集成的「手动命令」「垫片内容」共用这一套。
+        成功只留在按钮里；失败另补一条 toast——按钮内的红态一闪就复原，复制没成功
+        得让人有机会知道该手动选中文本再复制。 */
     function copyLog(source: HTMLElement, button: HTMLButtonElement): void {
       void (async () => {
         const ok = await writeText(source.textContent ?? "");
-        button.textContent = ok ? "已复制" : "复制失败";
-        window.setTimeout(() => {
-          button.textContent = "复制";
-        }, 1500);
+        flashCopy(button, ok);
+        if (!ok) {
+          showToast("复制失败：剪贴板不可用，请手动选中文本复制。", "error");
+        }
       })();
     }
+
+    // 一次性把三颗复制按钮装上反馈结构（图标叠层 + 定宽文案层 + 隐藏播报区）。
+    prepareCopyButton(btnCopyLog, "复制日志");
+    prepareCopyButton(btnCliCopy, "复制");
+    prepareCopyButton(btnCliCopyShim, "复制");
 
     btnCopyLog.addEventListener("click", () => copyLog(logEl, btnCopyLog));
     for (const [button, source] of [
@@ -1261,37 +1430,75 @@ async function main(): Promise<void> {
 
     /** 上次渲染的按钮形态：render 每秒跑一次，只在跨状态时重建 DOM。
      * 初始就是 swap（buildHtml 的标记带 .swap），第一轮 render 不必重建。 */
-    let toggleMode: "swap" | "round" | null = "swap";
+    let toggleMode: "swap" | "busy" | "round" | null = "swap";
+
+    /** 刚点了「启动」、start_dsh 这条命令还没返回的那一小段。
+     * 这段时间后端状态仍是「已停止」，界面却已经该说「启动中」，所以本地记一笔；
+     * 命令返回后交给 isStarting（进程起来了、登录链接还没就绪）接着表达。 */
+    let launchPending = false;
 
     /**
-     * 渲染「启动 / 停止」按钮：停止态是蓝底长条「启动 DSH」+ 两组文字逐字切换
-     * （样式在 60-controls.css 的 #btn-toggle.swap）；运行态是红底**圆形图标钮**
-     * （维护者要求：与「重启 DSH」同形，去掉长条形态）。两种形态只在跨状态时重建一次。
+     * 渲染「启动 / 停止」按钮，三种形态：
+     * - `swap`（未启动）：蓝底长条「启动 DSH」+ 两组文字逐字切换（60-controls.css 的
+     *   `#btn-toggle.swap`）；
+     * - `busy`（启动中）：同一根蓝底长条，换成一只细环 + 「启动中…」。命令在途时这一下
+     *   按不动（后端仍是 stopped，再发一条只会被拒），气泡如实说明「在等」；
+     * - `round`（运行中）：红底**圆形图标钮**（维护者要求：与「重启 DSH」同形）。
+     * 三种形态只在跨状态时重建一次，逐帧调用不会反复重排 DOM。
      */
-    function renderToggleButton(stopped: boolean): void {
-      const mode = stopped ? "swap" : "round";
+    function renderToggleButton(mode: "swap" | "busy" | "round"): void {
       if (mode === toggleMode) return;
       toggleMode = mode;
-      if (!stopped) {
-        btnToggle.classList.remove("swap");
-        btnToggle.classList.add("round");
-        // 圆形钮里只有图标，没有可见文字：名字与气泡只能靠 title / aria-label。
-        btnToggle.title = TOOLTIP_STOP;
+      btnToggle.classList.toggle("swap", mode === "swap");
+      btnToggle.classList.toggle("busy", mode === "busy");
+      btnToggle.classList.toggle("round", mode === "round");
+      if (mode === "round") {
+        // 圆形钮里只有图标，没有可见文字：名字靠 aria-label，操作说明走自绘气泡
+        //（.has-tip + data-tip，见 50-info.css）。不再用原生 title，免得两份提示叠在一起。
+        btnToggle.classList.add("has-tip");
+        btnToggle.dataset.tip = TOOLTIP_STOP;
         btnToggle.setAttribute("aria-label", TOOLTIP_STOP);
         btnToggle.innerHTML = ICON_STOP;
         return;
       }
-      btnToggle.classList.remove("round");
-      btnToggle.classList.add("swap");
-      btnToggle.removeAttribute("title");
+      if (mode === "busy") {
+        // 启动中仍是长条按钮。气泡说实话：这一下按不动（命令在途时后端还是 stopped，
+        // 再发一条只会被拒），等进程真的起来、变红圆钮之后才谈得上停止。
+        btnToggle.classList.add("has-tip");
+        btnToggle.dataset.tip = TOOLTIP_STARTING;
+        btnToggle.setAttribute("aria-label", `${TOGGLE_TEXT_STARTING}正在等待 DSH 起来`);
+        btnToggle.innerHTML = `<span class="launch-spin" aria-hidden="true"></span><span class="btn-text">${TOGGLE_TEXT_STARTING}</span>`;
+        return;
+      }
+      // 停止态是带可见文字的长条按钮，气泡没有意义，一并摘掉。
+      btnToggle.classList.remove("has-tip");
+      delete btnToggle.dataset.tip;
       btnToggle.setAttribute("aria-label", TOGGLE_TEXT_REST);
       btnToggle.innerHTML = toggleSwapHtml();
     }
 
+    /**
+     * 按「在途 / 启动中 / 运行 / 未启动」重画「启动 / 停止」这一支（形态 + 主色 + aria-busy +
+     * 重启钮要不要露面）。轮询渲染与点击瞬间都走这一条，免得两处各算一遍 `busy` 之后
+     * 算出不同的结论（点击时先切「启动中」，靠的就是这里同一套推导）。
+     */
+    function paintToggle(): void {
+      const running = currentStatus?.state === "running";
+      const starting = currentStatus ? isStarting(currentStatus) : false;
+      const busy = launchPending || starting;
+      renderToggleButton(busy ? "busy" : running ? "round" : "swap");
+      // 启动中仍是蓝底主按钮（不是运行态那枚红圆钮），所以主色跟着 busy / 未启动走。
+      btnToggle.classList.toggle("primary", !running || busy);
+      // 读屏软件靠它知道「按下去之后还在忙」，不依赖那只转圈的动画。
+      btnToggle.setAttribute("aria-busy", busy ? "true" : "false");
+      // 「重启 DSH」只在**真正起来之后**出现（维护者要求）：启动中整排仍只有一颗按钮，
+      // 登录链接就绪、状态落定才放出「停止 / 重启」。
+      btnRestart.classList.toggle("hidden", !running || busy);
+    }
+
     function render(status: SessionStatus): void {
       currentStatus = status;
-      // 运行状态不入徽章：只看主按钮的蓝/红与文案（启动中也是运行态，按钮已经是「停止」）。
-      const starting = isStarting(status);
+      // 运行状态不入徽章：只看主按钮的蓝/红与文案。
       // DSH 版本：后端在每次成功启动后异步补上，重启壳后为「未知」直到再次启动。
       versionText.textContent = status.dshVersion ? `DSH v${status.dshVersion}` : "DSH 版本未知";
       aboutDsh.textContent = status.dshVersion ?? "未知";
@@ -1306,14 +1513,10 @@ async function main(): Promise<void> {
         errorEl.classList.add("hidden");
       }
       syncLogFromTail(status.logTail);
-      const running = status.state === "running";
-      // 「启动 DSH」与「停止」是同一个按钮（维护者要求）：按状态换文案与语义。
-      // 后端只在子进程还活着时给 Running，Failed 必然是进程已退出，所以按 running 二分就够。
-      renderToggleButton(!running);
-      btnToggle.classList.toggle("primary", !running);
-      // 「重启 DSH」只在运行中出现（维护者要求）：启动前整个界面只有一个「启动 DSH」，
-      // 起来之后才同时给出「停止 / 重启 DSH」。
-      btnRestart.classList.toggle("hidden", !running);
+      // 「启动中」= 命令刚发出去还没回来，或进程起来了、登录链接还没就绪（npx 首次下载、
+      // DSH 冷启动都停在这一步）。这一段不能直接跳到运行态，否则点了「启动 DSH」会一下子
+      // 蹦出「停止 / 重启」两颗（维护者反馈的突变）。推导与形态切换都在 paintToggle 里。
+      paintToggle();
       // 「打开方式」：启动前后都在，只在登录链接就绪后可点（没链接时点开也没用）。
       btnOpen.disabled = !status.loginReady;
       btnOpenMore.disabled = !status.loginReady;
@@ -1327,7 +1530,7 @@ async function main(): Promise<void> {
         loginNote.classList.add("hidden");
       }
       // 「重启 DSH」的持续转动：拿这次状态过一遍收场条件（每秒轮询都会走到这里）。
-      updateRestartSpin(status, starting);
+      updateRestartSpin(status, isStarting(status));
       // 日志会不断长个儿，顺带把滚动指示条的几何刷新一下（这里只算不显示）。
       updateScrollThumbHook();
     }
@@ -1338,8 +1541,6 @@ async function main(): Promise<void> {
       } catch (err) {
         console.error("查询状态失败:", err);
       }
-      // 自动清理是后端在真的拉起 DSH 进程之后自己跑的，没有推送通道：顺路问一句有没有新结果。
-      await pollAutoCleanup();
     }
     setStatusRefresher(refresh);
 
@@ -1350,6 +1551,8 @@ async function main(): Promise<void> {
       const portError = portFieldError();
       if (portError) {
         localError = portError;
+        // 命令没发出去，就不要再显示「启动中」。
+        launchPending = false;
         // 重启点击时已经开始转（beginRestartSpin），命令没发出去就别转了。
         endRestartSpin();
         await refresh();
@@ -1365,6 +1568,9 @@ async function main(): Promise<void> {
         // 命令被后端拒绝（如端口占用）：重启没真正发生，立即收拾掉点击时的转动。
         if (command === "restart_dsh") endRestartSpin();
       }
+      // 命令返回后「在途」这一相就结束了：之后启动到哪一步交给状态里的「启动中」接着表达
+      //（进程起来了、登录链接还没就绪）。放刷新之前清，免得这一帧还停在 busy 上。
+      launchPending = false;
       await refresh();
       // 启动/重启都会重读一次环境清单：插件数、依赖状态可能刚变过。
       void loadProfiles();
@@ -1378,6 +1584,13 @@ async function main(): Promise<void> {
         void stopDsh();
         return;
       }
+      // 命令还在途：按钮已经显示「启动中…」，再点一次只会在后端排第二条启动命令。
+      if (launchPending) return;
+      // 立刻切到「启动中」形态，不等这条命令返回——后端那一轮可能要等 npx 下载。
+      // 走 paintToggle 而不是直接 renderToggleButton("busy")：形态、主色、aria-busy、
+      // 重启钮的显隐是同一套推导，别在点击瞬间另写一份结论。
+      launchPending = true;
+      paintToggle();
       void startOrRestart("start_dsh");
     });
     // 「重启 DSH」：点击瞬间开始持续转动（不等悬停那圈的 300ms 提前量），转动期间照旧可点、重点即重新计时。
@@ -1422,8 +1635,17 @@ async function main(): Promise<void> {
     /** 主按钮回填当前方式；菜单里的勾选也跟着走。 */
     function paintOpenMode(): void {
       const mode = OPEN_MODES.find((item) => item.key === openMode) ?? OPEN_MODES[0];
-      openIco.innerHTML = mode.icon;
-      openText.textContent = mode.label;
+      // 「复制登录链接」与其它复制按钮同一套结构（图标叠层 + 定宽文案层，见 ui/copy-feedback.ts）；
+      // 其它方式仍是单图标 + 单文案。切换方式时重建，顺带清掉上一次的复制反馈态。
+      const copyMode = mode.key === "copy";
+      openIco.innerHTML = copyMode ? copyIconStack() : mode.icon;
+      openText.innerHTML = copyMode ? copyTextChrome(mode.label) : escapeHtml(mode.label);
+      // 复制方式的文案层带 aria-hidden（三行叠放，读屏会连着念），名字改由 aria-label 给；
+      // 其它方式没有这层，名字仍走可见文字。
+      if (copyMode) btnOpen.setAttribute("aria-label", mode.label);
+      else btnOpen.removeAttribute("aria-label");
+      btnOpen.classList.toggle("copy-mode", copyMode);
+      btnOpen.classList.remove("copied", "copy-failed");
       for (const item of Array.from(openMenu.querySelectorAll<HTMLButtonElement>("[data-open-mode]"))) {
         item.setAttribute("aria-checked", item.dataset.openMode === openMode ? "true" : "false");
       }
@@ -1457,16 +1679,15 @@ async function main(): Promise<void> {
       });
     }
 
-    /** 复制登录链接：链接每次都重新取（token 是一次性铸造的），成功后按钮上短暂回显。 */
+    /** 复制登录链接：链接每次都重新取（token 是一次性铸造的），成功后按钮上短暂回显。
+        失败与另外三颗复制按钮一致：按钮内红态之外再补一条 toast。 */
     async function copyLoginUrl(): Promise<void> {
       const url = await invoke<string>("dsh_login_url");
       const ok = await writeText(url);
-      if (!ok) throw new Error("复制失败：剪贴板不可用");
-      const label = openText.textContent;
-      openText.textContent = "已复制链接";
-      window.setTimeout(() => {
-        if (openText.textContent === "已复制链接") openText.textContent = label;
-      }, 1500);
+      flashCopy(btnOpen, ok);
+      if (!ok) {
+        showToast("复制失败：剪贴板不可用，请手动选中文本复制。", "error");
+      }
     }
 
     // 主按钮：按当前方式真的去打开（应用内 / 浏览器 / 复制）。
@@ -1555,6 +1776,8 @@ async function main(): Promise<void> {
         try {
           const outcome = await invoke<BridgeOutcome>(name, { config: collectConfig() });
           logAction(outcome.message);
+          // 安装/卸载的结果除了进日志，再补一条回执：浮窗与日志都可能没在眼前。
+          showToast(outcome.message, outcome.ok ? "ok" : "error");
           if (!outcome.ok) {
             bridgeError.textContent = "命令返回非成功状态，请看下方输出与备份目录。";
             bridgeError.classList.remove("hidden");
@@ -1562,6 +1785,7 @@ async function main(): Promise<void> {
         } catch (err) {
           bridgeError.textContent = String(err);
           bridgeError.classList.remove("hidden");
+          showToast(`桥接插件操作失败：${String(err)}`, "error");
         } finally {
           bridgeBusy = false;
           updateBridgeButtons();
@@ -1591,9 +1815,11 @@ async function main(): Promise<void> {
           });
           logAction(message);
           bridgeError.classList.add("hidden");
+          showToast(message, "ok");
         } catch (err) {
           bridgeError.textContent = String(err);
           bridgeError.classList.remove("hidden");
+          showToast(`恢复桥接插件备份失败：${String(err)}`, "error");
         } finally {
           bridgeBusy = false;
           updateBridgeButtons();
@@ -1616,7 +1842,6 @@ async function main(): Promise<void> {
     const pluginSummary = $<HTMLSpanElement>("plugin-summary");
     const btnProfileCreate = $<HTMLButtonElement>("btn-profile-create");
     const btnBridge = $<HTMLButtonElement>("btn-bridge");
-    const btnPatch = $<HTMLButtonElement>("btn-patch");
     const envMenu = $<HTMLElement>("env-menu");
 
     /** 后端枚举回来的全部环境（含不能起网页的：照样列出来，只是标一句）。 */
@@ -1695,7 +1920,10 @@ async function main(): Promise<void> {
       const rows = manageablePlugins();
       const on = rows.filter((item) => item.enabled).length;
       const count = pluginLoaded ? `已启用 ${on}/${rows.length} 个插件` : "正在读取插件清单…";
-      pluginSummary.textContent = `${target.name} · ${count}`;
+      const updates = pluginUpdatesChecked
+        ? ` · ${pluginUpdateItems.filter((item) => item.hasUpdate).length} 个可更新`
+        : "";
+      pluginSummary.textContent = `${target.name} · ${count}${updates}`;
       pluginSummary.className = `badge ${target.depsInstalled ? "badge-running" : "badge-stopped"} panel-badge`;
     }
 
@@ -1774,6 +2002,19 @@ async function main(): Promise<void> {
       }
     }
 
+    /** 某个环境卡上的三点按钮；卡片重建（切换环境）后按环境名找回新的一颗。 */
+    function envMoreButton(name: string | null): HTMLElement | null {
+      if (!name) {
+        return null;
+      }
+      for (const btn of profileCards.querySelectorAll<HTMLElement>("[data-env-more]")) {
+        if (btn.dataset.envMore === name) {
+          return btn;
+        }
+      }
+      return null;
+    }
+
     /** 在三点按钮旁边展开菜单；靠视口边缘时往回收，别被窗口裁掉。 */
     function toggleEnvMenu(name: string, anchor: HTMLElement): void {
       const already = envMenuTarget === name;
@@ -1816,18 +2057,28 @@ async function main(): Promise<void> {
       item.addEventListener("click", () => {
         const name = envMenuTarget;
         const act = item.dataset.envAct ?? "";
+        // 菜单一收起，里面点的这一项就不可见了：先把焦点还给这颗三点按钮，
+        // 浮窗关闭时才有个「刚才点的位置」可回（见 setModal 的 modalReturnFocus）。
+        envMoreButton(name)?.focus();
         closeEnvMenu();
         if (!name) {
           return;
         }
         if (act === "rename") {
-          openNameModal("rename", name);
+          openNameModal("rename", name, envMoreButton(name));
         } else if (act === "copy") {
-          openNameModal("copy", name);
+          openNameModal("copy", name, envMoreButton(name));
         } else if (act === "delete") {
-          openNameModal("delete", name);
+          openNameModal("delete", name, envMoreButton(name));
         } else if (act === "deps") {
           void runEnvAction(() => installDeps(name));
+        } else if (act === "patch") {
+          // 补丁层是「按环境」的：先把管理目标切到这一个，再开浮窗（浮窗自己会去拉它的备份）。
+          // 切换会重建环境卡，所以要等切完再按环境名取那颗新的三点按钮当焦点归处。
+          void selectProfile(name).then(() => {
+            syncPatchModal();
+            setModal("patch", envMoreButton(name));
+          });
         } else if (act === "open") {
           void openProfileDir(name);
         }
@@ -1842,17 +2093,148 @@ async function main(): Promise<void> {
     const modalNameTitle = $<HTMLElement>("modal-name-title");
     type ModalId = "bridge" | "patch" | "name";
     let openModal: ModalId | null = null;
+    /** 打开浮窗前焦点所在的元素：关闭时把焦点还回去，键盘用户才不会被丢在页面顶部。 */
+    let modalReturnFocus: HTMLElement | null = null;
+    /** 等出场动画播完的定时器；期间再打开浮窗要把它取消掉。 */
+    let modalCloseTimer: number | null = null;
 
-    function setModal(id: ModalId | null): void {
-      openModal = id;
-      modalBridge.classList.toggle("hidden", id !== "bridge");
-      modalPatch.classList.toggle("hidden", id !== "patch");
-      modalName.classList.toggle("hidden", id !== "name");
-      modalScrim.classList.toggle("hidden", id === null);
-      if (id === null) {
-        closeEnvMenu();
-      }
+    /** 浮窗内可聚焦的控件（用于初始聚焦与 Tab 兜圈）。 */
+    function focusablesIn(container: HTMLElement): HTMLElement[] {
+      const nodes = container.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      return Array.from(nodes).filter(
+        (el) => !el.hasAttribute("disabled") && el.offsetParent !== null,
+      );
     }
+
+    function panelOf(id: ModalId): HTMLElement {
+      return id === "bridge" ? modalBridge : id === "patch" ? modalPatch : modalName;
+    }
+
+    /** 本机偏好关掉动效时，进出场应当瞬时完成，不再等出场那 130ms。 */
+    function motionOff(): boolean {
+      return document.documentElement.dataset.motion === "off";
+    }
+
+    /** 出场动画时长：直接读 --m-exit，避免 JS 里再写一份毫秒数。
+     *  浏览器把计算后的 <time> 序列化成秒（"0.13s"），不是变量里写的 "130ms"，
+     *  所以按单位换算，别把 0.13 当毫秒用。 */
+    function modalExitMs(): number {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue("--m-exit").trim();
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value) || value <= 0) {
+        return 130;
+      }
+      return raw.endsWith("ms") ? value : value * 1000;
+    }
+
+    function clearModalClose(): void {
+      if (modalCloseTimer !== null) {
+        window.clearTimeout(modalCloseTimer);
+        modalCloseTimer = null;
+      }
+      for (const panel of [modalBridge, modalPatch, modalName]) {
+        panel.classList.remove("is-closing");
+      }
+      modalScrim.classList.remove("is-closing");
+    }
+
+    /** 出场播完（或动效关闭）后才真正隐藏，display:none 不会截断动画。 */
+    function finishModalClose(): void {
+      modalCloseTimer = null;
+      modalReturnFocus = null;
+      for (const panel of [modalBridge, modalPatch, modalName]) {
+        panel.classList.add("hidden");
+        panel.classList.remove("is-closing");
+      }
+      modalScrim.classList.add("hidden");
+      modalScrim.classList.remove("is-closing");
+    }
+
+    /** 取出关闭后该还回去的焦点控件；卡片重建过就按环境名找回那颗三点按钮。 */
+    function takeModalReturnFocus(): HTMLElement | null {
+      const back = modalReturnFocus;
+      modalReturnFocus = null;
+      if (back?.isConnected) {
+        return back;
+      }
+      return envMoreButton(back?.dataset.envMore ?? null) ?? back;
+    }
+
+    function setModal(id: ModalId | null, returnFocus?: HTMLElement | null): void {
+      if (id !== null) {
+        // 打开（或从一张浮窗换到另一张）：取消还在跑的出场，再换显示的那张。
+        clearModalClose();
+        const wasOpen = openModal !== null;
+        openModal = id;
+        modalBridge.classList.toggle("hidden", id !== "bridge");
+        modalPatch.classList.toggle("hidden", id !== "patch");
+        modalName.classList.toggle("hidden", id !== "name");
+        modalScrim.classList.remove("hidden");
+        // 打开：把焦点送进浮窗第一颗按钮，并记住打开前的焦点。
+        // 调用方可以显式指定归处：从三点菜单打开时，那颗按钮在切换环境后会被重建。
+        if (!wasOpen) {
+          modalReturnFocus =
+            returnFocus ??
+            (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        }
+        const panel = panelOf(id);
+        const first = focusablesIn(panel)[0] ?? panel;
+        first.focus();
+        return;
+      }
+      // 关闭：先让出场动画播完，再真正隐藏（.hidden 是瞬时的，会截断动画）。
+      closeEnvMenu();
+      if (openModal === null && modalCloseTimer === null) {
+        return;
+      }
+      if (openModal !== null) {
+        const panel = panelOf(openModal);
+        openModal = null;
+        panel.classList.add("is-closing");
+        modalScrim.classList.add("is-closing");
+      }
+      const back = takeModalReturnFocus();
+      if (back?.isConnected) {
+        back.focus();
+      }
+      if (motionOff()) {
+        finishModalClose();
+        return;
+      }
+      if (modalCloseTimer !== null) {
+        window.clearTimeout(modalCloseTimer);
+      }
+      modalCloseTimer = window.setTimeout(finishModalClose, modalExitMs());
+    }
+
+    // 焦点圈在打开着的浮窗里：Tab / Shift+Tab 到首尾时折返，不会跑到浮窗背后的页面上。
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab" || openModal === null) {
+        return;
+      }
+      const panel =
+        openModal === "bridge"
+          ? modalBridge
+          : openModal === "patch"
+            ? modalPatch
+            : modalName;
+      const items = focusablesIn(panel);
+      if (items.length === 0) {
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || active === panel)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
 
     modalScrim.addEventListener("click", () => setModal(null));
     for (const close of root.querySelectorAll<HTMLButtonElement>("[data-modal-close]")) {
@@ -1881,10 +2263,6 @@ async function main(): Promise<void> {
     btnBridge.addEventListener("click", () => {
       void refreshBridgeState();
       setModal("bridge");
-    });
-    btnPatch.addEventListener("click", () => {
-      syncPatchModal();
-      setModal("patch");
     });
 
     // ---- 环境名输入：新建 / 重命名 / 复制 / 删除确认 ---------------------------
@@ -1934,8 +2312,13 @@ async function main(): Promise<void> {
       profileManageError.classList.remove("hidden");
     }
 
-    /** 打开名字浮窗：新建收集新名字，重命名/复制预填旧名字，删除只做确认。 */
-    function openNameModal(mode: NameMode, target: string | null): void {
+    /** 打开名字浮窗：新建收集新名字，重命名/复制预填旧名字，删除只做确认。
+     *  `returnFocus` 是关闭后焦点该回去的控件（三点菜单触发时显式传入）。 */
+    function openNameModal(
+      mode: NameMode,
+      target: string | null,
+      returnFocus?: HTMLElement | null,
+    ): void {
       nameMode = mode;
       nameTarget = target;
       // 命名规则与环境切分说明只在新建时可讲：卡里不再常驻这段说明，但也不能让人盲填。
@@ -1946,6 +2329,8 @@ async function main(): Promise<void> {
       );
       setManageError(null);
       const deleting = mode === "delete";
+      // 删除是危险动作：整张浮窗染成危险色（描边 + 淡底），让人一眼看出这次不是普通的改名。
+      modalName.classList.toggle("modal-danger", deleting);
       nameInputRow.classList.toggle("hidden", deleting);
       profileManageConfirm.classList.toggle("hidden", !deleting);
       if (deleting && target) {
@@ -1966,8 +2351,12 @@ async function main(): Promise<void> {
       btnNameConfirm.classList.toggle("danger", deleting);
       btnNameConfirm.classList.toggle("primary", !deleting);
       btnNameCancel.disabled = manageBusy;
-      setModal("name");
-      if (!deleting) {
+      setModal("name", returnFocus);
+      if (deleting) {
+        // 删除是危险动作：默认焦点不落在「确定删除」上，落在「取消」，
+        // 回车不会顺手把环境删掉。
+        btnNameCancel.focus();
+      } else {
         profileManageName.focus();
         profileManageName.select();
       }
@@ -2009,8 +2398,12 @@ async function main(): Promise<void> {
         } else if (outcome.ok) {
           setModal(null);
           void appendSystemNote(outcome.message);
+          // 新建/复制/重命名/删除的结果：浮窗一收就没别的地方能看到了，补一条回执。
+          // 成功与失败都回执——没做成也要让人知道，浮窗里的红字照旧留着说明原因。
+          showToast(outcome.message, "ok");
         } else {
           setManageError(outcome.message);
+          showToast(outcome.message, "error");
         }
         // 新建/复制/重命名都会改变清单，删掉的更得重读：一律重读一次。
         // 重装依赖同样可能让插件数从零变成若干，插件清单也得重新拉。
@@ -2022,6 +2415,7 @@ async function main(): Promise<void> {
         }
       } catch (err) {
         setManageError(String(err));
+        showToast(`环境操作没有完成：${String(err)}`, "error");
       } finally {
         manageBusy = false;
         btnNameConfirm.disabled = false;
@@ -2125,7 +2519,6 @@ async function main(): Promise<void> {
         const saved = await invoke<ShellConfig>("load_shell_config");
         prefs = normalizePrefs(saved);
         renderProfilesUI();
-        renderCacheAutoToggle();
       } catch (err) {
         setManageError(`重读配置失败：${err}`);
       }
@@ -2197,7 +2590,7 @@ async function main(): Promise<void> {
     /** 备份清单：最新的在最上面，每行能直接点「还原」；路径原文照抄，方便自己去翻。 */
     function renderPatchList(): void {
       if (patchBackups.length === 0) {
-        patchBackupList.innerHTML = `<p class="hint">这个环境还没有补丁层备份。改补丁层之前先点「备份补丁层」留个底。</p>`;
+        patchBackupList.innerHTML = `<p class="hint notice">这个环境还没有补丁层备份。改补丁层之前先点「备份补丁层」留个底。</p>`;
         return;
       }
       const newest = patchBackups[patchBackups.length - 1]?.name ?? "";
@@ -2350,6 +2743,12 @@ async function main(): Promise<void> {
     const pluginNote = $<HTMLParagraphElement>("plugin-note");
     const pluginWarning = $<HTMLParagraphElement>("plugin-warning");
     const btnPluginDeps = $<HTMLButtonElement>("btn-plugin-deps");
+    const btnPluginCheckUpdates = $<HTMLButtonElement>("btn-plugin-check-updates");
+    const btnPluginUpdateAll = $<HTMLButtonElement>("btn-plugin-update-all");
+    const btnUpdateAllBadge = $<HTMLSpanElement>("plugin-update-all-badge");
+    const pluginProgress = $<HTMLElement>("plugin-progress");
+    const pluginProgressBar = $<HTMLElement>("plugin-progress-bar");
+    const pluginProgressSum = $<HTMLParagraphElement>("plugin-progress-sum");
 
     /** 与 Rust 侧 `plugin_switch::PluginItem` 对应。 */
     interface PluginItem {
@@ -2359,6 +2758,8 @@ async function main(): Promise<void> {
       bridge: boolean;
       manual: boolean;
       switchable: boolean;
+      /** 插件自带的说明文字（后端从包 package.json 的 description 读的，读不到是 null）。 */
+      description: string | null;
     }
 
     /** 与 Rust 侧 `plugin_switch::ToggleOutcome` 对应。 */
@@ -2375,8 +2776,89 @@ async function main(): Promise<void> {
     let pluginLoaded = false;
     /** 已为哪个环境拉过清单；换环境才重新拉。 */
     let pluginLoadedFor: string | null = null;
+    /** 骨架最短展示时长（毫秒）：清单回得再快也要站够，避免快网络下只闪一下。 */
+    const PLUGIN_SKELETON_MIN_MS = 300;
+    /** 是否在画骨架（清单还没回来）。读到结果（成功/失败/空清单）都要关掉它，
+     *  否则骨架会一直挂在列表里冒充「还在加载」。 */
+    let pluginSkeleton = false;
+    /** 骨架最早可撤下的时刻（performance.now 时间戳）：清单回得再快也要站够最短展示，
+     *  避免快网络下只闪一下，比不画还难看。 */
+    let pluginSkeletonUntil = 0;
+    /** 下一次重铺要不要给真实行挂入场标记。只在「骨架 → 真实行」那一次置真，用完即清，
+     *  之后的重绘不带，免得每次重画都重播一遍入场。 */
+    let pluginEnterPending = false;
     /** 插件开关动作是否在跑（忙时所有开关置灰，防重复提交）。 */
     let pluginBusy = false;
+
+    /** 与 Rust 侧 `plugin_update::PluginUpdateItem` 对应。 */
+    interface PluginUpdateItem {
+      name: string;
+      current: string | null;
+      target: string | null;
+      error: string | null;
+      hasUpdate: boolean;
+    }
+
+    /** 与 Rust 侧 `plugin_update::UpdateOutcome` 对应。 */
+    interface UpdateOutcome {
+      ok: boolean;
+      message: string;
+      backupDir: string;
+    }
+
+    /**
+     * 与 Rust 侧 `plugin_update::ProgressEvent` 对应：批量更新时后端逐个插件回放的进度。
+     * 每个插件两条——`start`（开始动它）与 `done`（结果出来了）；单插件更新不走这里。
+     */
+    interface UpdateProgressEvent {
+      phase: "start" | "done";
+      /** 这一轮里的序号，从 1 起。 */
+      index: number;
+      /** 这一轮一共要更新几个。 */
+      total: number;
+      plugin: string;
+      /** 仅 `done`：这一步成功与否。 */
+      ok: boolean | null;
+      /** 仅 `done`：成功是版本提示，失败是原因（首行）。 */
+      message: string | null;
+    }
+
+    /** 行级更新状态：排队 → 更新中 → 已更新/失败。不在表里＝这一行没参与本轮。 */
+    type UpdatePhase = "queue" | "busy" | "done" | "fail";
+
+    /** 最近一次检查得到的更新清单（只含参与更新的第三方插件）。 */
+    let pluginUpdateItems: PluginUpdateItem[] = [];
+    /** 当前环境是否已检查过（没查过时行里不显示版本号，免得像「没有版本」）。 */
+    let pluginUpdatesChecked = false;
+    /** 插件更新动作是否在跑（忙时更新按钮与开关全部置灰，防重复提交）。 */
+    let pluginUpdateBusy = false;
+    /** 这轮更新是不是「全部更新」发起的：只有它让工具条上那枚图标转起来，单行更新不转。 */
+    let pluginUpdateRunningAll = false;
+    /** 检查更新是否在跑（「检查更新」按钮发起的强制重查；进卡自动查不锁界面）。 */
+    let pluginCheckBusy = false;
+    /** 这一轮更新里每一行自己的状态（键＝插件名）。空着＝没有正在展示的更新轮次。 */
+    let pluginUpdatePhases = new Map<string, { phase: UpdatePhase; message: string | null }>();
+    /** 这一轮要更新几个／已完成几个（含失败）／失败几个：进度条与收尾汇总都按它们算。 */
+    let pluginProgressTotal = 0;
+    let pluginProgressDone = 0;
+    let pluginProgressFailed = 0;
+    /** 收尾汇总文案（null＝这一轮还没跑完，进度区显示进行中的已完成数）。 */
+    let pluginProgressSummary: string | null = null;
+
+    /** 清掉上一轮的进度与行级状态（换环境、重新检查、开始新一轮时用）。 */
+    function resetPluginProgress(): void {
+      pluginUpdatePhases = new Map();
+      pluginProgressTotal = 0;
+      pluginProgressDone = 0;
+      pluginProgressFailed = 0;
+      pluginProgressSummary = null;
+    }
+
+    /** 插件卡上还有没有别的动作在跑（检查更新或任意一轮更新）：
+     *  是的话开关与更新按钮全部置灰——维护者要求这些操作互斥，做完才放开。 */
+    function pluginActionBusy(): boolean {
+      return pluginUpdateBusy || pluginCheckBusy;
+    }
 
     /**
      * 插件清单：一行一个插件，右端一枚**总开关**（开/关整个插件）。
@@ -2397,20 +2879,152 @@ async function main(): Promise<void> {
       return ` title="${escapeHtml(`总开关：停用整个「${item.name}」。它挂在 ${points}。${manual}改完要重启 DSH 才生效。`)}"`;
     }
 
-    function pluginRowHtml(item: PluginItem): string {
+    /** 该插件最近的检查结果（没查过、或不在更新范围——官方骨架包/桥接插件——就没有行）。 */
+    function updateItemFor(name: string): PluginUpdateItem | null {
+      return pluginUpdateItems.find((item) => item.name === name) ?? null;
+    }
+
+    /** 行级四态的中文标签：排队 / 更新中 / 已更新 / 失败。 */
+    const updatePhaseLabel: Record<UpdatePhase, string> = {
+      queue: "排队",
+      busy: "更新中",
+      done: "已更新",
+      fail: "失败",
+    };
+
+    /** 这一行在本轮更新里的状态；没参与本轮返回 null。 */
+    function updatePhaseFor(name: string): { phase: UpdatePhase; message: string | null } | null {
+      return pluginUpdatePhases.get(name) ?? null;
+    }
+
+    /** 行标题里那枚状态胶囊：只在参与本轮更新的行上出现。 */
+    function pluginPhaseChipHtml(name: string): string {
+      const state = updatePhaseFor(name);
+      if (!state) {
+        return "";
+      }
+      return `<span class="plugin-phase plugin-phase-${state.phase}">${updatePhaseLabel[state.phase]}</span>`;
+    }
+
+    /** 失败行把原因留在行里（可读、可核对），成功行不占位。 */
+    function pluginFailHtml(name: string): string {
+      const state = updatePhaseFor(name);
+      if (!state || state.phase !== "fail") {
+        return "";
+      }
+      const reason = state.message ? `失败：${state.message}` : "失败：原因未知";
+      return `<div class="plugin-fail" title="${escapeHtml(reason)}">${escapeHtml(reason)}</div>`;
+    }
+
+    /** 行标题里的版本徽章：查过更新才有；版本读不出来时亮「版本未知」。
+     *  检查失败（registry 查不到/断网）必须露出来，不能只留版本号装没事——
+     *  本地 tgz、私有包装的插件就落在这条分支上。 */
+    function pluginVerBadgeHtml(item: PluginItem): string {
+      if (!pluginUpdatesChecked) {
+        return "";
+      }
+      const upd = updateItemFor(item.name);
+      if (!upd) {
+        return "";
+      }
+      if (upd.error && !upd.current) {
+        return `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">版本未知</span>`;
+      }
+      if (!upd.current) {
+        return "";
+      }
+      const bad = upd.error
+        ? `<span class="plugin-ver plugin-ver-bad" title="${escapeHtml(upd.error)}">检查失败</span>`
+        : "";
+      // 有更新：旧版本 → 新版本两枚徽章并列，新版本用绿色突出；目标版本同时收在
+      // 「更新」按钮的气泡里，更新前后对比一眼可见。
+      if (upd.hasUpdate && upd.target) {
+        return `<span class="plugin-ver">v${escapeHtml(upd.current)}</span><span class="plugin-ver-arrow" aria-hidden="true">→</span><span class="plugin-ver plugin-ver-new" title="registry 上的最新版本">v${escapeHtml(upd.target)}</span>`;
+      }
+      return `<span class="plugin-ver">v${escapeHtml(upd.current)}</span>${bad}`;
+    }
+
+    /** 行里的「更新」按钮：有更新才出现；目标版本在新版本徽章与气泡里，点不点由维护者定。
+     *  这一轮参与更新的行按状态改文案：排队/更新中置灰但不摘掉（互斥面要有可读的禁用态），
+     *  已更新摘掉（没得再更），失败换成「重试」（失败行留着，能单独再跑一次）。 */
+    function pluginUpdateCellHtml(item: PluginItem): string {
+      const state = updatePhaseFor(item.name);
+      if (state?.phase === "done") {
+        return "";
+      }
+      if (state) {
+        const busy = pluginActionBusy() || pluginBusy ? " disabled" : "";
+        const upd = updateItemFor(item.name);
+        const retry = state.phase === "fail";
+        const label = retry ? "重试" : "更新";
+        const hint = retry
+          ? `重新更新「${item.name}」；失败原因在行内`
+          : `把 ${item.name} 从 v${upd?.current ?? "?"} 更新到 v${upd?.target ?? "?"}`;
+        return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="${escapeHtml(hint)}"${busy}>${label}</button>`;
+      }
+      if (!pluginUpdatesChecked) {
+        return "";
+      }
+      const upd = updateItemFor(item.name);
+      if (!upd || !upd.hasUpdate || !upd.target) {
+        return "";
+      }
+      const busy = pluginActionBusy() || pluginBusy ? " disabled" : "";
+      return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新</button>`;
+    }
+
+    function pluginRowHtml(item: PluginItem, enterIndex = -1): string {
       // 只留「桥接」这一枚身份标签：开关本身已经说明启用与否，再写一遍「已启用/已停用」
       // 是同一件事说两次；「手写禁用」这点信息收进行提示，不占位。
       const marks = item.bridge ? `<span class="plugin-tag plugin-tag-bridge">桥接</span>` : "";
+      // 描述是插件自己带的元信息（package.json 的 description），单行截断、悬停看全文；
+      // 没有的包就不渲染这一行，行高随内容，不做假两行。
+      const desc = item.description
+        ? `<div class="plugin-desc" title="${escapeHtml(item.description)}">${escapeHtml(item.description)}</div>`
+        : "";
+      // 检查/更新进行中把开关也锁上（互斥）：正常开关忙态不锁——那条链路逐行重绘，锁
+      // 整表会让别的行在开关结束后残留在禁用态。
+      const lock = pluginActionBusy() ? " disabled" : "";
       const label = item.enabled ? "停用" : "启用";
-      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${pluginRowTitle(item)}><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"><span class="switch-knob"></span></button></div>`;
+      const state = updatePhaseFor(item.name);
+      const phaseAttr = state ? ` data-phase="${state.phase}"` : "";
+      // 入场序号：只在「骨架 → 真实行」那一次重铺里带上（enterIndex >= 0），序号既写进
+      // `--i` 给 CSS 算错开的延迟，也写进 `data-enter` 当稳定的测试钩子；之后的重绘不带，
+      // 不会每次重画都重播一遍入场。
+      const enterAttr =
+        enterIndex >= 0 ? ` style="--i:${enterIndex}" data-enter="${enterIndex}"` : "";
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${phaseAttr}${enterAttr}${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
+    }
+
+    /** 一行骨架：左侧一个圆点（图标位）加长短两条灰条（标题与说明），右端一枚方条（开关位）。
+     *  结构与真实行同高（`.plugin-row` 的 padding/border 照搬，主列固定 38px），切换时版面不跳。
+     *  刻意不复用 `.plugin-row` 类：那是「真实插件行」的语义钩子（其它界面测试靠它判断
+     *  清单是否读完），骨架顶上会让它们以为已经加载完了。 */
+    function pluginSkeletonRowHtml(index: number): string {
+      return `<div class="plugin-skel" data-skeleton="${index}" aria-hidden="true"><div class="sk-main"><span class="sk-dot"></span><span class="sk-line sk-line-name"></span><span class="sk-line sk-line-desc"></span></div><span class="sk-line sk-line-switch"></span></div>`;
     }
 
     function renderPluginList(): void {
       const rows = manageablePlugins();
+      // 骨架只在「还没读到清单」时铺：读到空清单是空态，不是加载中。
+      const showSkeleton = pluginSkeleton && !pluginLoaded;
       pluginEmpty.classList.toggle("hidden", rows.length > 0 || !pluginLoaded);
       // 整表重铺会重建每一行，先把滚动位置记下来再放回去，否则列表看着像跳了一下。
       const scrollTop = pluginList.scrollTop;
-      pluginList.innerHTML = rows.map(pluginRowHtml).join("");
+      if (showSkeleton) {
+        pluginList.innerHTML = [0, 1, 2].map(pluginSkeletonRowHtml).join("");
+        pluginList.classList.add("is-loading");
+        pluginList.classList.remove("is-loaded");
+        pluginList.scrollTop = scrollTop;
+        renderPluginUpdatesToolbar();
+        return;
+      }
+      // 只在「骨架 → 真实行」那次重铺挂入场；用完即清，后续重绘不再重播。
+      const enter = pluginEnterPending;
+      pluginEnterPending = false;
+      pluginList.innerHTML = rows.map((item, i) => pluginRowHtml(item, enter ? i : -1)).join("");
+      pluginList.classList.remove("is-loading");
+      pluginList.classList.toggle("is-loaded", pluginLoaded && rows.length > 0);
       pluginList.scrollTop = scrollTop;
       for (const box of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin]")) {
         box.addEventListener("click", () => {
@@ -2418,6 +3032,113 @@ async function main(): Promise<void> {
           void togglePlugin(box.dataset.plugin ?? "", next);
         });
       }
+      for (const box of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin-update]")) {
+        box.addEventListener("click", () => {
+          void updatePlugin(box.dataset.pluginUpdate ?? "");
+        });
+      }
+      renderPluginUpdatesToolbar();
+    }
+
+    /** 工具条两枚图标的可用状态与动效：在忙（含检查/更新互斥）、还没查过、
+     *  没有可更新的插件就置灰；正在跑的那一枚转起来（复用 .square-btn 的旋转）。 */
+    function renderPluginUpdatesToolbar(): void {
+      const pending = pluginUpdateItems.filter((item) => item.hasUpdate).length;
+      const busy = pluginActionBusy() || pluginBusy;
+      btnPluginCheckUpdates.disabled = busy || !pluginLoaded;
+      btnPluginUpdateAll.disabled = busy || !pluginUpdatesChecked || pending === 0;
+      // 转圈只认「自己这枚按钮发起的动作」：检查转检查的，全部更新转全部更新的；
+      // 单行更新只置灰工具条，不让「全部更新」的图标空转。转的是叠加的环形 spinner。
+      setSquareBusy(btnPluginCheckUpdates, pluginCheckBusy);
+      setSquareBusy(btnPluginUpdateAll, pluginUpdateBusy && pluginUpdateRunningAll);
+      // 右上角微标 = 当前可更新的插件数；没有可更新时收掉，按钮本身置灰已足够。
+      btnUpdateAllBadge.textContent = pending > 0 ? String(pending) : "";
+      btnUpdateAllBadge.classList.toggle("hidden", pending === 0);
+    }
+
+    /**
+     * 画顶部这条确定进度条与汇总文案。
+     *
+     * 百分比只按「已完成数 / 总数」算（不转圈、不猜），收尾时正好 100%；汇总区是
+     * `aria-live="polite"`，完成一句话会被读屏读出来。失败数一并写进去，不藏在行里。
+     */
+    function renderPluginProgress(): void {
+      const visible = pluginProgressTotal > 0 || pluginProgressSummary !== null;
+      pluginProgress.classList.toggle("hidden", !visible);
+      const percent =
+        pluginProgressTotal > 0 ? Math.round((pluginProgressDone / pluginProgressTotal) * 100) : 0;
+      pluginProgressBar.setAttribute("aria-valuenow", String(percent));
+      const fill = pluginProgressBar.firstElementChild;
+      if (fill instanceof HTMLElement) {
+        fill.style.width = `${percent}%`;
+      }
+      pluginProgressSum.textContent =
+        pluginProgressSummary ??
+        (pluginProgressTotal > 0
+          ? `正在更新：已完成 ${pluginProgressDone}/${pluginProgressTotal}`
+          : "");
+    }
+
+    /** 兜底收尾：这一轮结束后仍有行没走到「已更新/失败」（整轮在命令级就失败、
+     *  或进度通道最后一条没送到），把它们按失败补齐，进度条推到 100%，汇总照实写。
+     *  只对批量生效——单插件的结果只认命令返回值。 */
+    function settleUnfinishedPluginRows(scope: string[], name: string | null): void {
+      if (name !== null || pluginProgressTotal <= 0 || pluginProgressDone >= pluginProgressTotal) {
+        return;
+      }
+      const successes = pluginProgressDone - pluginProgressFailed;
+      for (const plugin of scope) {
+        const state = pluginUpdatePhases.get(plugin);
+        if (state !== undefined && (state.phase === "done" || state.phase === "fail")) {
+          continue;
+        }
+        pluginUpdatePhases.set(plugin, { phase: "fail", message: "没有收到结果" });
+      }
+      pluginProgressFailed = pluginProgressTotal - successes;
+      pluginProgressDone = pluginProgressTotal;
+      pluginProgressSummary = `已更新 ${successes}/${pluginProgressTotal}，${pluginProgressFailed} 个失败`;
+    }
+
+    /** 全部跑完时把收尾文案定下来：`已更新 N/M，K 个失败`（N 是成功的，M 是本轮总数）。
+     *  已经有汇总文案（例如整轮在命令级就失败、由 settleUnfinishedPluginRows 收的尾）就不再改。 */
+    function finishPluginProgressIfComplete(): void {
+      if (
+        pluginProgressTotal > 0 &&
+        pluginProgressDone >= pluginProgressTotal &&
+        pluginProgressSummary === null
+      ) {
+        const ok = pluginProgressDone - pluginProgressFailed;
+        pluginProgressSummary = `已更新 ${ok}/${pluginProgressTotal}，${pluginProgressFailed} 个失败`;
+      }
+    }
+
+    /** 吃一条后端进度事件：start 只把这一行点亮，done 记结果并推进进度条。
+     *  已完成数直接取后端给的 `index`（从 1 起），总数取 `total`——不靠前端自增，
+     *  这样漏收一条或顺序有变时进度条也不会和真实结果脱节。 */
+    function applyUpdateProgress(event: UpdateProgressEvent): void {
+      if (event.total > 0) {
+        pluginProgressTotal = event.total;
+      }
+      if (event.phase === "start") {
+        pluginUpdatePhases.set(event.plugin, { phase: "busy", message: null });
+      } else {
+        const previous = pluginUpdatePhases.get(event.plugin);
+        const counted = previous !== undefined && previous.phase !== "done" && previous.phase !== "fail";
+        if (counted && event.ok !== true) {
+          pluginProgressFailed += 1;
+        }
+        if (event.index > pluginProgressDone) {
+          pluginProgressDone = event.index;
+        }
+        const ok = event.ok === true;
+        pluginUpdatePhases.set(event.plugin, {
+          phase: ok ? "done" : "fail",
+          message: ok ? (event.message ?? null) : (event.message ?? "原因未知"),
+        });
+        finishPluginProgressIfComplete();
+      }
+      renderPluginList();
+      renderPluginProgress();
     }
 
     /**
@@ -2445,38 +3166,231 @@ async function main(): Promise<void> {
         pluginItems = [];
         pluginLoaded = false;
         pluginLoadedFor = null;
+        pluginSkeleton = false;
+        pluginEnterPending = false;
+        pluginUpdateItems = [];
+        pluginUpdatesChecked = false;
+        resetPluginProgress();
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
+        renderPluginProgress();
         return;
       }
       if (pluginLoadedFor !== target.name) {
         pluginLoadedFor = target.name;
         pluginItems = [];
         pluginLoaded = false;
+        // 进卡即铺骨架，并记下最早可撤下的时刻：清单回得再快也得站够最短展示。
+        pluginSkeleton = true;
+        pluginSkeletonUntil = performance.now() + PLUGIN_SKELETON_MIN_MS;
+        pluginEnterPending = false;
+        // 更新清单跟着环境走，一并重置；第一次进这张卡自动查一次
+        // （后端有会话级缓存，重进/重查不打网络）。
+        pluginUpdateItems = [];
+        pluginUpdatesChecked = false;
+        resetPluginProgress();
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
+        renderPluginProgress();
         void refreshPluginList(target.name);
+        void refreshPluginUpdates(target.name, false);
         return;
       }
       renderPluginList();
     }
 
-    /** 读一次插件清单（读失败只提示，不打断其它动作）。 */
+    /**
+     * 检查一次更新：进插件卡自动查（每个环境一次，后端会话缓存兜着），
+     *  「检查更新」按钮强制重查。失败只提示，不打断开关插件等其它动作。
+     *  强制重查期间锁住插件卡的全部操作（互斥），自动查不锁——它是背景动作。
+     *  返回这一轮是否成功（强制重查成功才落勾，见 #29）；换了环境丢弃结果算失败。
+     */
+    async function refreshPluginUpdates(name: string, force: boolean): Promise<boolean> {
+      if (!name || (force && pluginCheckBusy)) {
+        return false;
+      }
+      if (force) {
+        pluginCheckBusy = true;
+        // 重新检查＝新一轮：上一轮的行级状态与收尾文案都作废，免得旧结果冒充新结果。
+        resetPluginProgress();
+        renderPluginList();
+        renderPluginProgress();
+      }
+      let ok = false;
+      try {
+        const items = await invoke<PluginUpdateItem[]>("plugin_updates_list", {
+          config: collectConfig(),
+          name,
+          source: prefs.downloadSource,
+          force,
+        });
+        if (prefs.profile !== name) {
+          return false; // 期间换了环境，丢弃这批结果
+        }
+        pluginUpdateItems = items;
+        pluginUpdatesChecked = true;
+        ok = true;
+        renderPluginList();
+        renderPluginSummary();
+        const pending = items.filter((item) => item.hasUpdate).length;
+        const broken = items.filter((item) => item.error).length;
+        // 只有用户主动点的「检查更新」才写日志：进卡自动查是背景动作，结果就在
+        // 行内版本号与徽章上，写日志只会让每次开卡都冒出一条没动作的未读。
+        if (force) {
+          logAction(
+            `已重新检查插件更新：${pending} 个可更新` + (broken ? `、${broken} 个查不到` : ""),
+          );
+        }
+      } catch (err) {
+        if (prefs.profile === name) {
+          setPluginNote(`检查插件更新失败：${String(err)}`);
+        }
+        logAction(`检查插件更新失败：${String(err)}`);
+      } finally {
+        if (force) {
+          pluginCheckBusy = false;
+          renderPluginList();
+        }
+      }
+      // 用户主动点的「检查更新」成功后落一个勾停 0.9s；自动查（背景动作）不闪反馈。
+      if (force && ok) {
+        flashSquareDone(btnPluginCheckUpdates);
+      }
+      return ok;
+    }
+
+    /**
+     * 更新单个插件（`name` 有值）或全部有更新的插件（`null`，后端逐个执行、
+     * 单个失败不影响其余）。
+     *
+     * 忙时所有更新入口都置灰；完成后用后端回来的汇总提示，并重查一次更新清单
+     * （更新过的包后端已挪掉会话缓存，这一步看到的是装上的真版本）。
+     * 更新不碰补丁层：停用状态原样保留；但新版本若改了挂载点，停用可能失效，要提醒。
+     */
+    async function updatePlugin(name: string | null): Promise<void> {
+      const target = prefs.profile;
+      if (!target || pluginBusy || pluginActionBusy() || manageBusy || patchBusy) {
+        return;
+      }
+      // 只有「全部更新」会让工具条上那枚按钮转圈，所以也只有它结束才落勾（见 #29）。
+      const runningAll = name === null;
+      pluginUpdateBusy = true;
+      pluginUpdateRunningAll = runningAll;
+      setPluginNote(null);
+      setPluginWarning(null);
+      // 记下这轮要动的插件（批量=查出的全部可更新行），完事好提醒「停用的也更新了」。
+      const scope = name
+        ? [name]
+        : pluginUpdateItems.filter((item) => item.hasUpdate).map((item) => item.name);
+      let ok = false;
+      // 开端就把整轮状态摆出来：批量全部进「排队」，单行直接「更新中」——不画假进度。
+      resetPluginProgress();
+      if (name === null) {
+        pluginProgressTotal = scope.length;
+        for (const plugin of scope) {
+          pluginUpdatePhases.set(plugin, { phase: "queue", message: null });
+        }
+      } else if (name) {
+        pluginUpdatePhases.set(name, { phase: "busy", message: null });
+      }
+      renderPluginList();
+      renderPluginProgress();
+      // 批量走进度通道（后端逐个回放开始/结束）；单插件只认返回值——一个状态来源。
+      const progress = name === null ? new Channel<UpdateProgressEvent>() : null;
+      if (progress) {
+        progress.onmessage = (event: UpdateProgressEvent) => {
+          applyUpdateProgress(event);
+        };
+      }
+      try {
+        const outcome = await invoke<UpdateOutcome>("plugin_update", {
+          config: collectConfig(),
+          name: target,
+          source: prefs.downloadSource,
+          plugin: name,
+          progress,
+        });
+        ok = outcome.ok;
+        setPluginNote(outcome.message);
+        logAction(outcome.message);
+        // 更新结果的回执（#34）：批量收尾的那句里带失败条数，这里只把后端的话搬出来，
+        // 进度事件与行级状态归 #33，这里不碰。
+        showToast(outcome.message, outcome.ok ? "ok" : "error");
+        if (name !== null) {
+          // 单插件：返回值的 ok 就是这一行的结果，失败原因就写在 message 里。
+          pluginUpdatePhases.set(name, {
+            phase: outcome.ok ? "done" : "fail",
+            message: outcome.ok ? null : outcome.message,
+          });
+        }
+        if (outcome.ok) {
+          const disabled = scope.filter(
+            (plugin) => pluginItems.find((item) => item.name === plugin)?.enabled === false,
+          );
+          if (disabled.length > 0) {
+            setPluginWarning(
+              `「${disabled.join("」「")}」目前处于停用状态，更新后保持停用；若新版本改了挂载点，停用可能失效。`,
+            );
+          }
+        }
+        await refreshPluginUpdates(target, false);
+      } catch (err) {
+        setPluginNote(`更新插件失败：${String(err)}`);
+        logAction(`更新插件失败：${String(err)}`);
+        showToast(`更新插件失败：${String(err)}`, "error");
+        if (name) {
+          pluginUpdatePhases.set(name, { phase: "fail", message: String(err) });
+        }
+      } finally {
+        pluginUpdateBusy = false;
+        pluginUpdateRunningAll = false;
+        // 兜底：没走完的行按失败补齐再定汇总，不让进度条悬在「已完成 x/N」。
+        settleUnfinishedPluginRows(scope, name);
+        finishPluginProgressIfComplete();
+        renderPluginList();
+        renderPluginProgress();
+        renderPluginSummary();
+      }
+      // 全部更新成功：在工具条那枚按钮上落勾停 0.9s；失败直接还原，不做错误态图标。
+      if (runningAll && ok) {
+        flashSquareDone(btnPluginUpdateAll);
+      }
+    }
+
+    /** 读一次插件清单（读失败只提示，不打断其它动作）。
+     *  骨架有最短展示：清单回得再快，也要站到 `pluginSkeletonUntil` 才换成真实行，
+     *  否则快网络下骨架闪一下就没，比不画还难看。 */
     async function refreshPluginList(name: string): Promise<void> {
       try {
         const list = await invoke<PluginItem[]>("plugin_list", { config: collectConfig(), name });
         if (prefs.profile !== name) {
           return; // 期间换了环境，丢弃这批结果
         }
+        // 站够最短展示再撤骨架。
+        const wait = pluginSkeletonUntil - performance.now();
+        if (pluginSkeleton && wait > 0) {
+          await new Promise((done) => setTimeout(done, wait));
+          if (prefs.profile !== name) {
+            return; // 等待期间又换了环境，这批结果作废
+          }
+        }
+        const hadSkeleton = pluginSkeleton;
         pluginItems = list;
         pluginLoaded = true;
+        pluginSkeleton = false;
+        // 只有「骨架 → 真实行」那一次挂入场；之前没有骨架就不重播。
+        pluginEnterPending = hadSkeleton;
         renderPluginList();
         // 徽章的计数与列表同口径：清单回来要把「正在读取…」换成真实数字。
         renderPluginSummary();
       } catch (err) {
         if (prefs.profile === name) {
+          // 读失败：撤掉骨架（不冒充还在加载），只留失败提示；空态也不显示。
+          pluginSkeleton = false;
+          pluginEnterPending = false;
+          renderPluginList();
           setPluginNote(`读取插件清单失败：${String(err)}`);
         }
       }
@@ -2491,7 +3405,9 @@ async function main(): Promise<void> {
      */
     async function togglePlugin(name: string, enabled: boolean): Promise<void> {
       const target = prefs.profile;
-      if (!target || !name || pluginBusy || manageBusy || patchBusy) {
+      // 检查/更新进行中不允许动开关（互斥）：更新要改 node_modules，开关要写补丁层，
+      // 两边同时落盘没有意义，还容易让「更新后保持停用」的判断踩到刚翻的状态。
+      if (!target || !name || pluginBusy || pluginActionBusy() || manageBusy || patchBusy) {
         return;
       }
       pluginBusy = true;
@@ -2524,6 +3440,8 @@ async function main(): Promise<void> {
       } catch (err) {
         setPluginNote(`切换插件开关失败：${String(err)}`);
         logAction(`切换插件开关失败：${String(err)}`);
+        // 开关失败也要留回执：卡上那行提示会被下一次操作冲掉，toast 能兜住这一下。
+        showToast(`切换插件开关失败：${String(err)}`, "error");
         // 失败时开关已经被点过去了，先把它拨回真实状态，再让下面重铺一次与后端对齐。
         paintPluginRow(name, !enabled, false);
         pluginLoadedFor = null;
@@ -2578,36 +3496,49 @@ async function main(): Promise<void> {
       void runEnvAction(() => installDeps(prefs.profile), { output: true });
     });
 
+    // 「检查更新」：强制重查（后端绕过会话缓存真发网络）；跑完前插件卡整体互斥。
+    btnPluginCheckUpdates.addEventListener("click", () => {
+      if (!prefs.profile || pluginBusy || pluginActionBusy()) {
+        return;
+      }
+      void refreshPluginUpdates(prefs.profile, true);
+    });
+
+    // 「全部更新」：批量走后端逐个升级（plugin=null），汇总由后端算好带回来。
+    btnPluginUpdateAll.addEventListener("click", () => {
+      void updatePlugin(null);
+    });
+
     // ---- 集成面板：命令行集成（用户级 PATH + dsh 垫片） ------------------------
     // 目录、垫片内容、手动命令与状态说明都由后端算好，界面只负责渲染，
     // 免得两边各算一套口径对不上。
     let cliBusy = false;
     /** 后端说当前宿主能不能自动接入（只有 Windows）。非 Windows 时开关整段藏起来。 */
     let cliSupported = false;
-    /** 两张半卡（命令行 + 缓存）共享同一个收起后徽章，所以各自只记录状态，徽章统一渲染。 */
+    /** 两张半卡（命令行 + DSH 版本）共享同一个收起后徽章，所以各自只记录状态，徽章统一渲染。 */
     let cliBadgeText = "命令行读取中";
     let cliBadgeConnected = false;
     let cliBadgeFailed = false;
     /** 命令行那半是否已经拿到结果（两半各跑各的，先到的不应该把另一份还没读的当成「不可用」）。 */
     let cliLoaded = false;
-    let cacheBadgeText: string | null = null;
-    let cacheBadgeFailed = false;
+    let dshVersionsBadgeText: string | null = null;
+    let dshVersionsBadgeFailed = false;
 
-    /** 收起后只能看到这一个徽章，所以两半的信息合在一起：`命令行已接入 · 缓存 1.8 GB`。 */
+    /** 收起后只能看到这一个徽章，所以两半的信息合在一起：`命令行已接入 · 装了 2 份 DSH`。 */
     function renderIntegrationsSummary(): void {
       if (cliLoaded && !cliSupported) {
         cliSummary.className = "badge badge-stopped panel-badge";
         cliSummary.textContent = "仅 Windows 可用";
         return;
       }
-      if (cliLoaded && cacheBadgeFailed && cliBadgeFailed) {
+      if (cliLoaded && dshVersionsBadgeFailed && cliBadgeFailed) {
         cliSummary.className = "badge badge-failed panel-badge";
         cliSummary.textContent = "读取失败";
         return;
       }
       const parts = [cliBadgeText];
-      if (cacheBadgeText !== null) {
-        parts.push(cacheBadgeText);
+      if (dshVersionsBadgeText !== null) {
+        parts.push(dshVersionsBadgeText);
       }
       cliSummary.className = `badge ${cliBadgeConnected ? "badge-running" : "badge-stopped"} panel-badge`;
       cliSummary.textContent = parts.join(" · ");
@@ -2620,7 +3551,7 @@ async function main(): Promise<void> {
       for (const el of cliWindowsOnly) {
         el.classList.toggle("hidden", !state.supported);
       }
-      cliToggle.checked = state.enabled;
+      cliToggle.setAttribute("aria-checked", state.enabled ? "true" : "false");
       cliToggle.disabled = cliBusy || !state.supported;
       cliBinDir.textContent = state.binDir;
       cliShimPath.textContent = state.shimPath;
@@ -2628,6 +3559,8 @@ async function main(): Promise<void> {
       // 垫片渲染不出来（启动方式还没填完整等）时把原因显示在代码块里，便于手改。
       cliShimText.textContent = state.shimError === null ? state.shimText : state.shimError;
       cliMessage.textContent = state.message;
+      // 正常态是灰字状态说明；上一次失败留下的黄色胶囊要撤掉。
+      cliMessage.classList.remove("notice");
       const connected = state.supported && state.enabled && state.onPath;
       cliBadgeConnected = connected;
       cliBadgeFailed = false;
@@ -2641,6 +3574,8 @@ async function main(): Promise<void> {
         renderCliState(state);
       } catch (err) {
         cliMessage.textContent = `读取命令行集成状态失败：${err}`;
+        // 读不到状态是要用户处理的事，用醒目提示把它从普通灰字里拎出来。
+        cliMessage.classList.add("notice");
         cliLoaded = true;
         cliBadgeFailed = true;
         cliBadgeText = "命令行读取失败";
@@ -2664,17 +3599,15 @@ async function main(): Promise<void> {
         // 写 PATH 失败时后端不会留下半成品，这里把界面也拨回去，避免看着「已接入」其实没接。
         cliError.textContent = String(err);
         cliError.classList.remove("hidden");
-        cliToggle.checked = prefs.cliIntegration;
+        cliToggle.setAttribute("aria-checked", prefs.cliIntegration ? "true" : "false");
       } finally {
         cliBusy = false;
         cliToggle.disabled = !cliSupported;
       }
     }
 
-    /** 启动方式（或二进制路径、自定义命令）改了就按新配置重写垫片；开关关着时只刷新说明。
-        顺便重扫缓存盘面：保留集合里的「当前配置那份」跟着启动配置走，不重扫就会停在旧值。 */
+    /** 启动方式（或二进制路径、自定义命令）改了就按新配置重写垫片；开关关着时只刷新说明。 */
     async function syncCliShim(): Promise<void> {
-      void refreshCacheState();
       if (!prefs.cliIntegration) {
         await refreshCliState();
         return;
@@ -2687,18 +3620,14 @@ async function main(): Promise<void> {
         renderCliState(state);
       } catch (err) {
         cliMessage.textContent = `垫片没能跟着重写：${err}`;
+        cliMessage.classList.add("notice");
       }
     }
 
-    cliToggle.addEventListener("change", () => {
-      void applyCliIntegration(cliToggle.checked);
-    });
-
-    // 自动清理开关：只改一个持久化的偏好，真正的触发在后端真的拉起 DSH 进程之后。
-    // 先回写 prefs 再保存，否则下一次任何字段的自动保存都会把刚打开的值抹回默认。
-    cacheAutoToggle.addEventListener("change", () => {
-      prefs.cacheCleanup = cacheAutoToggle.checked;
-      void persistConfigQuiet();
+    // 开关是 button + role="switch"：状态在 aria-checked 上，点击时取反后提交。
+    cliToggle.addEventListener("click", () => {
+      const next = cliToggle.getAttribute("aria-checked") !== "true";
+      void applyCliIntegration(next);
     });
 
     btnCliDir.addEventListener("click", () => {
@@ -2713,157 +3642,227 @@ async function main(): Promise<void> {
       })();
     });
 
-    // ---- 集成面板：npx 缓存盘面 --------------------------------------------------
-    // 归属判定、保留集合、占用与可回收字节、每次删除成败与原因全部在后端算好，
-    // 界面只负责渲染（数字已由后端格式化成 `1.8 GB` 这种形式）。
-    let cacheBusy = false;
-    /** 最近一次拿到的盘面：清理结束后要根据新的可回收份数决定按钮能不能再点。 */
-    let cacheRemovable = 0;
+    // ---- 集成面板：DSH 版本 ------------------------------------------------------
+    // 后端扫出「本机装了哪几份 dsh」（npx 缓存 + npm 全局），界面只渲染列表；
+    // 列表里每一份都能删：npm 全局那份跑 npm uninstall -g，npx 缓存那份直接删目录。
+    // 删除不可撤销，所以都要再点一次「确定」；确认按钮只在点开的那一行展开。
+    let dshVersionsBusy = false;
+    /** 最近一次渲染的列表（按行顺序），重画动作区时按同一顺序对回每条记录。 */
+    let dshVersionEntries: InstalledDsh[] = [];
+    /** 当前处于「确认删除」状态的那一行（用的是 dshEntryKey）；null 表示没有。 */
+    let dshPendingDelete: string | null = null;
 
-    /** 缓存明细：每行一份目录，写清是保留还是可回收。 */
-    function renderCacheDirs(state: CacheState): void {
-      if (state.dirs.length === 0) {
-        cacheDirs.textContent = "（本包还没有 npx 缓存目录）";
-        return;
-      }
-      cacheDirs.textContent = state.dirs
-        .map((dir) => {
-          const tag = dir.current ? "当前配置" : dir.keep ? "保留" : "可回收";
-          return `${tag}  ${dir.label}  ${dir.bytesText}`;
-        })
-        .join("\n");
+    const DSH_SOURCE_LABELS: Record<string, string> = {
+      npx: "npx 缓存",
+      npm: "npm 全局",
+    };
+
+    /** 一行的版本号：读不到版本时说清楚「读不到」，不要留空白让人以为坏了。 */
+    function dshVersionText(entry: InstalledDsh): string {
+      return entry.version === null ? "版本未知" : `v${entry.version}`;
     }
 
-    /** 逐条结果：清掉了什么（带字节数）与没清掉什么（带原因），清空重画。 */
-    function renderCleanupResults(result: CleanupResult): void {
-      cacheResultsBody.textContent = "";
-      for (const dir of result.removed) {
-        const row = document.createElement("div");
-        row.className = "kv-row";
-        const key = document.createElement("span");
-        key.className = "kv-key";
-        key.textContent = "已清掉";
-        const value = document.createElement("span");
-        value.className = "kv-value";
-        value.textContent = `${dir.label}（${dir.bytesText}）`;
-        row.append(key, value);
-        cacheResultsBody.append(row);
-      }
-      for (const failure of result.failed) {
-        const row = document.createElement("div");
-        row.className = "kv-row";
-        const key = document.createElement("span");
-        key.className = "kv-key";
-        key.textContent = "没清掉";
-        const value = document.createElement("span");
-        value.className = "kv-value";
-        value.textContent = `${failure.label}：${failure.reason}`;
-        row.append(key, value);
-        cacheResultsBody.append(row);
-      }
-      cacheResults.classList.toggle("hidden", cacheResultsBody.childElementCount === 0);
-    }
-
-    function renderCacheState(state: CacheState): void {
-      for (const el of CACHE_WINDOWS_ONLY) {
-        el.classList.toggle("hidden", !state.supported);
-      }
-      cacheOwn.textContent = state.supported ? `${state.ownBytesText}（${state.ownCount} 份）` : "—";
-      cacheReclaimable.textContent = state.supported ? state.reclaimableBytesText : "—";
-      cacheRoot.textContent = state.root === null ? "—" : state.root;
-      cacheRemovable = state.removableCount;
-      btnCacheClean.disabled = cacheBusy || !state.supported || state.removableCount === 0;
-      cacheMessage.textContent = state.message;
-      // 没问出 npm 缓存位置时后端会退到平台默认位置，并在这里说清用的是哪个。
-      cacheWarning.textContent = state.warning ?? "";
-      cacheWarning.classList.toggle("hidden", state.warning === null);
-      renderCacheDirs(state);
-      if (!state.supported) {
-        cacheBadgeText = null;
-        cacheBadgeFailed = false;
+    function renderDshVersions(list: InstalledDsh[]): void {
+      dshVersionsList.textContent = "";
+      // 重画列表就意味着原来那行的确认没了，待确认状态一起清掉。
+      dshPendingDelete = null;
+      dshVersionEntries = list;
+      if (list.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "hint notice";
+        empty.textContent =
+          "本机还没有装过 dsh web。选「官方 npx 命令」启动一次，就会在 npx 缓存里出现一份。";
+        dshVersionsList.append(empty);
+        dshVersionsBadgeText = "未装过";
+        dshVersionsBadgeFailed = false;
+        paintDuplicateBadge(list);
         renderIntegrationsSummary();
         return;
       }
-      cacheBadgeFailed = false;
-      cacheBadgeText =
-        state.ownCount === 0
-          ? "缓存为空"
-          : state.removableCount > 0
-            ? `缓存 ${state.ownBytesText} · 可回收 ${state.reclaimableBytesText}`
-            : `缓存 ${state.ownBytesText}`;
+
+      for (const entry of list) {
+        const row = document.createElement("div");
+        row.className = "dsh-version-row";
+
+        const main = document.createElement("div");
+        main.className = "dsh-version-main";
+
+        const version = document.createElement("span");
+        version.className = "dsh-version-ver";
+        version.textContent = dshVersionText(entry);
+
+        const source = document.createElement("span");
+        source.className = "badge badge-stopped dsh-version-source";
+        source.textContent = DSH_SOURCE_LABELS[entry.source] ?? entry.source;
+
+        main.append(version, source);
+
+        if (entry.inUse) {
+          const inUse = document.createElement("span");
+          inUse.className = "badge badge-running dsh-version-inuse";
+          inUse.textContent = "使用中";
+          main.append(inUse);
+        }
+
+        const path = document.createElement("p");
+        path.className = "dsh-version-path";
+        path.textContent = entry.path;
+
+        row.append(main, path, versionActions(entry));
+        dshVersionsList.append(row);
+      }
+
+      dshVersionsBadgeText = `装了 ${list.length} 份`;
+      dshVersionsBadgeFailed = false;
+      paintDuplicateBadge(list);
       renderIntegrationsSummary();
     }
 
-    /** 已经播报过的自动清理序号：界面只用它分辨「有没有新的一次」，不重复播报。 */
-    let autoCleanupSeq = 0;
-
-    /** 开关状态跟着配置走：读回配置、改开关都调它，避免两处各写一遍。 */
-    function renderCacheAutoToggle(): void {
-      cacheAutoToggle.checked = prefs.cacheCleanup;
-    }
-
-    /** 自动清理的结果在后端，界面没有推送通道：搭在每秒的状态轮询上顺路问一句。
-        超过 `autoCleanupSeq` 的才算新结果（启动后删东西是用户看不见的事，必须播报）。 */
-    async function pollAutoCleanup(): Promise<void> {
-      let report: AutoCleanupReport | null;
-      try {
-        report = await invoke<AutoCleanupReport | null>("auto_cleanup_report", { since: autoCleanupSeq });
-      } catch (err) {
-        console.debug("读取自动清理结果失败:", err);
+    /** 同一个版本装了不止一份时，在标题旁挂一枚黄色徽章点出重复数量。
+     *  重复常见于换过 npx 参数（版本号一样但缓存目录不同），不提示的话很难发现多占了盘。
+     *  只有一组重复就点明是哪个版本、几份；多组重复则给组数，避免徽章被撑长。 */
+    function paintDuplicateBadge(list: InstalledDsh[]): void {
+      const counts = new Map<string, number>();
+      for (const entry of list) {
+        const key = entry.version ?? "未知";
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const duplicated = [...counts.entries()].filter(([, count]) => count > 1);
+      if (duplicated.length === 0) {
+        dshVersionsDup.textContent = "";
+        dshVersionsDup.classList.add("hidden");
         return;
       }
-      if (report === null) return;
-      autoCleanupSeq = report.seq;
-      if (report.result === null) {
-        // 连缓存根都没定位到（npm 坏了等）：没有逐条结果，只留一行说明。
-        cacheMessage.textContent = report.message;
-        return;
+      if (duplicated.length === 1) {
+        const [version, count] = duplicated[0] as [string, number];
+        dshVersionsDup.textContent = `${version === "未知" ? "版本未知" : `v${version}`} 装了 ${count} 份`;
+      } else {
+        dshVersionsDup.textContent = `${duplicated.length} 个版本有重复`;
       }
-      // 与「立即清理」走同一套渲染：新盘面 + 「清掉哪些」逐条列表。
-      renderCacheState(report.result.state);
-      renderCleanupResults(report.result);
-      cacheMessage.textContent = report.message;
+      dshVersionsDup.classList.remove("hidden");
     }
 
-    async function refreshCacheState(): Promise<void> {
+    /** 一行的动作区：默认一个「删除/卸载」；点了才换成二次确认。
+     *  同一时刻最多只有一行处于确认态——否则两行并排红着，很容易点错删错。 */
+    function versionActions(entry: InstalledDsh): HTMLElement {
+      const box = document.createElement("div");
+      box.className = "dsh-version-actions";
+      paintActionBox(box, entry);
+      return box;
+    }
+
+    /** 这一行的唯一标识：同一个路径不会同时出现在两个来源下，拿来源加路径就够。 */
+    function dshEntryKey(entry: InstalledDsh): string {
+      return `${entry.source}:${entry.path}`;
+    }
+
+    /** 按「这一行是不是待确认的那一行」来画：是就画确认对，否则画单颗删除。 */
+    function paintActionBox(box: HTMLElement, entry: InstalledDsh): void {
+      if (dshPendingDelete === dshEntryKey(entry)) {
+        paintConfirm(box, entry);
+      } else {
+        paintDeleteButton(box, entry);
+      }
+    }
+
+    /** 把列表里所有动作区按当前待确认状态重画（点了某行就整表刷一次，保证只有一行在确认）。 */
+    function repaintActionBoxes(): void {
+      const boxes = Array.from(
+        dshVersionsList.querySelectorAll<HTMLElement>(".dsh-version-actions"),
+      );
+      for (let i = 0; i < boxes.length && i < dshVersionEntries.length; i += 1) {
+        const box = boxes[i];
+        const entry = dshVersionEntries[i];
+        if (box && entry) {
+          paintActionBox(box, entry);
+        }
+      }
+    }
+
+    function paintDeleteButton(box: HTMLElement, entry: InstalledDsh): void {
+      box.textContent = "";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "dsh-version-uninstall";
+      btn.textContent = entry.source === "npm" ? "卸载" : "删除";
+      btn.addEventListener("click", () => {
+        dshPendingDelete = dshEntryKey(entry);
+        repaintActionBoxes();
+      });
+      box.append(btn);
+    }
+
+    function paintConfirm(box: HTMLElement, entry: InstalledDsh): void {
+      box.textContent = "";
+      const yes = document.createElement("button");
+      yes.type = "button";
+      yes.className = "dsh-version-uninstall danger";
+      yes.textContent = entry.source === "npm" ? "确定卸载" : "确定删除";
+      yes.addEventListener("click", () => {
+        void removeDshVersion(yes, entry);
+      });
+      const no = document.createElement("button");
+      no.type = "button";
+      no.className = "dsh-version-uninstall ghost";
+      no.textContent = "取消";
+      no.addEventListener("click", () => {
+        dshPendingDelete = null;
+        repaintActionBoxes();
+      });
+      box.append(yes, no);
+    }
+
+    /** 删一份：npm 全局走 `npm uninstall -g`，npx 缓存直接删对应目录。 */
+    async function removeDshVersion(button: HTMLButtonElement, entry: InstalledDsh): Promise<void> {
+      if (dshVersionsBusy) return;
+      dshVersionsBusy = true;
+      dshVersionsError.classList.add("hidden");
+      for (const item of dshVersionsList.querySelectorAll<HTMLButtonElement>("button")) {
+        item.disabled = true;
+      }
       try {
-        const state = await invoke<CacheState>("cache_state", { config: collectConfig() });
-        renderCacheState(state);
-        // 重扫说明盘面变了（切了启动方式等），上一次的逐条结果已经不对应当前盘面，一并清掉。
-        cacheResultsBody.textContent = "";
-        cacheResults.classList.add("hidden");
+        // 成功不用弹提示条：列表重画后那一行没了，本身就是结果。
+        if (entry.source === "npm") {
+          await invoke<string>("uninstall_dsh_global", { runtime: collectConfig().runtime });
+        } else {
+          await invoke<string>("delete_dsh_npx", {
+            runtime: collectConfig().runtime,
+            path: entry.path,
+          });
+        }
+        dshPendingDelete = null;
+        await refreshDshVersions();
       } catch (err) {
-        cacheMessage.textContent = `读取缓存盘面失败：${err}`;
-        cacheBadgeFailed = true;
+        dshVersionsError.textContent = String(err);
+        dshVersionsError.classList.remove("hidden");
+        button.disabled = false;
+        for (const item of dshVersionsList.querySelectorAll<HTMLButtonElement>("button")) {
+          item.disabled = false;
+        }
+      } finally {
+        dshVersionsBusy = false;
+      }
+    }
+
+    async function refreshDshVersions(): Promise<void> {
+      try {
+        const list = await invoke<InstalledDsh[]>("installed_dsh_versions", {
+          config: collectConfig(),
+        });
+        renderDshVersions(list);
+      } catch (err) {
+        // 失败原因写在下面那行 .error 里；列表区不再重复一条「读取失败」，避免两句叠着说同一件事。
+        // 后端返回的错误文案已经带「读取已装 DSH 版本失败：」前缀，这里原样用，不再加一层。
+        dshVersionsList.textContent = "";
+        dshVersionsError.textContent = String(err);
+        dshVersionsError.classList.remove("hidden");
+        dshVersionsBadgeFailed = true;
         renderIntegrationsSummary();
       }
     }
 
-    btnCacheClean.addEventListener("click", () => {
-      void (async () => {
-        cacheBusy = true;
-        btnCacheClean.disabled = true;
-        cacheError.classList.add("hidden");
-        try {
-          const result = await invoke<CleanupResult>("cleanup_cache", { config: collectConfig() });
-          // 后端清完会顺手重扫一遍并把新盘面一起送回来，数字直接跟着刷。
-          renderCacheState(result.state);
-          renderCleanupResults(result);
-          cacheMessage.textContent = result.message;
-        } catch (err) {
-          cacheError.textContent = `清理缓存失败：${err}`;
-          cacheError.classList.remove("hidden");
-          // 失败时也重扫一次：部分目录可能已经删掉了，数字不能停在旧值。
-          await refreshCacheState();
-        } finally {
-          cacheBusy = false;
-          // 按钮能不能再点看清理后的可回收份数，不能无脑恢复成可点。
-          btnCacheClean.disabled = cacheRemovable === 0;
-        }
-      })();
-    });
-
-    /** 桥接插件：「打开备份目录」（安装/卸载的备份都落在这里）。 */    btnBridgeBackups.addEventListener("click", () => {
+    /** 桥接插件：「打开备份目录」（安装/卸载的备份都落在这里）。 */
+    btnBridgeBackups.addEventListener("click", () => {
       void (async () => {
         bridgeNote.classList.add("hidden");
         try {
@@ -3000,8 +3999,6 @@ async function main(): Promise<void> {
       proxyModePicker.setValue(prefs.proxyMode);
       proxyAddressInput.value = prefs.proxyAddress;
       renderNetworkUI();
-      // 缓存自动清理开关（默认关）：跟着读回来的配置走，重开壳仍然生效。
-      renderCacheAutoToggle();
       void refreshProxyState();
     }
 
@@ -3009,12 +4006,14 @@ async function main(): Promise<void> {
     // 运行环境候选与官方版本列表都提前读好，切到对应面板即可直接选。
     await loadDistros();
     await loadRegistry();
+    // 先扫一次本机 npx 缓存：既给「已缓存」徽章，也决定「本机已经装过」那条提示要不要显示。
+    await refreshCachedVersions();
     await refreshPortHint();
     await refresh();
     void refreshBridgeState();
     void refreshCliState();
-    // 缓存盘面要起 npm 子进程，不阻塞首次挂载。
-    void refreshCacheState();
+    // 「已装 DSH 版本」要起 npm 子进程，不阻塞首次挂载。
+    void refreshDshVersions();
     void loadProfiles();
     refreshNowHook = refresh;
     // 转动状态与计时在模块级（界面元素可能被重建），这里把类贴到当前这颗「重启 DSH」上。
@@ -3040,13 +4039,24 @@ async function main(): Promise<void> {
   const scrollThumb = document.createElement("div");
   scrollThumb.className = "scroll-thumb";
   scrollTrack.appendChild(scrollThumb);
+  /**
+   * 胶囊轨道相对主卡上下各让进多少：取卡片圆角（`--radius-card`）减去 2px 余量。
+   * 圆角是从令牌读的、不抄数字——维护者改令牌时这里跟着走（同 `motionMs` 的思路）。
+   */
+  function trackInset(): number {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--radius-card").trim();
+    const radius = Number.parseFloat(raw);
+    return (Number.isFinite(radius) && radius > 0 ? radius : 14) - 2;
+  }
 
   /**
    * 滚动容器是当前分区那张主卡（`.block.main-card`）：只有它内部滚，下方并排的小卡
    * 固定可见（2026-10-21 维护者定稿）。没有小卡的分区主卡同样吃掉整个高度。
+   * 交叉淡化期间旧分区还在 DOM 里（`.is-leaving`），要把它排除掉，否则滚动指示条会
+   * 认错容器、量到正在退役的那一块。
    */
   function activePanel(): HTMLElement | null {
-    return root.querySelector<HTMLElement>(".panel:not(.hidden) .block.main-card");
+    return root.querySelector<HTMLElement>(".panel:not(.hidden):not(.is-leaving) .block.main-card");
   }
 
   let scrollHost: HTMLElement | null = null;
@@ -3075,13 +4085,16 @@ async function main(): Promise<void> {
     }
     scrollHost = host;
     // 轨道贴住主卡的上下边界（内容区里除了主卡还有小卡与日志条，轨道理应只覆盖主卡）。
+    // 上下各让进 inset：胶囊是方的滚动条替身，贴到边就会骑在卡片圆角上
+    // ——那正是维护者看到的「滚动条穿出圆角」。让进圆角减 2px 后刚好落在直边里。
     const holder = scrollTrack.parentElement;
     if (holder) {
+      const inset = trackInset();
       const hostRect = host.getBoundingClientRect();
       const holderRect = holder.getBoundingClientRect();
-      scrollTrack.style.top = `${Math.round(hostRect.top - holderRect.top)}px`;
+      scrollTrack.style.top = `${Math.round(hostRect.top - holderRect.top) + inset}px`;
       scrollTrack.style.bottom = "auto";
-      scrollTrack.style.height = `${Math.round(hostRect.height)}px`;
+      scrollTrack.style.height = `${Math.max(0, Math.round(hostRect.height) - inset * 2)}px`;
     }
     const viewport = host.clientHeight;
     const total = host.scrollHeight;
@@ -3109,8 +4122,10 @@ async function main(): Promise<void> {
     "scroll",
     (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement) || !target.classList.contains("block")) return;
-      if (!target.classList.contains("split")) return;
+      // 滚动容器就是当前分区那张主卡（.block.main-card）。原来这里还写着「必须带 .split」——
+      // 主卡从来没有这个类，于是滚动一律被挡在门外：胶囊的高度与位置从不更新、也从不
+      // 变可见，等于只剩一条原生滚动条在干活（那道方角还会顶穿卡片圆角）。
+      if (!(target instanceof HTMLElement) || !target.classList.contains("main-card")) return;
       if (target !== scrollHost) syncScrollHost();
       updateScrollThumb();
       // 拖动期间不跑这个计时器，否则按住不动 0.9 秒胶囊会在手里淡掉

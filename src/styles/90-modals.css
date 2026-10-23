@@ -5,6 +5,9 @@
   z-index: 90;
   background: rgba(4, 8, 14, 0.55);
   backdrop-filter: blur(2px);
+  /* 打开时遮罩先淡入（--m-scrim），把背景压暗一档再托出面板；
+     关闭时遮罩与面板一起用更快的 --m-exit 淡出。 */
+  animation: modal-scrim-in var(--m-scrim) var(--ease-out);
 }
 
 /* 三张浮窗各自 fixed 居中（与遮罩并列，不是它的子元素；靠 z-index 压在上面）。
@@ -31,6 +34,46 @@
   background: var(--card);
   box-shadow: var(--shadow);
   overflow: hidden;
+  /* 入场：从略小、略低处淡入（scale 0.97 + 下移 4px 的起点，落定到原位置），
+     不是硬蹦出来。关闭时 .is-closing 换成更快的出场（见下方）。
+     display:none → 显示时动画自动重播，打开不需要额外加类。 */
+  animation: modal-panel-in var(--m-enter) var(--ease-out);
+}
+
+/* 关闭：先让出场动画播完，再由 main.ts 的 setModal 加回 .hidden。
+   若直接加 .hidden，display:none 会当场截断动画，看着就是「啪一下没了」。 */
+.modal-scrim.is-closing {
+  animation: modal-scrim-out var(--m-exit) var(--ease-out) forwards;
+}
+
+.modal.is-closing {
+  animation: modal-panel-out var(--m-exit) var(--ease-out) forwards;
+}
+
+@keyframes modal-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+}
+
+@keyframes modal-panel-out {
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+  }
 }
 
 .modal-head {
@@ -44,6 +87,8 @@
   font-size: 14px;
   font-weight: 700;
   color: var(--fg);
+  /* 标题换行时平衡各行长度，避免最后一行只剩一个词。 */
+  text-wrap: balance;
 }
 
 .modal-close {
@@ -118,22 +163,70 @@
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, var(--card));
 }
 
 .profile-confirm .hint {
   margin: 0 0 8px;
 }
 
-/* 危险动作按钮（删除环境）：常态用语言提示而不是红色禁用色，悬停才亮红。 */
+/* 删除浮窗里这一行不再自成一格：外层 .modal-danger 已经是红底，再套一层带边框的小框
+   就成了「卡中卡」。这里把它还原成普通正文——去掉描边、底色与内边距，文字直接与
+   下方的动作按钮从同一条左右边线起排（按钮在 .modal-foot、文字在 .modal-body，
+   两者都吃 .modal 的内边距，去掉内层 padding 后左右才对得齐）。 */
+.modal.modal-danger .profile-confirm {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.modal.modal-danger .profile-confirm .hint {
+  margin: 0;
+}
+
+/* 删除确认：整张浮窗染危险色。删除环境是不可撤销的操作，光靠按钮变红不够醒目——
+   边框与底色都带上危险色，让人在按下之前就知道这张浮窗是「删除」。
+   底色用不掺主题色的深红实色（--danger-surface），浅色/深色下都是同一个红，
+   不会因为混了 card 而在两套外观里变成两种深浅。
+   只作用于 .modal-danger（由 openNameModal 在 deleting 时加上）。 */
+.modal.modal-danger {
+  border-color: var(--danger-line);
+  background: var(--danger-surface);
+  box-shadow:
+    var(--shadow),
+    0 0 0 1px var(--danger-line);
+}
+
+/* 红底上的字统一走浅色（--danger-on）：深红实色在两套外观里都是暗底，
+   若沿用主题正文色，浅色外观的近黑字压上去会看不清。 */
+.modal.modal-danger .modal-title,
+.modal.modal-danger .hint {
+  color: var(--danger-on);
+}
+
+.modal.modal-danger .modal-close {
+  color: color-mix(in srgb, var(--danger-on) 72%, transparent);
+}
+
+.modal.modal-danger .modal-close:hover {
+  background: color-mix(in srgb, var(--danger-on) 14%, transparent);
+  color: var(--danger-on);
+}
+
+/* 危险动作按钮：实心红 + 白字。原先只有描边红字（白字压浅红对比不足），
+   真正要按下去的那个按钮必须一眼可辨，所以改成实心填充（--danger-fill 白字 ≥4.5:1）。 */
 button.danger {
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
-  color: var(--danger);
+  border-color: transparent;
+  background: var(--danger-fill);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 button.danger:hover:not(:disabled) {
-  border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--danger-fill) 88%, #ffffff);
 }
 
 /* 备份清单：一份备份一行。路径是等宽字（用户可能要照着去找文件），
@@ -179,13 +272,15 @@ button.danger:hover:not(:disabled) {
   gap: 6px;
 }
 
-/* 插件行：名字在左，右端一枚开关。开关本身就是唯一的状态表达，
-   不再另写「已启用 / 已停用」——同一件事说两次，还挤掉名字的宽度。 */
-.plugin-row {
+/* 插件行：标题行（包名 + 标记 + 版本徽章）与说明行叠在左侧主列，右端一枚开关。开关
+   本身就是唯一的状态表达，不再另写「已启用 / 已停用」——同一件事说两次，还挤掉名字的宽度。
+   骨架行 `.plugin-skel` 与它同一套盒模型（padding/border/圆角），切换时列表区域不跳高。 */
+.plugin-row,
+.plugin-skel {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 10px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card-2);
@@ -193,17 +288,139 @@ button.danger:hover:not(:disabled) {
   user-select: none;
 }
 
-.plugin-name {
+/* 左侧主列：吃掉剩余宽度，行内的换行/截断都在这一列里发生。 */
+.plugin-main {
   flex: 1;
+  min-width: 0;
+}
+
+/* 标题行：包名 + 身份标记 + 版本徽章挤同一行；徽章紧跟名字末尾，不右对齐。 */
+.plugin-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plugin-name {
   min-width: 0;
   color: var(--fg);
   font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 12.5px;
+  font-size: 14px;
+  font-weight: 600;
   word-break: break-all;
+}
+
+/* 插件自带的说明（package.json 的 description）：单行截断，悬停看全文；
+   没有描述的包不渲染这一行，行高随内容，不做假两行。与加粗的包名拉开一档对比。 */
+.plugin-desc {
+  margin-top: 4px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--fg-dim) 60%, transparent); /* 变浅 40% */
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .plugin-row.is-off .plugin-name {
   color: var(--fg-mute);
+}
+
+/* ---- 插件清单加载骨架（#32）----------------------------------------------
+   清单还没回来时铺三行与真实行同高同结构的骨架（左圆点 + 长短两条灰条 + 右端开关位），
+   数据到达后换成真实行并逐行错开入场。假行不会被点、也不进读屏（aria-hidden），
+   行高与真实行对齐（同样的 padding/border、主列 38px），切换时列表区域不跳高。 */
+.plugin-skel {
+  cursor: default;
+}
+
+/* 骨架的主列：圆点（图标位）在前，两条灰条竖排在后。 */
+.sk-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  grid-template-columns: 18px 1fr;
+  grid-template-rows: 17px 17px;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-content: center;
+  height: 38px;
+}
+
+/* 圆点：占据真实行标题前的图标位，与第一行标题齐平。 */
+.sk-dot {
+  grid-row: 1;
+  grid-column: 1;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--cell);
+}
+
+/* 灰条：短标题条在上、长说明条在下（长短不一更像真内容）；右端另有一枚开关位方条。
+   忙态允许无限循环的扫光，所以这里刻意不用 --m-* 的单次时长。 */
+.sk-line {
+  background: linear-gradient(
+    90deg,
+    var(--cell) 0%,
+    color-mix(in srgb, var(--fg) 14%, var(--cell)) 50%,
+    var(--cell) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 120% 0;
+  border-radius: 5px;
+  height: 9px;
+  animation: plugin-skeleton-shimmer 1.25s linear infinite;
+}
+
+.sk-line-name {
+  grid-row: 1;
+  grid-column: 2;
+  align-self: center;
+  width: 46%;
+  max-width: 160px;
+}
+
+.sk-line-desc {
+  grid-row: 2;
+  grid-column: 2;
+  align-self: center;
+  width: 76%;
+  max-width: 320px;
+}
+
+/* 右端开关位：与 .switch 同宽（36px）、圆角更大，正好落在开关的位置上。 */
+.plugin-skel .sk-line-switch {
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  animation-delay: 0.15s;
+}
+
+@keyframes plugin-skeleton-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+/* 真实行入场：只给「骨架 → 真实行」那一次重铺带 data-enter 的行挂动画；
+   序号 --i 由行内 style 写，延迟 = --i × 40ms，总时长 220ms（≤300ms）。 */
+.plugin-list.is-loaded .plugin-row[data-enter] {
+  animation: plugin-row-in 220ms var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+@keyframes plugin-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 /* 开关：36×20 的胶囊 + 18px 圆头，开=强调色、关=灰底。
@@ -236,9 +453,11 @@ button.danger:hover:not(:disabled) {
     background 160ms;
 }
 
+/* 开启态轨道用 --accent-fill（深一档实底）：白色圆头压浅冰蓝 accent 只有 ~2.1:1，
+   圆头与轨道几乎分不开；压实底后白圆头清晰（4.88/5.84）。 */
 .switch[aria-checked="true"] {
   border-color: transparent;
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 .switch[aria-checked="true"] .switch-knob {
@@ -282,9 +501,190 @@ button.danger:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 
+/* 插件更新工具条：两枚图标方钮（悬停出「检查更新 / 全部更新」气泡），
+   比通用 34px 方钮收一档，贴着插件卡的密度；紧跟在卡头的计数徽章后面，
+   与「插件」标题同一行，不再单独占一行。 */
+.plugin-head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.plugin-head-actions .square-btn {
+  position: relative;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+}
+
+/* 「全部更新」右上角的微标：可更新的插件数。骑在按钮外沿一点，不占按钮内部空间。 */
+.plugin-head-actions .btn-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  /* 用 --accent-fill（实底蓝）而不是 --accent（浅冰蓝）：深色主题下 --accent 是
+     #7fb2ff，白字压它只有 2.16:1，那颗「5」几乎糊掉；--accent-fill 深色 #2f6fd0 /
+     浅色 #1c5fd0，白字都是 4.9~5.8:1，两套主题都清楚。 */
+  background: var(--accent-fill);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  /* 显示可更新插件数，等宽数字让计数变化时微标不忽宽忽窄。 */
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-head-actions .square-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 工具条方钮的环形 spinner 跟这里 15px 的图标同尺寸（通用方钮是 17px），
+   忙态切换时视觉重量不变、不显得比旁边的图标大一圈。 */
+.plugin-head-actions .square-btn .sq-spinner {
+  width: 15px;
+  height: 15px;
+}
+
+/* 行内版本号徽章：底色取条目底色（--card-2）往文字色混 10%——浅色主题自动是
+   「加深」、深色主题自动是「减淡」，两个主题用同一条公式保持协调可辨。 */
+.plugin-ver {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 10%, var(--card-2));
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+  /* 等宽字族数字本就等宽，显式声明兜底非等宽回退。 */
+  font-variant-numeric: tabular-nums;
+}
+
+/* 版本都读不出来（私有包、装坏等）：用警告色点一下，具体原因收在 title 里。 */
+.plugin-ver-bad {
+  color: var(--warn);
+}
+
+/* 新旧版本对比：旧 → 新，箭头用淡色弱化；新版本徽章绿色底（--ok 混条目底色），
+   两主题各自的可读绿，更新目标一眼可见。 */
+.plugin-ver-arrow {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.plugin-ver-new {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 18%, var(--card-2));
+}
+
+/* 行内「更新」按钮：样式沿用主色小按钮（accent-soft 底、主色描边），文字就两个字；
+   目标版本在新版本绿徽章与气泡里，点不点由维护者定。 */
+.plugin-update {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plugin-update:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--accent-fill);
+  color: #ffffff;
+}
+
+.plugin-update:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* 关掉桥接后的提醒：不提示就是用户自己把登录链接弄丢了，所以用警告色而不是 hint 灰。 */
 .plugin-warning {
   color: var(--warn);
+}
+
+/* 「全部更新」的确定进度：条子按已完成数推进（不转圈、不猜），下面一句话说清
+   已更新几个、几个失败；收尾文案装在 aria-live 里，会把结果读出来。 */
+.plugin-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* 轨道取条目底色的深一档（--cell），填充用主色；4px 细条不抢列表的视觉。 */
+.plugin-progress-bar {
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--cell);
+}
+
+/* 宽度由 JS 按已完成数写内联样式；缓出 200ms，进度推进看得见又不拖沓。 */
+.plugin-progress-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--m-base) var(--ease-out);
+}
+
+/* 计数会变，等宽数字让宽度不随数字抖动。 */
+.plugin-progress-sum {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行级四态胶囊：排队／更新中／已更新／失败。底色都从条目底色（--card-2）往同色混，
+   深浅两套主题各自可读，不另立色值。 */
+.plugin-phase {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-phase-queue {
+  color: var(--fg-mute);
+  background: color-mix(in srgb, var(--fg) 8%, var(--card-2));
+}
+
+.plugin-phase-busy {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.plugin-phase-done {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, var(--card-2));
+}
+
+.plugin-phase-fail {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, var(--card-2));
+}
+
+/* 失败原因留在行里：单行截断、悬停看全文；红字点明是错，不多占高度。 */
+.plugin-fail {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--danger);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .plugin-empty {
@@ -301,6 +701,19 @@ button.danger:hover:not(:disabled) {
 /* 代理地址框只在手动模式露出来；它包一层 div 是为了跟下载源一样能整行隐藏
    （input 自己 hidden 也行，但 .hidden 与 input[type="text"] 选择器特指度打平后
    要靠声明顺序取胜，包一层更稳）。 */
+/* 「网络与代理」卡的内容包了一层 #network-content（原来只为整块按平台隐藏）。
+   它必须是列 flex + 与 .cell 相同的 10px 间距，否则里面的 col-head 与两个 .fields
+   会贴在一起，竖排节奏和左边「托盘设置」卡对不上，两卡的行就错位。 */
+.network-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.network-content.hidden {
+  display: none;
+}
+
 .proxy-manual {
   display: flex;
 }

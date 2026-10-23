@@ -26,12 +26,39 @@
   flex: 0 1 168px;
   min-width: 0;
   display: flex;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   border-radius: 10px;
   background: var(--card-2);
+  box-shadow: var(--shadow-soft);
   transition:
-    border-color 140ms,
-    background 140ms;
+    border-color var(--m-quick),
+    background var(--m-quick),
+    box-shadow var(--m-base),
+    transform var(--m-base);
+}
+
+/* 悬停抬升（#36）：卡片往上让 1px、阴影加深一档、右上角「更多」入口淡入。
+   1px 只够让人觉出「这张是活的」，再多就变成会晃的列表。
+   只给指针设备挂 hover：触屏上 tap 会残留 hover 态，卡片会一直浮着。
+   键盘用户走下面的 :focus-within（等效，但不依赖鼠标），所以两条都写。
+   `.is-active` 卡片也可抬升——它靠底色与描边辨认，不靠位置。 */
+@media (hover: hover) and (pointer: fine) {
+  .env-card:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lift);
+  }
+}
+
+.env-card:focus-within {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+
+/* 动效关闭时不许有位移中间态：直接把抬升收掉，悬停只留颜色反馈。 */
+html[data-motion="off"] .env-card:hover,
+html[data-motion="off"] .env-card:focus-within {
+  transform: none;
+  box-shadow: var(--shadow-soft);
 }
 
 .env-card.is-active {
@@ -77,7 +104,10 @@
   color: var(--fg-dim);
 }
 
-/* 三点按钮：叠在卡片右上角，本身不占布局宽度。 */
+/* 三点按钮：叠在卡片右上角，本身不占布局宽度。
+   平时淡出、往右让 4px，指针进卡（或焦点进卡）才浮出来（#36）：一排卡片各挂一颗
+   三点会把「环境卡」读成一排工具条，收起来后卡片先看名字，要用时才给入口。
+   淡出不等于不可用——它始终在 tab 序里可聚焦，键盘走到它时 :focus-within 会把它显出来。 */
 .env-more {
   position: absolute;
   top: 4px;
@@ -93,6 +123,47 @@
   background: var(--elev);
   color: var(--fg-dim);
   cursor: pointer;
+  opacity: 0;
+  transform: translateX(4px);
+  transition:
+    opacity var(--m-quick) var(--ease-out),
+    transform var(--m-quick) var(--ease-out),
+    background var(--m-quick),
+    color var(--m-quick);
+}
+
+/* 指针进卡 / 焦点进卡 / 菜单已展开：入口浮到面前。 */
+@media (hover: hover) and (pointer: fine) {
+  .env-card:hover .env-more {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.env-card:focus-within .env-more,
+.env-more:focus-visible,
+.env-more[aria-expanded="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* 触屏没有 hover，上面那条永远不生效：入口改为常显，否则会变成一颗看不见但可点的按钮。 */
+@media (hover: none) {
+  .env-more {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 关掉动效：直接显隐，不留半透明中间态；悬停也照常给入口（这是可用性，不是装饰）。 */
+html[data-motion="off"] .env-more {
+  transition: none;
+}
+
+html[data-motion="off"] .env-card:focus-within .env-more,
+html[data-motion="off"] .env-card:hover .env-more {
+  opacity: 1;
+  transform: none;
 }
 
 .env-more:hover,
@@ -111,39 +182,31 @@
   stroke: none;
 }
 
-/* 行末一列三颗按钮：新建空白环境 / 桥接插件 / 补丁层，后两颗各自弹浮窗。
+/* 行末一列两颗按钮：新建空白环境 / 桥接插件，后者弹浮窗。
    新建排在最上（维护者要求）：它是这一列里唯一造新东西的动作。 */
 .env-aside {
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  /* 140px 刚好容下「新建空白环境」六字加一枚加号，再窄就折成两行。 */
+  /* 140px 刚好容下「新建空白环境」六个字，再窄就折成两行。 */
   width: 140px;
 }
 
+/* 两颗按钮同高、同宽、同一套排布（inline-flex 居中 + 行高压成 1）：
+   之前「新建空白环境」多带一枚加号、又是唯一走 flex 排布的那颗，字号/字体回退稍有
+   差别就与纯文字的「桥接插件」看着一大一小（维护者反复反馈的那处）。现在两颗都是
+   纯文字 + 同一套盒模型，视觉上再无差异。 */
 .env-aside button {
   width: 100%;
-  /* 一列三颗按钮文案固定，宽度跟着列走，不让它自己折行。 */
-  white-space: nowrap;
-}
-
-/* 「新建空白环境」带一枚加号，与下面两颗纯文字按钮区分开。 */
-.env-new {
-  display: flex;
+  height: 34px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-}
-
-.env-new svg {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
+  padding: 0 12px;
+  line-height: 1;
+  /* 一列按钮文案固定，宽度跟着列走，不让它自己折行。 */
+  white-space: nowrap;
 }
 
 /* 环境操作菜单：跟着三点按钮定位（坐标由 JS 算，贴边会往里收）。 */
@@ -164,7 +227,8 @@
 .env-menu button {
   padding: 7px 10px;
   border: 0;
-  border-radius: 7px;
+  /* 同心圆角：外层 .env-menu 10px、内边距 6px，内层取 10−6=4px。 */
+  border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
@@ -183,7 +247,17 @@
   cursor: not-allowed;
 }
 
-.env-menu button.danger:not(:disabled) {
+/* 菜单里的「删除」只染红字，任何时候都不铺红底（含鼠标悬停与置灰态）。
+   全局 button.danger 是弹窗里那颗实心确认键，这里必须显式盖回去——注意不能加
+   :not(:disabled)，否则「web / 当前管理的环境」这类置灰行会落回全局实心红底。 */
+.env-menu button.danger {
+  background: transparent;
+  color: var(--danger);
+}
+
+/* 悬停给一层透明浅红底，让危险项在指针进来时更明确；置灰行不该有 hover 反馈。 */
+.env-menu button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
 }
 

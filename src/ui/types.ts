@@ -76,13 +76,11 @@ export interface ShellPrefs {
   proxyAddress: string;
   /** 命令行集成开关，默认关闭。 */
   cliIntegration: boolean;
-  /** 缓存清理开关，默认关闭。 */
-  cacheCleanup: boolean;
 }
 
 
 /** 与 Rust 侧 `settings::ShellConfig` 对应（整份壳设置）。
-    六个新字段在 Rust 侧是 `#[serde(flatten)]` 平铺的，JSON 里与 launch / trayClick 平级，
+    这些字段在 Rust 侧是 `#[serde(flatten)]` 平铺的，JSON 里与 launch / trayClick 平级，
     所以这里也平铺；写成可选是因为旧配置里没有它们。 */
 export interface ShellConfig extends Partial<ShellPrefs> {
   launch: LaunchConfig;
@@ -211,85 +209,16 @@ export interface CliIntegrationState {
   message: string;
 }
 
-/** 与 Rust 侧 `npxcache::CacheDir` 对应：缓存里属于本包的一个目录。 */
-export interface CacheDir {
-  /** 目录名（`_npx` 下的那串哈希）。 */
-  name: string;
-  /** 界面直接显示的标签。 */
-  label: string;
-  /** 字节数。 */
-  bytes: number;
-  /** 上面那个数给界面显示的样子（`1.8 GB`）。 */
-  bytesText: string;
-  /** 当前配置是否保留这一份。 */
-  keep: boolean;
-  /** 是不是当前启动配置对应的那份。 */
-  current: boolean;
-}
-
-/** 与 Rust 侧 `npxcache::CacheState` 对应：缓存盘面。 */
-export interface CacheState {
-  /** 当前宿主能不能扫（只有 Windows 动文件）。 */
-  supported: boolean;
-  /** 缓存根（`npm config get cache` 问出来的那个目录）。 */
-  root: string | null;
-  /** 根是从哪来的：`npm` 或 `fallback`。 */
-  rootSource: string;
-  /** 本包占用字节数。 */
-  ownBytes: number;
-  /** 本包占用字节数的显示形式。 */
-  ownBytesText: string;
-  /** 本包目录份数。 */
-  ownCount: number;
-  /** 可回收字节数。 */
-  reclaimableBytes: number;
-  /** 可回收字节数的显示形式。 */
-  reclaimableBytesText: string;
-  /** 可删目录份数。 */
-  removableCount: number;
-  /** 保留份数（当前那份 + 最近用过的几份）。 */
-  keepCount: number;
-  /** 当前启动配置对应的那份目录名。 */
-  current: string | null;
-  /** 一行状态说明。 */
-  message: string;
-  /** 扫描时的告警（例如没问出 npm 缓存位置）。 */
-  warning: string | null;
-  /** 属于本包的目录明细。 */
-  dirs: CacheDir[];
-}
-
-/** 与 Rust 侧 `npxcache::CleanedDir` 对应：清掉的一个目录。 */
-export interface CleanedDir {
-  label: string;
-  bytes: number;
-  bytesText: string;
-}
-
-/** 与 Rust 侧 `npxcache::CleanupFailure` 对应：没清掉的一个目录与原因。 */
-export interface CleanupFailure {
-  label: string;
+/** 与 Rust 侧 `dsh_versions::InstalledDsh` 对应：本机装的一份 DSH。 */
+export interface InstalledDsh {
+  /** 版本号；读不到时为 null（目录被改坏、`package.json` 里没有 version）。 */
+  version: string | null;
+  /** 来源：`npx`（npx 缓存里的）或 `npm`（npm 全局装的）。 */
+  source: string;
+  /** 装在哪：npx 给缓存目录，npm 给全局安装目录。 */
   path: string;
-  reason: string;
-}
-
-/** 与 Rust 侧 `npxcache::CleanupResult` 对应：清理结果与清理后的新盘面。 */
-export interface CleanupResult {
-  removed: CleanedDir[];
-  failed: CleanupFailure[];
-  freedBytes: number;
-  message: string;
-  state: CacheState;
-}
-
-/** 与 Rust 侧 `AutoCleanupReport` 对应：最近一次「启动后自动清理」的结果。 */
-export interface AutoCleanupReport {
-  /** 第几次自动清理；界面只播报比上次新的那一次。 */
-  seq: number;
-  /** 说明文字（成功时以「启动后自动清理：」开头）。 */
-  message: string;
-  /** 成功时的逐条结果；缓存根都定位不到时没有可展示的条目。 */
-  result: CleanupResult | null;
+  /** 当前启动方式是否就用这一份。 */
+  inUse: boolean;
 }
 
 /**

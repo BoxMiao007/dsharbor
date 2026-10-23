@@ -29,6 +29,8 @@
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--fg);
+  /* 标题换行时平衡各行长度，避免最后一行只剩一个词。 */
+  text-wrap: balance;
 }
 
 .titlebar-sub {
@@ -54,7 +56,8 @@
   height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  /* 同心圆角：外层 .win-controls 9px、内边距 5px，内层取 9−5=4px，内外弧线才同心。 */
+  border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
   transition:

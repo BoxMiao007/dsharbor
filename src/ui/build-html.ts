@@ -1,9 +1,9 @@
 /* 整页静态骨架 buildHtml：由 AppInfo 渲染左栏与右栏全部初始 DOM（id 不变，绑定代码共用） —— 自 main.ts 原样搬出（2026-10 模块化拆分），声明加 export，其余未改。 */
 
-import { PANELS, UNREAD_BADGE_HTML, ICON_PLUS, ICON_SUN, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_FOLDER, ICON_REVERT } from "./icons";
+import { PANELS, UNREAD_BADGE_HTML, ICON_SUN, ICON_MOON, ICON_MINIMIZE, ICON_MAXIMIZE, ICON_CLOSE, ICON_RESTART, ICON_OPEN_APP, ICON_OPEN_BROWSER, ICON_CODE, ICON_DSH_SITE, ICON_GITHUB, ICON_MODAL_CLOSE, ICON_CHEVRON_DOWN, ICON_REFRESH, ICON_UPDATE_ALL, ICON_FOLDER, ICON_REVERT, ICON_CHECK } from "./icons";
 import type { AppInfo } from "./types";
 import { CUSTOM_DEFAULT_COMMAND, TOGGLE_TEXT_REST, TOOLTIP_RESTART, npxCommandOf } from "./config";
-import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, colHead, badgeLine } from "./markup";
+import { toggleSwapHtml, panelSection, cell, mainCard, cellRow, cardRow, cellColumn, colHead, badgeLine } from "./markup";
 
 /** 版本徽章里的两个四角星图标（取自 DeepSeek Harness 官网，路径原样保留）。 */
 export const SPARKLE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -16,6 +16,17 @@ export const SPARKLE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M9 6C10.53 9.82 13.68 12.97 17.5 14.5C13.68 16.03 10.53 19.18 9 23C7.47 19.18 4.32 16.03 0.5 14.5C4.32 12.97 7.47 9.82 9 6Z" fill="url(#harness-badge-sparkle)"></path>
           <path d="M19.5 1C20.22 2.8 21.7 4.28 23.5 5C21.7 5.72 20.22 7.2 19.5 9C18.78 7.2 17.3 5.72 15.5 5C17.3 4.28 18.78 2.8 19.5 1Z" fill="url(#harness-badge-sparkle)"></path>
         </svg>`;
+
+/** 方钮（.square-btn）里叠在同一格的三层：语义图标、环形 spinner（忙态）、完成勾（成功后 0.9s）。
+ *  只用「换可见性」切换——三层同尺寸同位置，切换时按钮不跳动（#29）。
+ *  忙态/勾的类由 src/ui/sqbusy.ts 挂；语义图标本身不旋转。 */
+export function squareBusyChrome(icon: string): string {
+  return (
+    `<span class="sq-icon" aria-hidden="true">${icon}</span>` +
+    `<span class="sq-spinner" data-busy-spinner aria-hidden="true"></span>` +
+    `<span class="sq-check" aria-hidden="true">${ICON_CHECK}</span>`
+  );
+}
 
 /** 启动方式的界面文案（折叠摘要徽章与单选组共用一份，避免两处漂移）。 */
 export const MODE_LABELS: Record<string, string> = {
@@ -57,6 +68,7 @@ export function buildHtml(info: AppInfo): string {
         <p class="sidebar-sub">DeepSeek</p>
       </div>
       <nav class="rail" id="nav" aria-label="设置分区">
+        <span class="rail-ind" aria-hidden="true"></span>
         ${PANELS.map(
           (item) =>
             `<button class="ico-item" type="button" data-panel-btn="${item.key}">${item.icon}<span class="txt">${item.label}</span>${item.key === "log" ? UNREAD_BADGE_HTML : ""}</button>`,
@@ -65,7 +77,7 @@ export function buildHtml(info: AppInfo): string {
       <div class="sidebar-links">
         <button id="link-site" class="icon-btn" type="button" title="打开 DSH 官网" aria-label="打开 DSH 官网">${ICON_DSH_SITE}</button>
         <button id="link-repo" class="icon-btn" type="button" title="打开 GitHub 仓库" aria-label="打开 GitHub 仓库">${ICON_GITHUB}</button>
-        <button id="mode-btn" class="icon-btn" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}</button>
+        <button id="mode-btn" class="icon-btn theme-morph" type="button" title="切换到浅色模式" aria-label="切换到浅色模式">${ICON_SUN}${ICON_MOON}</button>
       </div>
     </aside>
   `;
@@ -77,7 +89,7 @@ export function buildHtml(info: AppInfo): string {
   const toolbar = `
     <section class="block toolbar-block">
       <div class="status-row">
-        <span id="login-badge" class="badge badge-stopped"><span id="login-text">桥接未安装</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="桥接插件说明" data-tip="正在读取桥接插件状态…">!</span></span>
+        <span id="login-badge" class="badge badge-stopped" role="status" aria-live="polite"><span id="login-text">桥接未安装</span><span id="login-info" class="info-dot" role="img" tabindex="0" aria-label="桥接插件说明" data-tip="正在读取桥接插件状态…">!</span></span>
         <span id="version-badge" class="badge badge-version" title="每次成功启动 DSH 后自动读取">${SPARKLE_SVG}<span id="version-text">DSH 版本未知</span></span>
         <span class="status-meta">PID <b id="status-pid">—</b></span>
         <span class="status-meta">监听 <b id="status-port">—</b></span>
@@ -88,14 +100,14 @@ export function buildHtml(info: AppInfo): string {
         <div class="actions actions-primary">
           <!-- 初始即停止态的逐字切换形态：首帧就用正确样式，等 render 前不会闪红底大字。 -->
           <button id="btn-toggle" class="primary swap" aria-label="${TOGGLE_TEXT_REST}">${toggleSwapHtml()}</button>
-          <button id="btn-restart" class="round hidden" type="button" title="${TOOLTIP_RESTART}" aria-label="${TOOLTIP_RESTART}">${ICON_RESTART}</button>
+          <button id="btn-restart" class="round hidden has-tip" type="button" data-tip="${TOOLTIP_RESTART}" aria-label="${TOOLTIP_RESTART}">${ICON_RESTART}</button>
         </div>
         <div class="open-split">
           <button id="btn-open" class="btn-open" type="button" disabled>
             <span class="btn-ico" id="open-ico" aria-hidden="true">${ICON_OPEN_APP}</span>
             <span class="btn-text" id="open-text">应用内打开</span>
           </button>
-          <button id="btn-open-more" class="btn-open-more" type="button" title="更换打开方式" aria-label="更换打开方式" aria-expanded="false" aria-controls="open-menu">${ICON_CHEVRON_DOWN}</button>
+          <button id="btn-open-more" class="btn-open-more has-tip" type="button" data-tip="更换打开方式" aria-label="更换打开方式" aria-expanded="false" aria-controls="open-menu">${ICON_CHEVRON_DOWN}</button>
           <div id="open-menu" class="open-menu hidden" role="menu" aria-label="打开方式">
             <button class="open-item" type="button" role="menuitem" data-open-mode="app">${ICON_OPEN_APP}<span>应用内打开</span></button>
             <button class="open-item" type="button" role="menuitem" data-open-mode="browser">${ICON_OPEN_BROWSER}<span>浏览器打开</span></button>
@@ -107,8 +119,23 @@ export function buildHtml(info: AppInfo): string {
   `;
 
   // 状态错误与登录失败的两行提示：工具条下方整行显示，不塞进任何块。
-  const statusErrorBlock = `<p id="status-error" class="error hidden"></p>`;
-  const loginNoteBlock = `<p id="login-note" class="hint login-note hidden"></p>`;
+  // 两者都是「运行中才出现」的动态状态，加 aria-live 让屏幕阅读器在出现时读出来。
+  const statusErrorBlock = `<p id="status-error" class="error hidden" role="alert" aria-live="assertive"></p>`;
+  const loginNoteBlock = `<p id="login-note" class="hint notice login-note hidden" role="status" aria-live="polite"></p>`;
+
+  // 「动效」块：全站动效的总开关，值存在 localStorage（键见 src/ui/motion.ts），
+  // 关掉后 <html> 带 data-motion="off"，由 99-hidden.css 统一把动画与过渡中和。
+  // 刻意不跟随系统的「减少动画」偏好：本项目的界面动效有自己的开关，两套口径混用
+  // 会出现「明明开着却不动」的困惑，所以说明里写清。
+  const motionFields = `
+    ${colHead("动效")}
+    <div class="switch-row">
+      <span class="switch-label" id="motion-toggle-label">界面动效</span>
+      <button class="switch" type="button" role="switch" id="motion-toggle" aria-checked="true" aria-labelledby="motion-toggle-label"><span class="switch-knob"></span></button>
+    </div>
+    <p class="hint">关掉后界面不再有过渡与位移，转圈这类忙碌提示改为静止的图标。</p>
+    <p class="hint">只看这里的设置，不跟随系统的「减少动画」偏好。</p>
+  `;
 
   // 两条托盘设置（单击打开 / 释放界面内存）在「托盘设置」块里，说明直接写在控件下方。
   const trayFields = `
@@ -126,20 +153,20 @@ export function buildHtml(info: AppInfo): string {
   `;
 
   // 「环境/插件」卡：顶部一排能起网页界面的环境大按钮，点一下就切「当前管理的环境」；
-  // 右侧一列三颗按钮（新建空白环境 / 桥接插件 / 补丁层），三颗等宽对齐。新建之所以放在最上面：
+  // 右侧一列两颗按钮（新建空白环境 / 桥接插件），两颗等宽对齐。新建之所以放在最上面：
   // 它是这一块唯一的「添东西」动作，放行尾会被误读成与插件同类的设置项；它的命名规则说明
   // 收进点开后的弹窗，不在卡里占三行字。
+  // 补丁层是「某个环境的」东西，所以入口收进环境三点菜单里，不在这里占一颗全局按钮。
   // 启动 DSH 永远用 web 环境（核心库 launch::PROFILE_NAME），这里选的只是「管理目标」。
   const profilesBody = `
     ${colHead("环境与插件")}
-    <p id="profiles-windows-only" class="hint profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
+    <p id="profiles-windows-only" class="hint notice profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
     <div id="profiles-content" class="profiles-content">
       <div class="env-row">
         <div id="profile-cards" class="env-cards"></div>
         <div class="env-aside">
-          <button id="btn-profile-create" class="ghost env-new" type="button">${ICON_PLUS}<span>新建空白环境</span></button>
+          <button id="btn-profile-create" class="ghost" type="button">新建空白环境</button>
           <button id="btn-bridge" class="ghost" type="button">桥接插件</button>
-          <button id="btn-patch" class="ghost" type="button">补丁层</button>
         </div>
       </div>
       <p id="profile-note" class="hint hidden"></p>
@@ -148,25 +175,32 @@ export function buildHtml(info: AppInfo): string {
   `;
 
   // 插件管理卡：跟着「选中的环境」走。开关改的是补丁层里的禁用表达，不卸载插件包。
+  // 开关与更新的规则说明不再整段铺在卡头（维护者要求收掉）；关键提醒都收在控件
+  // 自己的气泡（data-tip）与完成后的提示行（#plugin-note / #plugin-warning）里。
   const pluginBody = `
-    ${colHead("插件", badgeLine("plugin-summary", "读取中…"))}
-    <p class="hint">一行一个插件的<b>总开关</b>；开关改的是补丁层里的禁用表达，<b>不会卸载插件包</b>：关掉后重启 DSH 才不再加载它，重新打开也不需要重新下载。只列壳管得了的插件——官方内置的骨架包（没有可禁用的挂载点）与桥接插件（归「桥接插件」浮窗管）不在这里出现。每次开关前会自动备份一份补丁层（每个环境保留最近 5 份）；改完要重启 DSH 才生效，所以操作前请先停止 DSH。</p>
+    ${colHead("插件", `${badgeLine("plugin-summary", "读取中…")}<span class="plugin-head-actions"><button id="btn-plugin-check-updates" class="square-btn has-tip" type="button" data-tip="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${squareBusyChrome(ICON_REFRESH)}</button><button id="btn-plugin-update-all" class="square-btn has-tip" type="button" data-tip="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${squareBusyChrome(ICON_UPDATE_ALL)}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button></span>`)}
     <div id="profile-plugins" class="plugin-panel">
+      <div id="plugin-progress" class="plugin-progress hidden">
+        <div id="plugin-progress-bar" class="plugin-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="全部更新进度"><i aria-hidden="true"></i></div>
+        <p id="plugin-progress-sum" class="plugin-progress-sum" aria-live="polite"></p>
+      </div>
       <div id="plugin-list" class="plugin-list"></div>
       <div id="plugin-empty" class="plugin-empty hidden">
-        <p class="hint">这个环境还没有壳管得了的插件（官方内置骨架包与桥接插件不在列表里）。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
+        <p class="hint notice">这个环境还没有壳管得了的插件（官方内置骨架包与桥接插件不在列表里）。先给环境安装依赖，再用官方命令把插件装上（<code>dsh plugin --profile &lt;环境名&gt; add &lt;插件名&gt;</code>）。</p>
         <div class="actions">
           <button id="btn-plugin-deps" class="ghost">去安装依赖</button>
         </div>
       </div>
       <p id="plugin-note" class="hint hidden"></p>
-      <p id="plugin-warning" class="hint plugin-warning hidden"></p>
+      <p id="plugin-warning" class="hint notice plugin-warning hidden"></p>
     </div>
   `;
 
-  // 「网络与代理」块：下载源 + 代理。代理设置按下发到子进程的时机生效，所以地址框失焦就存。
+  // 「网络与代理」块：下载源 + 代理，末尾接「测试连接」——自检跑的就是这里配的代理，
+  // 放在同一张卡里才看得出「测的是上面这套设置」，不再单独占一张小卡。
+  // 代理设置按下发到子进程的时机生效，所以地址框失焦就存。
   const networkFieldsBody = `
-    <p id="network-windows-only" class="hint network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
+    <p id="network-windows-only" class="hint notice network-windows-only hidden">仅在 Windows 宿主可用：代理设置要读系统代理（Windows 注册表或环境变量）并下发到子进程，自检也要起 npm；这里不会改动任何设置。</p>
     <div id="network-content" class="network-content">
     ${colHead("网络与代理")}
     <div class="fields">
@@ -178,34 +212,31 @@ export function buildHtml(info: AppInfo): string {
       <span class="field-label">代理</span>
       <div class="picker" id="proxy-mode-picker"></div>
       <div id="proxy-manual" class="proxy-manual hidden">
-        <input id="proxy-address" type="text" placeholder="例如 http://127.0.0.1:7890" spellcheck="false" autocomplete="off" />
+        <input id="proxy-address" type="text" placeholder="例如 http://127.0.0.1:7890" aria-label="代理地址" spellcheck="false" autocomplete="off" />
       </div>
       <p class="hint" id="proxy-hint"></p>
     </div>
-    </div>
-  `;
-
-  // 「网络自检」块：真正起一次 npm，看直连和走代理各自通不通。
-  const selfCheckBody = `
     <div class="fields">
+      <span class="field-label">连接测试</span>
       <div class="actions">
         <button type="button" id="btn-self-check">测试连接</button>
       </div>
       <p class="hint" id="self-check-status"></p>
       <p class="hint hidden" id="self-check-detail"></p>
     </div>
+    </div>
   `;
 
   // 「命令行集成」块：内容全部由后端算好（目录、垫片内容、手动命令、状态说明），
   // 界面只负责显示，避免两边各算一套口径。非 Windows 宿主只留手动命令。
+  // 长段解释统一收进底部折叠区：默认只留开关与两行路径，读起来不糊。
   const cliBlockBody = `
     ${colHead("命令行集成", badgeLine("integrations-summary", "读取中…"))}
     <div class="cli-windows-only">
-      <label class="switch-line">
-        <input type="checkbox" id="cli-toggle" />
-        <span>把 <code>dsh</code> 命令接进终端：在固定目录写一份 <code>dsh.cmd</code>，再把这个目录加到当前用户的 PATH 末尾</span>
-      </label>
-      <p class="hint">只改当前用户的 PATH，不动系统 PATH，其它条目原样保留（百分号变量也不会被展开）；写入是原值回写，再长也不会截断。改完不影响已经开着的终端，<b>新开一个终端</b>才生效。</p>
+      <div class="switch-row">
+        <span class="switch-label" id="cli-toggle-label">把 <code>dsh</code> 命令接进终端</span>
+        <button class="switch" type="button" role="switch" id="cli-toggle" aria-checked="false" aria-labelledby="cli-toggle-label"><span class="switch-knob"></span></button>
+      </div>
       <div class="kv">
         <div class="kv-row"><span class="kv-key">垫片目录</span><span class="kv-value" id="cli-bin-dir">—</span></div>
         <div class="kv-row kv-row-action"><span class="kv-key">垫片文件</span><span class="kv-value" id="cli-shim-path">—</span><button id="btn-cli-dir" class="kv-action">打开目录</button></div>
@@ -214,44 +245,39 @@ export function buildHtml(info: AppInfo): string {
     <div class="kv">
       <div class="kv-row kv-row-action"><span class="kv-key">手动命令</span><span class="kv-value cli-command" id="cli-manual">—</span><button id="btn-cli-copy" class="kv-action">复制</button></div>
     </div>
-    <p class="hint">不想打开上面的开关时，把这条命令粘进 <b>命令提示符（cmd）</b> 或 <b>PowerShell</b> 回车执行，也就是自己把它追加到当前用户的 PATH 末尾；开新终端后生效。注意 <code>setx</code> 会把 <code>%VAR%</code> 展开成当前值、超过 1024 个字符会被截断，所以它只适合手动救场，日常用上面那个开关（那边是原值回写，不会被展开也不会截断）。</p>
     <p id="cli-message" class="hint">读取中…</p>
     <p id="cli-error" class="error hidden"></p>
     <div class="cli-windows-only">
       <details class="log-box">
         <summary><span class="chev">▸</span>垫片内容（跟随当前启动方式）</summary>
-        <div class="log-area">
+        <div class="log-area log-area-code">
           <pre id="cli-shim-text">（读取中）</pre>
           <button type="button" class="log-copy" id="btn-cli-copy-shim">复制</button>
         </div>
       </details>
     </div>
+    <details class="log-box">
+      <summary><span class="chev">▸</span>这段在做什么 / 手动怎么配</summary>
+      <div class="log-area">
+        <p class="hint">只改当前用户的 PATH，不动系统 PATH，其它条目原样保留（百分号变量也不会被展开）；写入是原值回写，再长也不会截断。改完不影响已经开着的终端，<b>新开一个终端</b>才生效。</p>
+        <p class="hint">不想打开上面的开关时，把「手动命令」粘进 <b>命令提示符（cmd）</b> 或 <b>PowerShell</b> 回车执行就行。注意 <code>setx</code> 会把 <code>%VAR%</code> 展开成当前值、超过 1024 个字符会被截断，所以它只适合手动救场，日常用上面那个开关（原值回写，不会被展开也不会截断）。</p>
+      </div>
+    </details>
   `;
 
-  // 「npx 缓存」块：占用字节、可回收字节、目录明细、每次删除的结果都在后端算好。
-  const cacheBlockBody = `
-    ${colHead("npx 缓存")}
-    <p class="hint">只统计明确记录着本包的缓存目录，别的包既不计入也不删。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。</p>
-    <label class="switch-line">
-      <input type="checkbox" id="cache-auto-toggle" />
-      <span>真的拉起一个 DSH 进程之后自动清理一次：保留当前启动配置对应的那份与最近用过的几份，其余删掉</span>
-    </label>
-    <p class="hint">默认关闭。打开后，只在这一回真的拉起了一个 DSH 进程之后修剪一次（壳外已经有一份在跑时什么也不拉起，所以什么也不删）；进程起来了但随后又崩了也照样清理，这里不等它健康退出。清掉了哪些、释放了多少会显示在下面。</p>
-    <div class="kv">
-      <div class="kv-row"><span class="kv-key">本包占用</span><span class="kv-value" id="cache-own">—</span></div>
-      <div class="kv-row"><span class="kv-key">可回收</span><span class="kv-value" id="cache-reclaimable">—</span></div>
-      <div class="kv-row kv-row-action"><span class="kv-key">缓存目录</span><span class="kv-value" id="cache-root">—</span><button id="btn-cache-clean" class="kv-action">立即清理</button></div>
-    </div>
-    <p id="cache-message" class="hint">读取中…</p>
-    <p id="cache-warning" class="hint hidden"></p>
-    <p id="cache-error" class="error hidden"></p>
-    <div id="cache-results" class="hidden">
-      <div class="kv" id="cache-results-body"></div>
-    </div>
+  // 「DSH 版本」块：列出本机装了哪些 dsh web，并允许删掉某一份。
+  // 壳不再管理 npx 缓存（不统计占用、不自动清理），这里只回答「装了哪几份、装在哪、在不在用」。
+  // 同一个版本装了好几份很常见（每次换 npx 参数都会新解一份），标题旁挂一枚黄色徽章点出来。
+  const dshVersionsBody = `
+    ${colHead("DSH 版本", '<span id="dsh-versions-dup" class="badge badge-warn panel-badge hidden"></span>')}
+    <p class="hint">本机装了哪些 dsh web：npx 缓存里的，与 <code>npm install -g</code> 装的。桌面版自带的 CLI 不算。</p>
+    <div id="dsh-versions-list" class="version-list"><p class="hint">读取中…</p></div>
+    <p id="dsh-versions-error" class="error hidden"></p>
     <details class="log-box">
-      <summary><span class="chev">▸</span>缓存明细（保留的与可回收的）</summary>
+      <summary><span class="chev">▸</span>删除说明</summary>
       <div class="log-area">
-        <pre id="cache-dirs">（读取中）</pre>
+        <p class="hint">「npm 全局」那一份点「卸载」，等同于 <code>npm uninstall -g @deepseek-ai/dsh</code>；「npx 缓存」那几份点「删除」，直接删掉对应的缓存目录。两种都要再点一次「确定」，删掉后没法找回。</p>
+        <p class="hint">正被当前启动方式用着的那一份（标着「使用中」）删掉后要换一种启动方式，或者重新下一次。只想腾空间、又不想丢版本的话，留着即可：npx 按命令写法各存一份缓存——选具体版本启动复用的是 dsh@版本号 写法的那份，自动最新复用的是裸包名写法的那份；缓存里没有对应写法的那份时，启动就会现下一份。</p>
       </div>
     </details>
   `;
@@ -272,12 +298,13 @@ export function buildHtml(info: AppInfo): string {
       <div id="npx-fields" class="fields hidden">
         <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行，桥接插件也装到那个发行版里。">!</span></span>
         <div class="picker" id="npx-runtime-picker"></div>
-        <span class="field-label">版本 <span class="info-dot" role="img" tabindex="0" aria-label="版本说明" data-tip="首项「自动最新版本」不带版本号，跟 npm 的 latest 标签走，官方发新版后自动用上；下面按新到旧列出官方发布过的版本，「更多…」每次再放 10 个。标「已缓存」的版本本机 npx 缓存里已经有了，选它启动不用重新下载。">!</span></span>
+        <span class="field-label">版本 <span class="info-dot" role="img" tabindex="0" aria-label="版本说明" data-tip="首项「自动最新版本」不带版本号，跟 npm 的 latest 标签走，官方发新版后自动用上；下面按新到旧列出官方发布过的版本，「更多…」每次再放 10 个。标「已缓存」的版本本机 npx 缓存里已经有了；npx 按命令写法各存一份缓存，只有那份是 dsh@版本号 写法留下的才直接复用、不再下载，裸包名写法留下的选了还会再下载一份。">!</span></span>
         <div class="control-line">
           <div class="picker" id="npx-version-picker"></div>
-          <button type="button" id="npx-versions-refresh" class="square-btn" title="重新获取官方版本列表" aria-label="重新获取官方版本列表">${ICON_REFRESH}</button>
+          <button type="button" id="npx-versions-refresh" class="square-btn has-tip" data-tip="重新获取官方版本列表" aria-label="重新获取官方版本列表">${squareBusyChrome(ICON_REFRESH)}</button>
         </div>
         <div id="npx-versions-hint" class="hint hidden"></div>
+        <div id="npx-installed-hint" class="hint notice hidden"></div>
         <div class="preview-line"><span class="field-label">命令预览</span><code id="npx-command-preview" class="command-preview">${npxCommandOf(null)}</code></div>
       </div>
     </div>
@@ -300,8 +327,8 @@ export function buildHtml(info: AppInfo): string {
       </label>
       <div id="binary-fields" class="fields hidden">
         <div class="path-row">
-          <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" />
-          <button type="button" id="binary-browse" class="square-btn" title="浏览程序路径" aria-label="浏览程序路径">${ICON_FOLDER}</button>
+          <input id="binary-path" type="text" placeholder="例如 D:\\tools\\dsh.cmd" aria-label="指定程序路径" />
+          <button type="button" id="binary-browse" class="square-btn has-tip" data-tip="浏览程序路径" aria-label="浏览程序路径">${ICON_FOLDER}</button>
         </div>
         <p id="binary-error" class="error field-error hidden"></p>
       </div>
@@ -317,7 +344,7 @@ export function buildHtml(info: AppInfo): string {
       <div id="custom-fields" class="fields hidden">
         <span class="field-label">运行环境 <span class="info-dot" role="img" tabindex="0" aria-label="运行环境说明" data-tip="默认在 Windows 侧执行命令；选 WSL 发行版则通过 wsl.exe 在该发行版内执行这条命令。">!</span></span>
         <div class="picker" id="custom-runtime-picker"></div>
-        <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" />
+        <input id="custom-command" type="text" value="${CUSTOM_DEFAULT_COMMAND}" placeholder="例如 npx @deepseek-ai/dsh@next web" aria-label="自定义启动命令" />
         <p class="hint">写整条启动命令；只允许字母数字与 <code>- _ . / : = @ +</code> 和空格，引号、管道、重定向会被拒绝。壳会自动补上 <code>--no-open</code>。选中「环境」面板里的其它环境时不会改写这条命令——自己写进去才算数。</p>
       </div>
     </div>
@@ -333,7 +360,7 @@ export function buildHtml(info: AppInfo): string {
     </div>`;
   const portBody = `<div class="fields">
       <label for="port">监听端口 <span id="port-info" class="info-dot" role="img" tabindex="0" aria-label="端口说明" data-tip="正在读取 DSH 配置…">!</span></label>
-      <div class="port-row">${portControl}<button type="button" id="port-reset" class="square-btn" title="把端口还原为默认（留空 = 跟随 DSH 配置）" aria-label="还原端口">${ICON_REVERT}</button></div>
+      <div class="port-row">${portControl}<button type="button" id="port-reset" class="square-btn has-tip" data-tip="把端口还原为默认（留空 = 跟随 DSH 配置）" aria-label="还原端口">${ICON_REVERT}</button></div>
       <p class="hint" id="port-hint">留空即跟随 DSH 自身的配置。</p>
     </div>`;
 
@@ -411,10 +438,13 @@ export function buildHtml(info: AppInfo): string {
       mainCard([cell(modesBody), cellRow("1-1", extraArgsBody, portBody)]),
     ),
     panelSection("env", mainCard([cell(profilesBody), cell(pluginBody)])),
-    panelSection("integ", mainCard([cell(cliBlockBody), cell(cacheBlockBody)])),
+    panelSection("integ", mainCard([cell(cliBlockBody), cell(dshVersionsBody)])),
     panelSection(
       "traynet",
-      mainCard([cellRow("1-2", trayFields, networkFieldsBody), cell(selfCheckBody)]),
+      // 左列上下两张小卡（托盘设置 / 动效）、右列一张长卡（网络与代理，含测试连接）。
+      // 两列等宽：网络那边的说明长得多，宽窄不一控件就左右对不齐；等宽后两列的标题、
+      // 下拉框、说明都从同一条竖线起。左列两张卡的间距与外层卡片间距同一取值（--gap-card）。
+      mainCard([cardRow("1-1", cellColumn(trayFields, motionFields), cell(networkFieldsBody))]),
     ),
     // 日志分区是唯一不走「每项一张小卡」的分区：标题与按钮直接在大卡上，
     // 正文单独一层，所以这里把 logBody 直接铺进主卡，不套 cell。
@@ -450,14 +480,10 @@ export function buildHtml(info: AppInfo): string {
       </header>
       <div class="modal-body">
         <div class="fields" id="profile-manage-name-row">
-          <input id="profile-manage-name" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lab">
+          <input id="profile-manage-name" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lab" aria-label="环境名">
         </div>
         <div id="profile-manage-confirm" class="profile-confirm hidden">
           <p id="profile-manage-confirm-text" class="hint"></p>
-          <div class="actions">
-            <button id="btn-profile-confirm-yes" class="danger">确定删除</button>
-            <button id="btn-profile-confirm-no" class="ghost">取消</button>
-          </div>
         </div>
         <p id="profile-manage-note" class="hint hidden"></p>
         <p id="profile-manage-error" class="error hidden"></p>
@@ -472,6 +498,7 @@ export function buildHtml(info: AppInfo): string {
       <button type="button" role="menuitem" data-env-act="copy">复制</button>
       <button type="button" role="menuitem" data-env-act="delete" class="danger">删除</button>
       <button type="button" role="menuitem" data-env-act="deps">安装依赖</button>
+      <button type="button" role="menuitem" data-env-act="patch">补丁层</button>
       <button type="button" role="menuitem" data-env-act="open">打开目录</button>
     </div>
   `;
@@ -488,6 +515,9 @@ export function buildHtml(info: AppInfo): string {
       </div>
     </main>
   </div>
-  ${modals}`;
+  ${modals}
+  <!-- 动作回执的播报容器（#34）：固定右下角，礼貌播报；条目本身由 src/ui/toast.ts 造。
+       容器的角色与 aria-live 放在这里而不是每条上，加一条就自动播报一次。 -->
+  <div id="toasts" class="toasts" role="status" aria-live="polite" aria-atomic="false"></div>`;
 }
 

@@ -8,6 +8,20 @@ DSH(DeepSeek Harness)Web 版的桌面壳:安装包尽量小、关掉界面时释
 
 v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交叉编译的管线已下线,见 `docs/decisions.md`)。功能拆解与进度见需求单 #1(https://github.com/BoxMiao007/dsharbor/issues/1)。
 
+## 目录地图
+
+| 路径 | 是什么 |
+|---|---|
+| `crates/dsharbor-core/` | 纯逻辑核心库:启动计划构造、输入校验、链接解析、轻量模式状态机、插件清单与更新比较;不碰界面与系统 API,`cargo test` 全自动。 |
+| `src-tauri/src/` | Tauri 壳层(Rust):`lib.rs` 是命令入口与 AppState,其余按域分文件——`launcher` 启动器、`plugin` 桥接插件安装、`plugin_switch`/`plugin_update` 插件开关与更新、`registry` 版本查询、`npxcache` npx 缓存扫描、`patch` 补丁层、`tray` 托盘、`wsl` 运行环境等。 |
+| `src/` | 前端(TypeScript,无框架):`main.ts` 主逻辑,`ui/build-html.ts` DOM 模板,`ui/icons.ts` 内联 SVG 图标,`styles/` 按编号分区的样式(`00-tokens.css` 定义全部 CSS 变量,其余 11 个文件只引用变量)。 |
+| `plugins/dsharbor-bridge/` | 随壳分发的 DSH 桥接插件(npm 包,`pnpm pack:bridge` 打成 tgz 放进 `src-tauri/resources/`)。 |
+| `scripts/` | `mock-preview.mjs` 假数据预览台等辅助脚本。 |
+| `test/` | `frontend/` 浏览器接缝测试(puppeteer-core 驱动 Edge,每文件独占端口);桥接插件测试在 `plugins/dsharbor-bridge/test/`。 |
+| `docs/` | `decisions.md` 决策记录、`manual-acceptance.md` 真机复核清单、`agents/` 子契约。 |
+
+`dist/`、`target/`、`src-tauri/resources/*.tgz` 都是构建产物,可随时重建、可清理。
+
 ## 协作模式
 
 - 用户的话按"需求与验收期望"理解,不是技术指令;技术选型、实现细节、文件组织由 agent 决定。
@@ -34,6 +48,21 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
    - 需要装到本机时:先关掉在跑的实例(`Stop-Process -Name dsharbor -Force`,或托盘里完全退出),再静默执行 `target/release/bundle/nsis/DSHarbor_<版本>_x64-setup.exe /S`(安装包会一并刷新注册表卸载项、开始菜单与 `uninstall.exe`,不用再手工 copy 文件)。安装目录沿用上次选择的位置(已实测:NSIS 从注册表卸载项读回 `InstallLocation`,当前是 `D:\Program Files\DSHarbor`;装完 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSHarbor` 的 `DisplayVersion` 会跟着更新)。
    - 不要用纯文件替换:那只换 exe 与资源、不动注册表与 `uninstall.exe`,装出来的版本信息会对不上。
    - 更不要拿裸 `cargo build --release` 的 `target/release/dsharbor.exe` 去运行或替换安装目录:那是开发版(没开 tauri 的 `custom-protocol`,运行时按 `devUrl` 去连 `http://127.0.0.1:1420` 的 Vite dev server),脱离 dev server 只会看到「127.0.0.1 拒绝连接」的错误页,而无边框主窗口的关闭按钮就在页面里。开发期要看真窗口行为,用 `pnpm exec tauri dev`。
+
+## 容易踩的
+
+- **前端测试跑的是 `dist/mock.html`,不是源码**:改完前端必须先 `pnpm build` 再跑 `node --test test/frontend/`,否则测的是旧构建、出「假失败」;测试莫名失败先怀疑构建没刷新,再怀疑代码。
+- **前端测试每个文件独占一个端口**(log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / badge-color 8213 / danger-surface 8214;`node --test` 并行跑会同时起各自的预览台):新写测试文件先挑没占用的端口;调试留下的预览台进程占住端口,会让测试自己的预览台「预览台退出 (code 1)」整组秒挂,先 `netstat -ano` 找到 PID 再 `taskkill`。
+- **mock 假命令的延时按「每条命令」计**(如「全部更新」一条命令 600ms,不是每个插件各 600ms):写等待与超时断言前,先看 mock 状态里注入的延时字段。
+
+## 界面设计规范(所有界面样式调整默认遵循)
+
+四条通用细节规范,新增组件与样式重写都要按此检查,存量元素遇到就顺手修正;不需要每次在需求里重复交代。
+
+1. **等宽数字**:所有会变动的数值(版本号、计数、时间、进度、PID 等)加 `font-variant-numeric: tabular-nums`,数值变化时宽度不变、不左右抖动。字符本身就等宽的等宽字族(`Consolas` 之类,如版本号徽章)天然满足,不必重复声明。
+2. **同心圆角**:嵌套元素的外层圆角 = 内层圆角 + 两者之间的内边距(`outer = inner + padding`),保证内外弧线视觉同心。反过来设计时按 `inner = outer − padding` 取内层半径。
+3. **标题平衡换行**:标题文字换行用 `text-wrap: balance`,避免最后一行只剩一个词。
+4. **柔和阴影替代边框**:卡片/容器的分隔优先用多层柔和阴影(令牌 `--shadow-soft`)替代硬描边;换背景色时阴影自然融合,不用跟着调边框色。需要保底轮廓时用发丝边(`color-mix` 把 `--line` 调淡)而不是 1px 实线。
 
 ## 提交与推送
 

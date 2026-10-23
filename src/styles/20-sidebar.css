@@ -1,12 +1,13 @@
 /* ---- 左右分栏：左栏一张卡片，右栏吃掉余量 ---- */
-/* 四周留白由这里给：左右各 20px（卡片不贴窗口边）、底部 20px、
-   与顶栏之间再让 4px（顶栏自己 40 高）。卡片之间用 gap 16px。 */
+/* 四周留白由这里给：左右各 35px（卡片不贴窗口边）、底部 32px、
+   顶部 16px（顶栏自己 40 高）。卡片之间统一用 --gap-card：
+   顶栏→卡片、左栏↔右栏、工具条↔主卡全部对齐同一个值，三张卡片的间隔才一致。 */
 .shell {
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 20px;
-  padding: 20px 35px 32px;
+  gap: var(--gap-card);
+  padding: var(--gap-card) 35px 32px;
 }
 
 /* 左栏：一张通高卡片。顶部产品名 + 副标题，中间五个分区，底部三个纯图标快捷入口。 */
@@ -18,7 +19,8 @@
   flex-direction: column;
   gap: 14px;
   padding: 16px 18px 10px;
-  border: 1px solid var(--line);
+  /* 卡片靠分层阴影立起来，只留一条发丝轮廓保底，不压阴影层次。 */
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
   background: var(--card);
   box-shadow: var(--shadow-soft);
@@ -43,6 +45,8 @@
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--fg);
+  /* 标题换行时平衡各行长度，避免最后一行只剩一个词。 */
+  text-wrap: balance;
 }
 
 .sidebar-sub {
@@ -53,28 +57,68 @@
 
 /* 分区导航：每一项自己是一枚浮在左栏卡片上的胶囊（草图里左栏 5 个浅色胶囊）。 */
 .rail {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 4px;
+  /* 项高与项间距都提成变量：滑动指示块要按它们算位移，改尺寸时三处一起动，
+     不必再去追 54px 这种「44 + 10」的合成值。 */
+  --rail-item-h: 44px;
+  --rail-gap: 10px;
+  --rail-pad-top: 4px;
+  gap: var(--rail-gap);
+  padding-top: var(--rail-pad-top);
   overflow-y: auto;
+}
+
+/* 选中指示块：一块跟着选中项走的淡色底（#36）。选中项的底色不再由按钮自己铺，
+   换分区时整块滑过去，视线先跟左边、再落到右边内容；按钮自己的 hover 仍在上层。
+   位移按按钮序号算：一「步」= 项高 + 项间距，两者都取自 .rail 上的变量。 */
+.rail-ind {
+  position: absolute;
+  top: var(--rail-pad-top);
+  left: 0;
+  right: 0;
+  height: var(--rail-item-h);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  transform: translateY(calc(var(--i, 0) * (var(--rail-item-h) + var(--rail-gap))));
+  transition: transform var(--m-base) var(--ease-spring);
+  pointer-events: none;
+}
+
+/* 首帧贴位置时不要滑：先把指示块放到存下来的分区上，下一帧才允许过渡（见 main.ts）。 */
+.rail:not([data-ready]) .rail-ind {
+  transition: none;
+}
+
+/* 选中标记（胶囊内左侧一根 3px 竖条）跟着指示块一起滑，不留在按钮里各自闪烁。 */
+.rail-ind::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
 }
 
 .ico-item {
   position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 11px;
   width: 100%;
-  height: 44px;
+  height: var(--rail-item-h);
   flex: none;
   padding: 0 12px;
   border: 0;
   border-radius: 10px;
   /* 未选中不画底框（维护者要求）：一排同色块挤在一起，看不出哪块是当前项；
-     底色只在悬停与选中时出现。 */
+     底色只在悬停时出现，选中态由 .rail-ind 这块滑动指示给（#36）。 */
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
@@ -82,8 +126,8 @@
   text-align: left;
   cursor: pointer;
   transition:
-    color 140ms,
-    background 140ms;
+    color var(--m-quick),
+    background var(--m-quick);
 }
 
 .ico-item svg {
@@ -102,33 +146,52 @@
   white-space: nowrap;
 }
 
-.ico-item:hover {
+/* 悬停底色只给「没被选中」的项：选中项的底色已经由 .rail-ind 那块滑动指示在铺，
+   按钮自己再铺一层就是两块淡色底叠在一起（同色不同层，边缘发虚像两个框）。
+   选择器带 :not([aria-current="true"])，特指度 (0,3,0) 也压过 60-controls.css 的
+   全站 `button:hover:not(:disabled){background:var(--accent-soft)}`（0,2,1）——
+   不然悬停时铺的是 accent-soft，和指示块同色，看着就是两层框。 */
+.ico-item:hover:not([aria-current="true"]) {
   background: var(--elev);
   color: var(--fg);
 }
 
-.ico-item[aria-current="true"] {
-  background: var(--accent-soft);
+/* 选中项只提亮文字：底色与左侧竖条都由 .rail-ind 统一给，选中态才不会「两块一起动」。
+   悬停/聚焦选中项时也要把全站那条 button:hover 底压回透明，任何时刻都只有指示块一个框。 */
+.ico-item[aria-current="true"],
+.ico-item[aria-current="true"]:hover,
+.ico-item[aria-current="true"]:focus-visible {
+  background: transparent;
   color: var(--fg);
 }
 
-/* 选中标记：胶囊内左侧一根 3px 竖条。画在胶囊内侧而不是栏外，免得贴到卡片边。 */
-.ico-item[aria-current="true"]::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 11px;
-  bottom: 11px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--accent);
+/* 导航项**不参与全站按压反馈**（不缩放、不加内阴影）——维护者反馈的「两个框」就是这条引起的：
+   全站那条 `button:active{transform:scale(.972) + inset 阴影}` 会把按钮缩到 177×42.8，而铺底的
+   .rail-ind 仍是 182×44 不动，于是按下/连点时看到「大框 + 里面一层带内描边的框」。
+   导航项的按压反馈本来就由「指示块滑过去」表达，不需要再缩一下。
+   特指度写足 (0,3,1)：全站那条是 `button:active:not(:disabled), button.primary:active:not(:disabled)`
+   （(0,2,1)），少一个类就压不住。 */
+.ico-item:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+/* 键盘焦点环收进按钮内侧（outline-offset 取负），贴着指示块的边线走：
+   原来 offset 是正的，环画在指示块外面 2px，看着又是一层框。内嵌之后选中项被键盘聚焦时，
+   视觉上仍只有「一块底 + 一根细边」，不再冒第二个框。 */
+.ico-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 10px;
 }
 
 /* 左栏「日志」条目上的未读数字：只在有未读时出现——没有未读时容器内容是空的，
    由下面的 :empty 收成不渲染，不需要界面再挂一个隐藏类。
    尺寸对齐工具条徽章（字号 13px、圆角 999px、等宽数字），但矮一档取 20px：
    它挤在 44px 高的导航条目里，与 24px 的独立徽章同高会顶掉条目的上下留白。
-   margin-left: auto 把它推到条目最右，flex: none 让它挨着最小窗口宽度也不被压窄。 */
+   margin-left: auto 把它推到条目最右，flex: none 让它挨着最小窗口宽度也不被压窄。
+   底色用 --accent-fill（深一档实底）而不是 --accent：白字压浅冰蓝只有 ~2.1:1，
+   压实底是 4.88/5.84。 */
 .ico-count {
   display: inline-flex;
   flex: none;
@@ -139,7 +202,7 @@
   margin-left: auto;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -226,4 +289,53 @@
 .icon-btn:hover {
   background: var(--elev);
   color: var(--fg);
+}
+
+/* 深浅切换：太阳 / 月亮两颗图标对转交接 -----------------------------------------
+   图标语义不变——显示的仍是「点下去会变成什么」（深色时太阳在场）。两颗都常驻
+   DOM，谁在场、谁退到哪一侧、转多少度，全由 html[data-mode] 驱动（见下方两条
+   状态规则），不在 JS 里堆状态，所以连续快速切换只会在两套终态间重算，不会卡在
+   中间或出现两颗同时清晰。切换时旧图标旋转约 70°、缩到 0.55、模糊 4px 淡出，
+   新图标反向进场；时长取 --m-enter（260ms），形变不算「放大」，符合位移/时长约束。 */
+.theme-morph {
+  position: relative;
+}
+
+.theme-morph svg {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 18px;
+  height: 18px;
+  /* 用 opacity 淡出，而不是 display：display 不可过渡，旧图标会「啪」地消失。 */
+  transition:
+    opacity var(--m-base) var(--ease-out),
+    transform var(--m-enter) var(--ease-spring),
+    filter var(--m-base) var(--ease-out);
+}
+
+/* 深色外观：太阳在场（居中、正、清晰），月亮转 70°、缩到 0.55、模糊退场。 */
+.theme-morph .ico-sun {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+  filter: blur(0);
+}
+
+.theme-morph .ico-moon {
+  opacity: 0;
+  transform: rotate(70deg) scale(0.55);
+  filter: blur(4px);
+}
+
+/* 浅色外观：反过来——月亮在场，太阳转 -70°、缩小模糊退场。 */
+html[data-mode="light"] .theme-morph .ico-sun {
+  opacity: 0;
+  transform: rotate(-70deg) scale(0.55);
+  filter: blur(4px);
+}
+
+html[data-mode="light"] .theme-morph .ico-moon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+  filter: blur(0);
 }

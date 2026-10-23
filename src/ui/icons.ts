@@ -3,7 +3,7 @@
 import iconDs from "../assets/dsh-mark.svg";
 import type { PanelKey } from "./types";
 
-/** 左侧导航的分区图标 + 新建按钮图标：统一 24 单位视框、描边 1.55，与左栏底部的浅/深图标同源。 */
+/** 左侧导航的分区图标：统一 24 单位视框、描边 1.55，与左栏底部的浅/深图标同源。 */
 export const ICON_LAUNCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5 3 21l4.5-1.5" /><path d="M14 4c3.5-1 6 1.5 5 5-1.2 4.2-5.6 7.6-8.4 9.1L8 15.4C9.5 12.6 11.3 5.2 14 4Z" /><circle cx="14.6" cy="9.4" r="1.6" /></svg>`;
 export const ICON_ENV = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5" /><path d="M12 12v9" /></svg>`;
 export const ICON_INTEG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2.5" /><path d="m6.5 10 2.5 2.5L6.5 15" /><path d="M12 15.5h5" /></svg>`;
@@ -11,12 +11,13 @@ export const ICON_TRAYNET = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle
 export const ICON_ABOUT = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" /></svg>`;
 /** 日志分区：方块里几行字——与「集成」的终端框区分开（那边有 > 与下划线）。 */
 export const ICON_LOG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M6.6 9.4h10.8" /><path d="M6.6 12.4h10.8" /><path d="M6.6 15.4h6" /></svg>`;
-/** 「新建空白环境」：一枚加号。 */
-export const ICON_PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5v13" /><path d="M5.5 12h13" /></svg>`;
 
-/** 左栏底部那颗浅/深切换图标：显示的是「点下去会变成什么」，不是当前状态。 */
-export const ICON_SUN = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" /></svg>`;
-export const ICON_MOON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>`;
+/** 浅/深切换的两颗图标：显示的是「点下去会变成什么」，不是当前状态。
+    两颗同时常驻切换按钮（见 .theme-morph），由 html[data-mode] 决定谁在场、谁退场
+    ——可见性与对转全靠 CSS 的 opacity/transform，不在 JS 里换图标，所以过渡能完整
+    跑完、连点也不会卡中间。类名 ico-sun / ico-moon 是 CSS 与测试的接缝。 */
+export const ICON_SUN = `<svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6" /></svg>`;
+export const ICON_MOON = `<svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" /></svg>`;
 
 /** 左侧导航的分区：导航按钮与面板标题都按这份表生成，顺序即显示顺序。 */
 export const PANELS: ReadonlyArray<{ key: PanelKey; label: string; icon: string }> = [
@@ -77,6 +78,9 @@ export const ICON_MORE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx
 /** 版本列表右侧方钮：一圈带箭头的回转，配「重新获取官方版本列表」气泡。 */
 export const ICON_REFRESH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1" /><path d="M20.5 4.4V10H15" /></svg>`;
 
+/** 插件工具条「全部更新」：升起的箭头 + 底线（升级、批量到位），与「检查更新」的回转刷新区分开。 */
+export const ICON_UPDATE_ALL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18.5v-13" /><path d="m6.5 11 5.5-5.5L17.5 11" /><path d="M5.5 21h13" /></svg>`;
+
 /** 「指定程序路径」方钮里的文件夹：点开系统「打开文件」框。 */
 export const ICON_FOLDER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7a2 2 0 0 1 2-2h3.4l1.9 2.4H18.8a2 2 0 0 1 2 2v7.6a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2Z" /></svg>`;
 
@@ -86,4 +90,13 @@ export const ICON_REVERT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d=
 export const ICON_MODAL_CLOSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" /></svg>`;
 /** 打开方式两段式按钮右侧那颗小三角。 */
 export const ICON_CHEVRON_DOWN = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" /></svg>`;
-export const ICON_COPY = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.2" /><path d="M15 6.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15" /></svg>`;
+const COPY_BODY = `<rect x="9" y="9" width="11" height="11" rx="2.2" /><path d="M15 6.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15" />`;
+export const ICON_COPY = `<svg viewBox="0 0 24 24" aria-hidden="true">${COPY_BODY}</svg>`;
+
+/** 复制按钮里与勾叠放的「复制」形（#35）：带 .i-copy 类，供复制反馈切换可见性。
+ *  与 ICON_COPY 同一条路径，只多一个类名——按钮态与菜单图标不会画成两种复制形。 */
+export const ICON_COPY_MORPH = `<svg class="i-copy" viewBox="0 0 24 24" aria-hidden="true">${COPY_BODY}</svg>`;
+
+/** 完成勾（#35）：方钮的 0.9s 完成态与复制按钮的成功态共用这一枚，别再画第二个勾。
+ *  与 ICON_COPY 同视框、同描边参数，两枚叠放切换时视觉重心不跳。 */
+export const ICON_CHECK = `<svg class="i-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7" /></svg>`;

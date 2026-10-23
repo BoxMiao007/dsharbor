@@ -397,7 +397,8 @@ pub fn install_deps(
     let summary = summarize_dir(&target, name, &dir).ok();
     let installed = summary.as_ref().map(|s| s.deps_installed).unwrap_or(false);
     let message = format!(
-        "重装依赖：dsh plugin --profile {name} install（经 {}）\n退出码：{code}\n校验：{}\n输出：\n{}",
+        "重装依赖：dsh plugin --profile {} install（经 {}）\n退出码：{code}\n校验：{}\n输出：\n{}",
+        plugin::cli_profile_label(name),
         target.label(),
         if installed {
             "node_modules 已就位 ✓"

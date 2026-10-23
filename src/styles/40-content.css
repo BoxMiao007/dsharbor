@@ -10,8 +10,11 @@
 
 /* 日志主卡：标题与两颗按钮直接摆在这张大卡上，日志正文是卡里唯一一层内嵌卡片。
    三层（大卡 → 小卡 → 正文框）压成两层，少一层边框就显得干净。
-   覆盖 .block.main-card 的 overflow-y:auto：这一页不该整卡滚，滚的是正文自己。 */
+   覆盖 .block.main-card 的 overflow-y:auto：这一页不该整卡滚，滚的是正文自己。
+   高度要撑满（flex:1 1 auto）：正文 .log-body 靠吃掉剩余高度来决定自己的视口高度，
+   主卡按内容收缩的话正文就只剩一行高。 */
 .block.main-card.main-card-log {
+  flex: 1 1 auto;
   overflow: hidden;
   gap: 14px;
 }
@@ -66,14 +69,17 @@
   user-select: text;
 }
 
-/* 内容区：卡片之间的间隙由这里给，整页不滚（只有主卡内部滚）。 */
+/* 内容区：卡片之间的间隙由 .content 的 gap 给（原来这里 8px 的 padding-top 让
+   工具条到主卡只有 8px，比左栏↔右栏的 20px 窄一截，看着不齐），这里清零。
+   position: relative 是给「正在淡出的旧分区」当定位上下文（见下方 .is-leaving）。 */
 .page {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 8px 0 0;
+  padding: 0;
 }
 
 /* 分区：主卡 + 次卡行，撑满内容区高度（主卡吃掉余量）。 */
@@ -98,10 +104,46 @@
   gap: 12px;
 }
 
-/* 主卡里并排的两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。 */
+/* 分区切换：**纯交叉淡化**（维护者看过「只有位移」那版后选的）。
+   新分区从全透明淡到不透明，旧的留在下面当底衬、等新的铺满再摘掉，于是任何一帧
+   画面都不会变空——这正是频闪的反面：不是「先擦掉再画上」，而是「一块正好压过另一块」。
+
+   要真的平滑，有三条约束：
+   1. 两块必须同时可见。`.panel.hidden` 是 display:none，一挂上就没了，所以旧分区
+      在过渡期间改成 `.is-leaving`：脱离文档流（绝对定位铺满 .page）、不吃点击，
+      只负责垫在下面。定时器（见 main.ts 的 selectPanel）等新的淡完再把它摘掉。
+   2. **下面那块不许一起淡**。设旧块透明度为 1−t、新块为 t 且压在旧块上，合成结果
+      是 t·new + (1−t)·[(1−t)·old + t·底] —— 中间会漏出页面底色，亮度先掉一截再回来，
+      看着就是「暗一下」。旧块保持不透明、只让新块淡入，合成结果才是干净的
+      t·new + (1−t)·old，逐帧亮度是平的。
+   3. 缓动用 --ease-out，不用 linear：交叉淡化天生有一段「两块都半透明、文字叠字」的
+      窗口（这是交叉淡化和「先擦后画」的固有代价，不是 bug）。linear 会让这个窗口占满
+      全程；--ease-out 开头就冲到高不透明度，新内容很快压住旧的，叠字窗口只剩前 1/3，
+      收尾还能稳稳落定。不做位移、不做子项错开——交叉淡化本身就是节奏。 */
+@keyframes panel-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.panel.is-enter {
+  z-index: 1;
+  animation: panel-fade-in var(--m-base) var(--ease-out) both;
+}
+
+.panel.is-leaving {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* 主卡里并排的两张小卡（附加参数│端口、托盘设置│网络与代理）：卡与卡之间同样露缝。
+   gap 与 .block.main-card 的纵向 gap 取同一个值（20px）：同一张主卡里横向、纵向
+   原来是 28 / 20 两套间距，看着不齐；统一成一个值，格子才对得上。 */
 .cell-row {
   display: grid;
-  gap: 28px;
+  gap: 20px;
   flex: none;
 }
 
@@ -117,26 +159,64 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
 }
 
-/* 卡片：淡底 + 细边框 + 圆角 + 轻阴影，浮在页面背景上。
+/* 「托盘设置│网络与代理」两卡的每行是「标题 + 下拉 + 说明」，说明长短不一：
+   左边第一行说明折两行、右边只占一行时，第二行就会错开一截（实测差 21px）。
+   给这两卡的说明留够两行的高度，两列每行就都从同一条横线上起。 */
+.cell-row:has(.network-content) .cell .fields > .hint {
+  min-height: 2lh;
+}
+
+/* 「托盘与网络」这一行：左列上下两张小卡（.cell-col）+ 右列一张长卡。
+   列间距与左列内部的卡间距都取 --gap-card，与主卡外「卡片之间」的间距同一取值，
+   这样横缝竖缝看起来一样宽。 */
+.cell-row:has(> .cell-col) {
+  gap: var(--gap-card);
+}
+
+.cell-row > .cell-col {
+  display: grid;
+  gap: var(--gap-card);
+  align-content: start;
+}
+
+/* 卡片：淡底 + 圆角 + 分层柔和阴影浮在页面背景上，代替硬描边。
    块头左边标题、右边徽章或说明。 */
 .block {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
   background: var(--card);
   box-shadow: var(--shadow-soft);
 }
 
-/* 主卡：内容区里那张大卡片，吃掉余量，内部自己滚。里面的每个条目各装一张小卡
-   （.cell），卡与卡之间露缝、不画分隔线。 */
+/* 主卡：内容区里那张大卡片。里面的每个条目各装一张小卡（.cell），卡与卡之间露缝、
+   不画分隔线。
+   尺寸固定撑满内容区（1 1 auto）：各分区切换时大卡大小不跳，视觉更稳。
+   内容超出时才在卡内滚动。 */
 .block.main-card {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   gap: 20px;
   padding: 32px;
   overflow-y: auto;
+  /* 横向绝不出现滚动条（维护者要求）：卡片里那些自绘气泡（.has-tip / .info-dot 的
+     ::after）是绝对定位元素，会把滚动容器的 scrollWidth 撑大。具体那条（贴右缘的
+     「还原」钮）已在 50-info.css 改成右对齐向左展开、从根上不再溢出；这里再兜一道，
+     任何将来溢出的内容也不会把横条带出来。 */
+  overflow-x: hidden;
+  /* 原生滚动条整个藏掉，右侧那条自绘胶囊顶替它（.scroll-track / .scroll-thumb，
+     挂在 .content-main 上、由 main.ts 按主卡几何定位）。
+     原生滚动条是方的：滑块滚到顶时正好骑在 14px 圆角上，看着就是「滚动条穿出卡片
+     圆角」（维护者反馈）。藏掉之后没有任何方角露在圆角外，滚动提示仍由那条圆头
+     胶囊给——它带 border-radius: 999px、宽度只有 5px，还随滚动淡入淡出。 */
+  scrollbar-width: none;
+}
+
+.block.main-card::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 /* 主卡里的小卡：靠明度与主卡拉开一档（深色再亮、浅色再沉），圆角比主卡收窄两圈，
@@ -154,24 +234,91 @@
 
 /* 主卡里再并排两个子块已在 .cell-row 里处理，这里不再单独定义。 */
 
-/* 块内的输入框 / 下拉框吃掉可用宽度，给一台上限免得超宽屏上像横幅。 */
+/* 块内的输入框 / 下拉框：长度统一取 --ctl-w，几行控件左右两端才对得齐。
+   之前让它随容器走满宽，宽窗口下拉得太长、右边大片空白；现在统一收窄到同一个长度。
+   max-width:100% 保证窄窗口下不会溢出。 */
 .block .picker,
 .block input[type="text"] {
-  width: 100%;
-  max-width: 760px;
+  width: var(--ctl-w);
+  max-width: 100%;
 }
 
-/* 并排两个控件（渠道下拉 + 版本徽章 / 端口 + 还原）时按比例分宽。 */
-.block .control-line > .picker,
+/* 「版本」这一行：下拉框与上面的「运行环境」同宽（--ctl-w），刷新按钮放到框外右侧，
+   单独排在框后面。整行随内容走（不受 --ctl-w 限制），所以按钮不会挤进下拉框的宽度里。 */
+.block .control-line {
+  width: auto;
+  max-width: 100%;
+}
+
+.block .control-line > .picker {
+  flex: none;
+  width: var(--ctl-w);
+  max-width: 100%;
+}
+
+.block .control-line > button {
+  flex: none;
+}
+
+/* 「监听端口 + 还原」仍是整行取 --ctl-w：端口很短，收在一起才好对上面几行。 */
+.block .port-row {
+  width: var(--ctl-w);
+  max-width: 100%;
+}
+
 .block .port-row > input[type="text"],
 .block .port-row > input[type="number"] {
   flex: 1 1 auto;
   width: auto;
+  min-width: 0;
+}
+
+.block .port-row > button {
+  flex: none;
+}
+
+/* 程序路径 / 自定义命令这两类内容天然可以很长，按「可自动延长」处理：跟随容器走满整行，
+   右侧留白由所在卡片的内边距提供，不再套 --ctl-w。（ID 选择器特指度最高，必须带 ID
+   才能压过 60-controls.css 里 #binary-path / #custom-command 的 width:100%。） */
+.block .path-row {
+  width: auto;
+  max-width: 100%;
+}
+
+.block .path-row > input[type="text"] {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.block .path-row > button {
+  flex: none;
+}
+
+.block .fields > #binary-path,
+.block .fields > #custom-command {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* 「自定义命令」里的运行环境下拉只放一半长度（480→190 的视觉比例），
+   给下面的整条命令留出对照，不跟启动方式里那些 380 的框一样长。 */
+.block .fields > #custom-runtime-picker {
+  width: calc(var(--ctl-w) / 2);
+  max-width: 100%;
+}
+
+/* 命令预览会随命令长度变长，让它撑满一行、靠卡片内边距留出右侧空隙。 */
+.block .command-preview {
+  width: 100%;
+  max-width: 100%;
 }
 
 /* 命令预览：等宽、淡底、可选中复制。 */
 .command-preview {
   display: block;
+  width: fit-content;
+  max-width: 100%;
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;

@@ -2,11 +2,11 @@
 
 import { escapeHtml } from "./markup";
 
-/** 行内小徽章：显示在选项文字右边（「最新 / 已装 / 已缓存 / 手动」）。 */
+/** 行内小徽章：显示在选项文字右边（「最新 / 已缓存 / 手动」）。 */
 export interface PickerBadge {
   text: string;
   /** 只决定配色，与语义绑死，不跟具体文案走。 */
-  tone: "latest" | "installed" | "cached" | "manual";
+  tone: "latest" | "cached" | "manual";
 }
 
 export interface PickerChoice {
@@ -122,20 +122,99 @@ export class Picker {
       .join("");
   }
 
+  /**
+   * 铺一遍候选。行数没变时**就地更新**已有的 `<li>`，不重建节点：
+   * 「已缓存」徽章是异步扫回来的（`onOpen` → `refreshCachedVersions`），扫完要重铺一次，
+   * 而整表重建会换掉用户正按着的那一行 —— 鼠标按下在旧节点、抬起时它已被移除，
+   * 浏览器就不发 click 了，表现为「选版本要点两次」。就地更新保住了进行中的点击。
+   */
   private renderOptions(): void {
-    this.list.innerHTML = this.choices
-      .map((choice, index) => {
-        const selected = choice.value === this.selected;
-        const isAction = choice.action !== undefined;
-        return `<li class="picker-option${index === this.activeIndex ? " active" : ""}${choice.disabled ? " disabled" : ""}${isAction ? " is-action" : ""}" role="option" data-index="${index}" aria-selected="${selected}" aria-disabled="${choice.disabled === true}"><span class="tick">${selected ? "✓" : ""}</span>${Picker.dotHtml(choice)}<span class="text">${escapeHtml(choice.label)}</span>${Picker.badgesHtml(choice)}</li>`;
-      })
-      .join("");
-    for (const option of Array.from(this.list.querySelectorAll<HTMLElement>(".picker-option"))) {
-      option.addEventListener("click", () => {
-        const index = Number.parseInt(option.dataset.index ?? "", 10);
-        this.commit(index);
+    if (this.list.children.length === this.choices.length) {
+      Array.from(this.list.children).forEach((node, index) => {
+        this.paintRow(node as HTMLElement, this.choices[index]!, index);
       });
+      return;
     }
+    this.list.innerHTML = this.choices
+      .map((_choice, index) => `<li data-index="${index}"></li>`)
+      .join("");
+    Array.from(this.list.children).forEach((node, index) => {
+      const option = node as HTMLElement;
+      this.paintRow(option, this.choices[index]!, index);
+      option.addEventListener("click", () => {
+        const target = Number.parseInt(option.dataset.index ?? "", 10);
+        this.commit(target);
+      });
+    });
+  }
+
+  /**
+   * 只改一行的属性与内容，且**连行内的节点也不替换**：
+   * 鼠标可能正按在 `.text` 这个 `<span>` 上，换掉它同样会让 click 丢失
+   * （按下和抬起不在同一个节点链上就不发 click）。所以 tick / 圆点 / 文字 / 徽章
+   * 都就地改文本与 class，只有节点数量真的变了才增删。
+   */
+  private paintRow(option: HTMLElement, choice: PickerChoice, index: number): void {
+    const selected = choice.value === this.selected;
+    const isAction = choice.action !== undefined;
+    const className = `picker-option${index === this.activeIndex ? " active" : ""}${choice.disabled ? " disabled" : ""}${isAction ? " is-action" : ""}`;
+    if (option.className !== className) {
+      option.className = className;
+    }
+    const ariaSelected = selected ? "true" : "false";
+    if (option.getAttribute("aria-selected") !== ariaSelected) {
+      option.setAttribute("aria-selected", ariaSelected);
+    }
+    const ariaDisabled = choice.disabled === true ? "true" : "false";
+    if (option.getAttribute("aria-disabled") !== ariaDisabled) {
+      option.setAttribute("aria-disabled", ariaDisabled);
+    }
+    option.setAttribute("role", "option");
+    if (option.childElementCount === 0) {
+      option.innerHTML =
+        '<span class="tick"></span><span class="text"></span>';
+    }
+    const tick = option.querySelector<HTMLElement>(":scope > .tick");
+    if (tick && tick.textContent !== (selected ? "✓" : "")) {
+      tick.textContent = selected ? "✓" : "";
+    }
+    // 圆点（目前没有调用方在用，但 Picker 是通用组件，留着）按需增删。
+    const wantedDot = choice.dot ? `picker-dot picker-dot-${choice.dot}` : null;
+    const currentDot = option.querySelector<HTMLElement>(":scope > .picker-dot");
+    if (wantedDot === null) {
+      currentDot?.remove();
+    } else if (!currentDot) {
+      const dot = document.createElement("span");
+      dot.className = wantedDot;
+      option.insertBefore(dot, tick?.nextSibling ?? null);
+    } else if (currentDot.className !== wantedDot) {
+      currentDot.className = wantedDot;
+    }
+    const text = option.querySelector<HTMLElement>(":scope > .text");
+    if (text && text.textContent !== choice.label) {
+      text.textContent = choice.label;
+    }
+    // 徽章行尾才出现，指针一般不在上面，改它不会破坏进行中的点击。
+    const badges = choice.badges ?? [];
+    const badgeNodes = Array.from(option.querySelectorAll<HTMLElement>(":scope > .picker-badge"));
+    while (badgeNodes.length > badges.length) {
+      badgeNodes.pop()?.remove();
+    }
+    badges.forEach((badge, badgeIndex) => {
+      let node = badgeNodes[badgeIndex];
+      if (!node) {
+        node = document.createElement("span");
+        option.appendChild(node);
+        badgeNodes.push(node);
+      }
+      const badgeClass = `picker-badge picker-badge-${badge.tone}`;
+      if (node.className !== badgeClass) {
+        node.className = badgeClass;
+      }
+      if (node.textContent !== badge.text) {
+        node.textContent = badge.text;
+      }
+    });
   }
 
   /** 从 index 往 step 方向找下一个可选项；全都不可选时回到原位。 */

@@ -1,14 +1,20 @@
 /* 按钮都按内容取宽，不拉满一行：工具条右侧的主操作一排排开。 */
 
 /* 登录说明只在出错时出现；正常状态改挂在登录徽章的感叹号气泡里。
-   独立成段（不再和按钮同排），出现或消失都不会挤动上面的按钮行。 */
+   它是 .content（纵向 flex）的直接子节点，所以不能 flex:1——那会在纵向抢掉剩余高度、
+   把提示撑成一大块。改成按内容占高（flex:none）。
+   这里允许折行（不再用省略号截断）：它是带底色的醒目提示，截一半反而更难读。 */
 .login-note {
-  flex: 1;
+  flex: none;
   min-width: 0;
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+/* 出错 / 登录提示这两行是 .content 的直接子节点，间距交给 .content 的统一 gap，
+   不再用 .error 自带的 margin（那是给字段内联错误留的），否则会把 16px 节奏撑成 26/20px。 */
+.content > .error,
+.content > .login-note {
+  margin: 0;
 }
 
 button {
@@ -20,9 +26,12 @@ button {
   font: inherit;
   font-size: 13px;
   cursor: pointer;
+  /* 缩放与阴影的时长取全站动效出口的即时档（--m-quick），按下、回弹各一次。 */
   transition:
     background 140ms,
-    border-color 140ms;
+    border-color 140ms,
+    transform var(--m-quick) var(--ease-out),
+    box-shadow var(--m-quick) var(--ease-out);
 }
 
 button:hover:not(:disabled) {
@@ -30,21 +39,45 @@ button:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 
+/* 全站键盘焦点环：统一用强调色 2px 外描边，跟 .switch 的既有做法一致。
+   原来只有浏览器默认的近黑 outline，深底上几乎看不见（轴心缺陷）。 */
+button:focus-visible,
+.square-btn:focus-visible,
+.icon-btn:focus-visible,
+.win-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
+/* 全站按压反馈（#28）：未禁用的按钮按下时轻微下沉一档 + 内阴影加深，松手回弹。
+   幅度刻意比圆形图标钮（0.94）浅——普通按钮面积大，缩太多会糊成一团。
+   内阴影取前景色：浅色下是把面压深，深色下是一道内高光，两套外观读起来都是
+   「陷进去」，且不必新增色值。禁用态不缩放，按下去只剩 not-allowed 的提示。
+   用 `button, button.primary` 双写把特指度提到 (0,2,1)：与 `button.primary` 的底色规则同级，
+   否则「启动 DSH」这类主按钮会被主按钮那条更高特指度的底色规则压过、按不下去。 */
+button:active:not(:disabled),
+button.primary:active:not(:disabled) {
+  transform: scale(0.972);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--fg) 16%, transparent);
+}
+
+/* 主按钮用深一档的实底（--accent-fill）+ 白字，白字对比 4.88/5.84；
+   亮 --accent 只留给文字、图标与描边，不再拿去做大面积填充。 */
 button.primary {
   border-color: transparent;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #ffffff;
   font-weight: 600;
 }
 
 button.primary:hover:not(:disabled) {
   border-color: transparent;
-  background: color-mix(in srgb, var(--accent) 84%, #ffffff);
+  background: color-mix(in srgb, var(--accent-fill) 92%, #ffffff);
 }
 
 /* 会话按钮左端那一段图标（分隔线 + 图标）：
@@ -138,8 +171,8 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 悬停漫过那一套（图标板漫过整颗按钮 + 文字被往右推出）随「停止 / 重启 DSH」改成
-   圆形图标钮一起删掉了：圆钮里没有文字段，没有可漫过的东西。图标自身的反馈还在——
-   停止是实心/空心闪动、重启是转一圈，见下面两颗圆钮各自的规则。 */
+   圆形图标钮一起删掉了：圆钮里没有文字段，没有可漫过的东西。圆钮的悬停反馈改成
+   外光环 + 图标下沉，见下面两颗圆钮各自的规则。 */
 
 /* 圆形图标钮：直径 = 按钮高度（--btn-h = 34px），纯图标、圆形底色，没有文字段。
    「停止」只在运行态是圆钮（停止态仍是 .swap 逐字切换的长条），「重启 DSH」出场即圆钮。
@@ -151,6 +184,14 @@ button.primary:hover:not(:disabled) {
   min-width: var(--btn-h);
   padding: 0;
   border-radius: 50%;
+  /* 圆钮自己的节奏（写在这里是因为外层 .toolbar-actions button 的过渡只包了背景与滤镜）：
+     缩放走即时档（按下与回弹），外光环走控件档（悬停 / 工作态亮起），提亮仍用 --btn-hl-ms。 */
+  transition:
+    transform var(--m-quick) var(--ease-out),
+    box-shadow var(--m-base) var(--ease-out),
+    background var(--btn-hl-ms),
+    border-color var(--btn-hl-ms),
+    filter var(--btn-hl-ms);
 }
 
 /* display 必须单独走 :where() 把它降到 0 特指度：ID 规则 (1,0,0) 会压过
@@ -167,14 +208,14 @@ button.primary:hover:not(:disabled) {
 }
 
 /* 「停止」图标是实心方块：圆钮底色是亮的红，图标走 currentColor（白）。
-   描边与填充同色、且始终在场：常态看不出来（同色叠加仍是实心），闪到空心那半拍
-   就留下方框轮廓——没有它那一拍方块整个消失，看着像图标没了。
-   外沿尺寸按「矩形 + 描边」留好，见 icons.ts 的 ICON_STOP。 */
+   描边与填充同色、且始终在场：常态因同色叠加看不出来，它只负责把方块外沿撑出
+   半个描边宽——外沿尺寸按「矩形 + 描边」留好，见 icons.ts 的 ICON_STOP。 */
 #btn-toggle.round svg {
   fill: currentColor;
   stroke: currentColor;
   stroke-width: 2.4;
   stroke-linejoin: round;
+  transition: transform var(--m-quick) var(--ease-out);
 }
 
 #btn-restart svg {
@@ -183,49 +224,49 @@ button.primary:hover:not(:disabled) {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-  transition: transform var(--btn-hl-ms);
+  transition: transform var(--m-quick) var(--ease-out);
 }
 
-/* 「停止」图标：悬停时在实心与空心之间闪动一次——与「重启 DSH」的旋转同节奏
-   （时长与延迟同用 :root 动效变量）。fill 不是可插值属性，按离散步进切换：
-   实心 → 50% 处只剩描边（空心方框，轮廓靠上面那条同色 stroke） → 结束变回实心，
-   看上去就是一次来回闪动；结束位 = 实心常态，不跳变。 */
-@keyframes btn-stop-flash {
-  0%,
-  100% {
-    fill: currentColor;
-  }
-  50% {
-    fill: none;
-  }
+/* 圆钮的悬停 / 按住 / 工作态（#28，替掉原来的「停止闪方块」与「重启悬停转一圈」）：
+   那两套一次性动画与光环在表达同一件事，叠在一起反而散，已下线。现在只有三层递进：
+     悬停   → 一圈柔和外光环（说「可点」）+ 图标下沉 1px（说「按下去有反应」）
+     按住   → 缩到 0.94（比普通按钮的 0.972 深，圆钮面积小，缩深一点才看得出按实了）
+     重启中 → 光环常亮 + 图标持续转（下面 .is-restarting 那条），直到结果出来
+   光环从本色 --round-fill 用 color-mix 淡出来（26%），不另写一份色值；
+   停止钮悬停时 --round-fill 换成高亮红，光环跟着一起亮一档。 */
+#btn-toggle.round:hover:not(:disabled),
+#btn-restart:hover:not(:disabled),
+#btn-restart.is-restarting {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--round-fill) 26%, transparent);
 }
 
-#btn-toggle.round:hover:not(:disabled) svg {
-  animation: btn-stop-flash var(--btn-sweep-ms) ease
-    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
+/* 图标下沉：只给悬停态；工作态（.is-restarting）交由转动的 animation 独占 transform。 */
+#btn-toggle.round:hover:not(:disabled) svg,
+#btn-restart:hover:not(:disabled):not(.is-restarting) svg {
+  transform: translateY(1px);
 }
 
-/* 「重启 DSH」悬停：图标转一圈提示「重新来过」。动画延迟 = 一轮时长 − 提前起势量
-   （500ms − 200ms = 300ms）；一次性动画，结束位 = 静止位（360deg），退出悬停时不跳变。
-   点击后进入持续转动（.is-restarting）交给下面那套规则，这里排除掉，免得两套 animation
-   抢同一个属性。 */
-@keyframes btn-restart-spin {
+/* 按住缩一圈，松手回弹（过渡见文件上方两颗圆钮的 transition）。 */
+#btn-toggle.round:active:not(:disabled),
+#btn-restart:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+/* 转圈的共用关键帧：重启进行中的图标、方钮忙态的环形 spinner、「启动中」那只细环都用它。
+   只有 `to rotate(360deg)` 一帧，所以别再写第二条同形关键帧——名字取中性的是因为用它的地方
+   早就不只「重启」一处。 */
+@keyframes spin-turn {
   to {
     transform: rotate(360deg);
   }
 }
 
-#btn-restart:hover:not(:disabled):not(.is-restarting) svg {
-  animation: btn-restart-spin var(--btn-sweep-ms) ease
-    calc(var(--btn-sweep-ms) - var(--btn-lead-ms));
-}
-
 /* 「重启 DSH」点击后的持续转动（2026-10-17 维护者规格）：点击瞬间就锁上，与鼠标是否
-   还停在按钮上无关——图标按 --spin-ms 无限转，与「启动中」徽章的加载圈同速。
-   什么时候收工由 src/main.ts 定（徽章离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
+   还停在按钮上无关——图标按 --spin-ms 无限转。什么时候收工由 src/main.ts 定
+   （会话状态离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
    收工后这里的类一去掉就交回悬停规则。 */
 #btn-restart.is-restarting svg {
-  animation: btn-restart-spin var(--spin-ms) linear infinite;
+  animation: spin-turn var(--spin-ms) linear infinite;
 }
 
 /* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
@@ -234,27 +275,51 @@ button.primary:hover:not(:disabled) {
    悬停 = 高亮加回（维护者要求）：停止提亮到 #ff3636（Uiverse 参考的高亮红），
    重启用 brightness 轻提亮（两套主题通用，不硬编码色值）。 */
 
-/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、.swap 逐字切换形态）。 */
+/* 运行态「停止」红底（停止态「启动 DSH」是 .primary 蓝底、.swap 逐字切换形态）。
+   底色收进局部变量 --round-fill：底色、描边与悬停外光环都从它算，
+   换色时三处一起动，光环不必另写一份色值。 */
 #btn-toggle.round {
-  background: #e62222;
-  border-color: #e62222;
+  --round-fill: var(--stop-fill);
+  background: var(--round-fill);
+  border-color: var(--round-fill);
   color: #fff;
 }
 
+/* 悬停提亮：只换 --round-fill，底色与光环跟着一起亮一档。 */
 #btn-toggle.round:hover:not(:disabled) {
-  background: #ff3636;
-  border-color: #ff3636;
+  --round-fill: var(--stop-fill-hover);
 }
 
 #btn-restart {
-  background: #f5ae51;
-  border-color: #f5ae51;
+  --round-fill: var(--restart-fill);
+  background: var(--round-fill);
+  border-color: var(--round-fill);
   color: #1b2536;
 }
 
 #btn-restart:hover:not(:disabled) {
   filter: brightness(1.08);
 }
+
+/* 「启动中」过渡态（维护者要求：点了「启动 DSH」不能一下子蹦出「停止 / 重启」两颗）。
+   还是同一根蓝底长条，左边换一只细环、文案换「启动中…」——形状、宽度、位置全不变，
+   只有里面的内容交接，所以整排按钮不会因为形态切换而左右跳。
+   环用 currentColor（主按钮是白字，所以是白环 + 淡轨道），粗细与方钮那个 spinner 同档。 */
+#btn-toggle.busy {
+  gap: 8px;
+  font-weight: 600;
+}
+
+#btn-toggle.busy .launch-spin {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-top-color: currentColor;
+  animation: spin-turn var(--spin-ms) linear infinite;
+}
+
 
 /* 「启动 DSH」按钮停止态的悬停动效：两组文字逐字上下切换 + 轻抖动。
    改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±0.5px。
@@ -346,6 +411,13 @@ button.primary:hover:not(:disabled) {
   animation: dsharbor-shake 0.2s linear infinite both;
 }
 
+/* 按压的那一下让位给全站缩放（#28）：抖动动画会一直是「运行中」并把 transform 定在
+   抖动帧上，永久压过按下态的 scale，主按钮就按不下去。只在按住时停掉抖动，
+   松手立刻回到抖动——文字逐字切换的原行为不受影响。 */
+#btn-toggle.swap:active:not(:disabled) {
+  animation: none;
+}
+
 @keyframes dsharbor-shake {
   0% {
     transform: translate(0);
@@ -372,23 +444,9 @@ button.primary:hover:not(:disabled) {
   }
 }
 
-/* 减少动态效果：关掉抖动与未读数字的弹动、swap 切字压到最短
-   （数字照常变化，只是不弹——上拍列表仍按 90ms 一拍走）。 */
-@media (prefers-reduced-motion: reduce) {
-  .ico-count.ico-count-bump {
-    animation: none;
-  }
-
-  #btn-toggle.swap:hover,
-  #btn-toggle.swap:focus-visible {
-    animation: none;
-  }
-
-  #btn-toggle.swap .span-mother span,
-  #btn-toggle.swap .span-mother2 span {
-    transition-duration: 0.01ms !important;
-  }
-}
+/* 减少动态效果不再走系统 prefers-reduced-motion：改由界面里的「动效」开关控制，
+   开关关闭时由 99-hidden.css 的 html[data-motion="off"] 规则统一中和
+   （抖动、弹动、两处无限转圈、swap 切字都在那边一并停掉）。 */
 
 .error {
   margin: 10px 0 4px;
@@ -431,6 +489,13 @@ button.primary:hover:not(:disabled) {
   position: relative;
 }
 
+/* 「垫片内容」这类只有一个短路径的输出区：整块收到内容宽（连右上角复制按钮一起），
+   否则一条 60 字符的路径下面会拖出大半屏的空底色。长内容到满宽才开始折行。 */
+.log-area-code {
+  width: fit-content;
+  max-width: 100%;
+}
+
 /* 输出区右上角的复制按钮：平时半透明、不可点，指到输出区或键盘聚焦时才浮出来，
    免得压住最后几行文字。 */
 .log-copy {
@@ -457,7 +522,8 @@ button.primary:hover:not(:disabled) {
 
 /* 方钮：正方形圆角、只放一枚图标，边长与工具条按钮同高（--btn-h = 34px）。
    「指定程序路径」的浏览、「监听端口」的还原、「官方 npx 命令」的刷新版本列表共用这一套；
-   图标钮没有可见文字，名字与操作说明一律走 title + aria-label（与顶栏两颗圆钮同一个做法）。 */
+   图标钮没有可见文字，名字靠 aria-label、操作说明走自绘气泡（.has-tip + data-tip，
+   见 50-info.css）；与顶栏两颗圆钮同一套做法，不再用原生 title。 */
 .square-btn {
   flex: none;
   display: grid;
@@ -484,9 +550,69 @@ button.primary:hover:not(:disabled) {
   color: var(--fg);
 }
 
-/* 正在重新获取版本列表时持续转圈：与「启动中」徽章、「重启 DSH」点击后同速（--spin-ms）。 */
-.square-btn.is-spinning svg {
-  animation: btn-restart-spin var(--spin-ms) linear infinite;
+/* 方钮忙态（#29）：忙时不转语义图标——箭头/刷新这类图形不是旋转对称的、墨迹中心也不在
+   盒子中心，绕中心转会「画圈晃」。改成把「环形」这一层单独叠上去匀速转；成功后落一个勾
+   停 0.9s 再还原。三层（语义图标 / 环形 / 勾）同尺寸同位置叠在同一格，切换只改可见性，
+   按钮不跳动。类名由 src/ui/sqbusy.ts 挂。 */
+.square-btn > .sq-icon,
+.square-btn > .sq-spinner,
+.square-btn > .sq-check {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+}
+
+.square-btn > .sq-spinner,
+.square-btn > .sq-check {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.square-btn > .sq-check {
+  transform: scale(0.6);
+  /* 勾落下来时弹一点点（单次 200ms）；关动效时全站把过渡压平，直接就是终态。 */
+  transition: transform var(--m-base) var(--ease-spring);
+}
+
+/* 环形 spinner：17px（与图标同尺寸）的细圆环，顶上一段实色弧，颜色跟 --fg 同族；
+   只有「忙」这一种状态允许无限循环（关动效时由 99-hidden.css 点名停掉，环形仍静态可见）。 */
+.sq-spinner {
+  width: 17px;
+  height: 17px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.8px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  border-top-color: var(--fg);
+}
+
+/* 完成勾：绿色，成功后短暂替代图标；停留结束由 sqbusy.ts 撤 .is-done。 */
+.sq-check svg {
+  stroke-width: 2.2;
+  color: var(--ok);
+}
+
+/* 忙：藏图标、显环形并转（一圈 --spin-ms，与「重启 DSH」同速）。 */
+.square-btn.is-spinning > .sq-icon {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.square-btn.is-spinning > .sq-spinner {
+  opacity: 1;
+  visibility: visible;
+  animation: spin-turn var(--spin-ms) linear infinite;
+}
+
+/* 完成：藏图标、显勾（弹回一点点，单次 200ms）。 */
+.square-btn.is-done > .sq-icon {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.square-btn.is-done > .sq-check {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
 }
 
 /* 「指定程序路径」行：输入框 + 「浏览…」按钮同一行。输入框在上方的 #binary-path
@@ -531,22 +657,28 @@ p.hint.error {
     border-color 140ms;
 }
 
-/* 只有「选中 + 真的展开了参数」的那一组才抬整组底色：参数跟着选项走，抬色让人
-   一眼看出「下面这几行参数属于这个选项」。 */
+/* 只有「选中 + 真的展开了参数」的那一组才描一圈边强调：参数跟着选项走，边框让人
+   一眼看出「下面这几行参数属于这个选项」。
+   原先把整组刷成 --accent-soft，深色下是一大块雾蓝板、浅色下更明显；改成透明底 +
+   42% 强调色细描边，只留下「这一组被选中」的信号，不再染蓝。 */
 .mode-group:has(> .mode > input:checked):has(> .fields:not(.hidden)) {
-  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: transparent;
 }
 
-/* 没有参数区的选项（系统全局命令）选中时给选项行本身抬同一层底色 + 描边：
+/* 没有参数区的选项（系统全局命令）选中时给选项行本身描同一圈边：
    与其他三项的选中视觉同源，但不套整组大框——没有参数撑着，大框只会显得空。 */
 .mode-group:has(> .mode > input:checked):not(:has(> .fields)) > .mode {
-  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: transparent;
 }
 
+/* 参数区缩进到选项标题下方（radio 宽 + 两处间距）。
+   右侧给同样的缩进：里面下拉框/输入框现在随容器走满宽，右边不补就会贴到卡片右边缘，
+   与左边的缩进不对称。 */
 .mode-group > .fields {
   padding-left: 37px;
+  padding-right: 37px;
 }
 
 .mode {
@@ -642,11 +774,20 @@ input[type="number"],
   font-size: 13px;
 }
 
+/* 输入框原来的 :focus{outline:none} 只靠描边变色提示焦点，键盘用户几乎看不出；
+   改成强调色描边 + 2px 外焦点环（鼠标点击时不显示环，只剩描边变色）。 */
 input[type="text"]:focus,
 input[type="number"]:focus,
 .picker-btn:focus-visible {
   outline: none;
   border-color: var(--accent);
+}
+
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+.picker-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* 短输入框固定 260px、左对齐（原来撑满整行）。260px 取自 .picker 里的最长选项
@@ -666,8 +807,7 @@ input[type="number"] {
   width: 100%;
 }
 
-/* 端口行：输入框 + 覆盖状态徽章并排 */
-.port-row {
+/* 端口行：输入框 + 覆盖状态徽章并排 */.port-row {
   display: flex;
   gap: 12px;
   align-items: center;
@@ -709,15 +849,32 @@ input[type="number"] {
   gap: 6px;
 }
 
-/* 读不到版本列表时那行提示要像错误一样显眼（黄字），读得到时是普通灰字。 */
-.hint.is-warn {
-  color: var(--warn);
-}
-
 .hint {
   font-size: 12px;
   color: var(--fg-mute);
   line-height: 1.7;
+}
+
+/* 醒目提示：空态、读取失败、「本机已经装过」这类「用户必须一眼看到」的一句提示。
+   普通 .hint 是灰字说明，和正文混在一起要仔细读才发现；这里做成胶囊（999px 圆角）
+   把它拎出来。全站统一走这一条规则，所有 .hint.notice 都是同一副胶囊长相。
+   底与边框都混进不透明的 --card（不是透明色）：这样无论下面垫的是小卡（--cell）还是
+   大卡（--card），文字与底色的对比度都是同一个值，浅色主题下也稳定达标（实测 4.58:1）。
+   不加外边距——间距交给父容器的 gap，避免和 16px 卡片节奏打架。 */
+/* `.hidden` 在这条之后才生效（99-hidden.css），但它与 `.hint.notice` 特指度不同、
+   拼不过 display:block，所以这里自己让开「被隐藏时」的情况，否则空提示会留个空胶囊。 */
+.hint.notice:not(.hidden) {
+  display: block;
+  /* 宽度跟内容走：提示多数是一两句短句，撑满整行会让淡黄底横贯整个卡片。
+     到卡片宽度为止折行；折成多行时胶囊两端仍是圆的，视觉上依然成立。 */
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--card));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--card));
+  color: var(--warn);
+  line-height: 1.6;
 }
 
 .hint code,

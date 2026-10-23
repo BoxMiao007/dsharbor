@@ -1,12 +1,12 @@
-//! 外壳配置里属于「环境 / 网络 / 集成」三张卡的六个字段。
+//! 外壳配置里属于「环境 / 网络 / 集成」三张卡的五个字段。
 //!
-//! 为什么放在核心库：这六个字段的取值、默认值与宽容读取都是纯逻辑，放这里能在开发机上
+//! 为什么放在核心库：这五个字段的取值、默认值与宽容读取都是纯逻辑，放这里能在开发机上
 //! 全自动验证。config.json 是用户可手改的文本——缺键、枚举写成认不出的名字（甚至类型不对）
 //! 都不该让整份配置解析失败、把用户的启动配置一起弄丢。
 //!
 //! 外壳（src-tauri/src/settings.rs）用 `#[serde(flatten)]` 把它平铺进 ShellConfig，
 //! 界面（src/main.ts 的 ShellConfig）的键名与这里的 JSON 键名一一对应：
-//! `profile`、`downloadSource`、`proxyMode`、`proxyAddress`、`cliIntegration`、`cacheCleanup`。
+//! `profile`、`downloadSource`、`proxyMode`、`proxyAddress`、`cliIntegration`。
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -104,7 +104,7 @@ where
     Ok(raw.as_str().and_then(ProxyMode::parse).unwrap_or_default())
 }
 
-/// 「环境 / 网络 / 集成」三张卡承载的六个字段。
+/// 「环境 / 网络 / 集成」三张卡承载的五个字段。
 ///
 /// 只承载取值与默认值：这三张卡各自的行为（列环境、下载源映射、写 PATH 垫片等）由后续实现，
 /// 本轮谁都不读它们，只保证「界面能读回、能原样写回、旧配置缺键也不炸」。
@@ -123,15 +123,6 @@ pub struct ShellPrefs {
     pub proxy_address: String,
     /// 命令行集成开关（「集成」卡的开关）；默认关。
     pub cli_integration: bool,
-    /// 缓存清理开关（「集成」卡的开关）；默认关。
-    ///
-    /// 打开后，每次**真正拉起** DSH 进程之后顺手跑一次与「立即清理」
-    /// 完全相同的修剪（判定规则见 `crate::npx_cache`，是否该跑的判断见
-    /// `crate::cache_auto::should_run`）。注意触发点是「拉起了一个进程」，不是「启动成功」：
-    /// 进程起来之后能不能健康跑下去由会话状态单独反映，不在这里等。默认关是有意的：
-    /// 自动删东西的风险高于省下的磁盘，先让用户看到能省多少再自己决定。关着时界面照样显示
-    /// 可回收大小。
-    pub cache_cleanup: bool,
 }
 
 impl Default for ShellPrefs {
@@ -142,7 +133,6 @@ impl Default for ShellPrefs {
             proxy_mode: ProxyMode::default(),
             proxy_address: String::new(),
             cli_integration: false,
-            cache_cleanup: false,
         }
     }
 }
@@ -167,7 +157,6 @@ mod tests {
         assert_eq!(prefs.proxy_mode, ProxyMode::System, "默认跟随系统");
         assert_eq!(prefs.proxy_address, "", "默认没有手动代理地址");
         assert!(!prefs.cli_integration, "命令行集成默认关");
-        assert!(!prefs.cache_cleanup, "缓存清理默认关");
     }
 
     #[test]
@@ -178,7 +167,6 @@ mod tests {
             proxy_mode: ProxyMode::Manual,
             proxy_address: "http://127.0.0.1:7890".to_string(),
             cli_integration: true,
-            cache_cleanup: true,
         };
         // 键名与字面量是界面（src/main.ts）与后续票据的共同契约，写死在这里防漂移。
         assert_eq!(
@@ -189,7 +177,6 @@ mod tests {
                 "proxyMode": "manual",
                 "proxyAddress": "http://127.0.0.1:7890",
                 "cliIntegration": true,
-                "cacheCleanup": true,
             })
         );
     }
@@ -202,23 +189,9 @@ mod tests {
             proxy_mode: ProxyMode::Off,
             proxy_address: String::new(),
             cli_integration: true,
-            cache_cleanup: false,
         };
         let text = serde_json::to_string(&prefs).expect("序列化");
         assert_eq!(parse(&text), prefs, "改 → 存 → 读回应完全一致");
-    }
-
-    #[test]
-    fn cache_cleanup_switch_survives_a_restart() {
-        // 自动清理开关是「打开一次就一直生效」的偏好：写盘再读回必须还是开着的，
-        // 缺键（老配置没有这个键）才是关。
-        let text = r#"{"cacheCleanup":true}"#;
-        assert!(parse(text).cache_cleanup, "存下来的开状态要读回来");
-        assert!(
-            !parse(r#"{"cacheCleanup":false}"#).cache_cleanup,
-            "关状态也要原样读回"
-        );
-        assert!(!parse("{}").cache_cleanup, "老配置没有这个键时按默认关处理");
     }
 
     #[test]

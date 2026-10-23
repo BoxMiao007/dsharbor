@@ -39,6 +39,8 @@ const state = {
   session: "stopped", // stopped | running | starting | failed
   /** true = 运行中但登录链接还没就绪（真实的「启动中」：running + 无登录链接）。 */
   loginPending: false,
+  /** 设成一段文字可预览工具条下方那条「登录链接读不到」的黄色提示。 */
+  loginError: null,
   dshVersion: "0.2.1-rc.2",
   /** 端口提示的假数据：改它就能预览「跟随 DSH 配置」与「没读到配置」两种分支。 */
   portHint: { host: "127.0.0.1", port: 3080, source: "managed" },
@@ -58,6 +60,8 @@ const state = {
   },
   /** 本机 npx 缓存里已有的版本（`npx_cached_versions`）：「已缓存」徽章按它挂。 */
   npxCachedVersions: ["0.2.1-rc.1", "0.2.0-rc.2"],
+  /** 其中钉版本写法（`dsh@<版本>`）启动能直接复用的部分：提示按它说「不会再下载」。 */
+  npxPinServedVersions: ["0.2.1-rc.1"],
   /** 已保存的启动配置：改它并刷新页面就能预览各种保存/回填分支（如存了已下架的版本）。 */
   savedLaunch: {
     mode: { kind: "npx", version: null },
@@ -76,7 +80,6 @@ const state = {
     proxyMode: "system",
     proxyAddress: "",
     cliIntegration: false,
-    cacheCleanup: false,
   },
   /** 系统代理的假数据：url 改成 null 可预览「跟随系统但系统里没配」。
       bypass 就是系统里那份例外列表（回环地址由后端补，这里不列）。 */
@@ -92,26 +95,21 @@ const state = {
   freezeLog: false,
   bridgeInstalls: 0,
   bridgeInstallFails: false,
-  /** 「启动后自动清理」的假结果：start_dsh / restart_dsh 在缓存开关打开时把结果写进这里，
-      `auto_cleanup_report` 按 since 返回新的一次（改 autoCleanup 可预览各种结果文案）。 */
-  autoCleanup: null,
-  autoCleanupSeq: 0,
   /** 命令行集成的假状态：改它能预览开关打开/关闭、PATH 里没有目录、被别的 dsh 盖住、
       以及非 Windows 宿主（supported: false）等分支。enabled 默认跟 savedShell 走。 */
   cli: { supported: true, enabled: false, onPath: false, shadow: null },
-  /** npx 缓存盘面的假数据：dirs 里 keep=true 的是保留的（current 那份必保留），
-      其余会被「立即清理」删掉；把 cleanupFails 设为 true 可预览「删不掉 + 逐条原因」分支。 */
-  cache: {
-    supported: true,
-    rootSource: "npm",
-    warning: null,
-    cleanupFails: false,
-    dirs: [
-      { name: "1e7f6d9597241db0", label: "@deepseek-ai/dsh（1e7f6d95）", bytes: 486539264, keep: true, current: true },
-      { name: "50d2c97abf8f4186", label: "@deepseek-ai/dsh@next（50d2c97a）", bytes: 412090368, keep: false, current: false },
-      { name: "c8633a242642d858", label: "@deepseek-ai/dsh@0.2.1-rc.2（c8633a24）", bytes: 297795584, keep: false, current: false },
-    ],
-  },
+  /** 设成 true 可预览「读取命令行集成状态失败」那条黄色提示。 */
+  cliFails: false,
+  /** 已装 DSH 的假数据（`installed_dsh_versions`）：npx 缓存里的几份 + npm 全局装的一份。
+      改成 [] 可预览「本机还没装过」；把某份 version 设成 null 可预览「版本读不到」；
+      卸掉 npm 全局那份（`uninstall_dsh_global`）后这张列表会少一行。 */
+  installedDsh: [
+    { version: "0.2.1-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\c8633a242642d858", inUse: true },
+    { version: "0.2.0-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\50d2c97abf8f4186", inUse: false },
+    { version: "0.1.9", source: "npm", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\bin\\node_modules\\@deepseek-ai\\dsh", inUse: false },
+  ],
+  /** 设成 true 可预览「读取已装 DSH 版本失败」那条黄色提示。 */
+  installedDshFails: false,
   /** 环境列表（`list_profiles`）的假数据：删掉某项可预览「配置里记的环境已不在」，
       把 desktop 的 webCapable 改成 true 可确认它仍然被界面藏起来。
       把 profilesUnsupported 改成 true 可预览非 Windows 宿主下的「仅在 Windows 宿主可用」。 */
@@ -143,22 +141,53 @@ const state = {
       一个空数组预览「零插件 + 去安装依赖」；lab 删掉就能预览「读到了但一项也没有」。 */
   plugins: {
     web: [
-      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
-      { name: "@deepseek-ai/dsh-web-app", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
-      { name: "billion-context", entries: ["bili-native"], enabled: true, bridge: false, manual: false, switchable: true },
-      { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true },
-      { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true },
-      { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true },
-      { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true },
-      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true },
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。" },
+      { name: "@deepseek-ai/dsh-web-app", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方 Web 界面包，浏览器里那套界面本体。" },
+      { name: "billion-context", entries: ["bili-native"], enabled: true, bridge: false, manual: false, switchable: true, description: "十亿级上下文记忆检索：压缩、折叠与按需还原历史对话。" },
+      { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true, description: "上下文管理与注入策略面板。" },
+      { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true, description: "增强版侧边栏：分组、置顶与拖拽排序。" },
+      { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true, description: "免 Key 聚合网络搜索，多引擎自动回退。" },
+      { name: "dsh-local-tools", entries: ["local-tools"], enabled: true, bridge: false, manual: true, switchable: true, description: "本地打包的工具集（不上 registry，永远查不到版本）。" },
+      { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true, description: "技能与 MCP 服务的管理面板。" },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。" },
     ],
     lab: [
-      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false },
-      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true },
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。" },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。" },
     ],
     headless: [],
     desktop: [],
   },
+  /** 插件更新检查（`plugin_updates_list`）的假数据：按环境名分组，形状照后端
+      PluginUpdateItem（camelCase）。web 里安排了「可更新、停用也可更新（两行）、已最新、
+      查不到」五种行，把行内渲染的分支都预览到；没配的环境返回 []。 */
+  pluginUpdates: {
+    web: [
+      { name: "billion-context", current: "2.1.0", target: "2.3.0-rc.1", error: null, hasUpdate: true },
+      { name: "dsh-context", current: "0.4.2", target: "0.4.2", error: null, hasUpdate: false },
+      { name: "dsh-better-sidebar", current: "3.0.1", target: "3.2.0", error: null, hasUpdate: true },
+      { name: "dsh-free-search", current: null, target: null, error: "读取插件「dsh-free-search」的版本列表失败：E404", hasUpdate: false },
+      { name: "dsh-local-tools", current: "0.9.0", target: null, error: "读取插件「dsh-local-tools」的版本列表失败：E404", hasUpdate: false },
+      { name: "dsh-skill-mcp-panel", current: "1.0.0", target: "1.1.0", error: null, hasUpdate: true },
+    ],
+  },
+  /** 假命令的人工延时（毫秒，URL ?state= 可覆盖）：给「操作互斥」的接缝测试一个
+      确定的忙态窗口——同步假结果会让忙态在两次 CDP 往返之间就消失，测不到中间态。 */
+  pluginUpdateDelay: 0,
+  pluginCheckDelay: 0,
+  /** 「全部更新」每个插件之间的延时（毫秒）：让行级四态在浏览器里逐个走一遍，
+      测试与截图都能抓到「一半已更新、一半还在排队」这种中间态。默认 0。 */
+  pluginUpdateStepDelay: 0,
+  /** 这一段里注定失败的插件名（数组）：回放 done 时带 ok:false 与原因；
+      失败的名字会从数组里移除，所以「重试」那次会成功——和真后端一样，失败可重来。 */
+  pluginUpdateFail: [],
+  /** 版本列表查询的人工延时：给方钮忙态（环形 spinner / 完成勾）测一个确定的忙态窗口。 */
+  registryDelay: 0,
+  /** 插件清单（`plugin_list`）的人工延时（毫秒，按「每条命令」计）：给骨架屏一个确定的
+      加载窗口，否则假后端同步回话，骨架刚画上就被真行换掉，测不到。默认 0。 */
+  pluginListDelay: 0,
+  /** 把插件清单这条命令改成读取失败：预览「骨架撤掉、只留失败提示」那条分支。 */
+  pluginListFails: false,
   calls: {},
 };
 
@@ -202,7 +231,7 @@ window.__mockUnimplemented = [];
       port: running ? 3099 : null,
       loginUrl: running ? "https://example.invalid/dsh?token=mock" : null,
       loginReady: running && !S.loginPending,
-      loginError: null,
+      loginError: S.loginError || null,
       // 真后端的 logTail 是最后 300 行（见 launcher.rs 的 LOG_TAIL_LINES）：预览也照这个形状给
       // 一段持续增长的尾巴，才能看出界面「只追加新增的那几行」的效果。
       logTail:
@@ -274,128 +303,8 @@ window.__mockUnimplemented = [];
       message: message,
     };
   };
-  // 字节数的显示形式（1024 进制，B 取整、其余 1 位小数），与核心库的 human_bytes 一致；
-  // 真实后端会把算好的文字一起送过来，这里只是为了假数据看着像真的。
-  const humanBytes = (bytes) => {
-    if (bytes < 1024) return bytes + " B";
-    const units = ["KB", "MB", "GB", "TB"];
-    let value = bytes / 1024;
-    let i = 0;
-    while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
-    return value.toFixed(1) + " " + units[i];
-  };
-  // 缓存盘面的假状态：只含属于本包的目录，与真实后端一个口径。
-  // 可回收 = keep=false 的字节和，份数与文案都跟着算，改 S.cache.dirs 就能预览各种分支。
-  const cacheState = (cache) => {
-    const dirs = (cache.dirs || []).map((dir) => ({
-      name: dir.name,
-      label: dir.label,
-      bytes: dir.bytes,
-      bytesText: humanBytes(dir.bytes),
-      bytes_text: humanBytes(dir.bytes),
-      keep: !!dir.keep,
-      current: !!dir.current,
-    }));
-    const ownBytes = dirs.reduce((sum, dir) => sum + dir.bytes, 0);
-    const removable = dirs.filter((dir) => !dir.keep);
-    const reclaimable = removable.reduce((sum, dir) => sum + dir.bytes, 0);
-    const current = dirs.find((dir) => dir.current);
-    let message;
-    if (!cache.supported) {
-      message = "缓存盘面仅在 Windows 宿主可用。";
-    } else if (dirs.length === 0) {
-      message = "没找到本包的 npx 缓存：本包还没用 npx 跑过时这里就是空的。只统计明确记录着本包的目录，别的包不计入。";
-    } else if (removable.length === 0) {
-      message = "本包占用 " + humanBytes(ownBytes) + "（" + dirs.length + " 份），没有可回收的部分：保留份数已经覆盖全部。";
-    } else {
-      message =
-        "本包占用 " +
-        humanBytes(ownBytes) +
-        "（" +
-        dirs.length +
-        " 份），可回收 " +
-        humanBytes(reclaimable) +
-        "（" +
-        removable.length +
-        " 份）。清理会保留当前启动配置对应的那份加最近用过的几份，其余删除；npm 的包体缓存不动，下次启动不用重新下载。";
-    }
-    const warning = cache.warning === undefined ? null : cache.warning;
-    return {
-      supported: !!cache.supported,
-      root: cache.root === undefined ? "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache" : cache.root,
-      rootSource: cache.rootSource || "npm",
-      root_source: cache.rootSource || "npm",
-      ownBytes: ownBytes,
-      own_bytes: ownBytes,
-      ownBytesText: humanBytes(ownBytes),
-      own_bytes_text: humanBytes(ownBytes),
-      ownCount: dirs.length,
-      own_count: dirs.length,
-      reclaimableBytes: reclaimable,
-      reclaimable_bytes: reclaimable,
-      reclaimableBytesText: humanBytes(reclaimable),
-      reclaimable_bytes_text: humanBytes(reclaimable),
-      removableCount: removable.length,
-      removable_count: removable.length,
-      keepCount: dirs.length - removable.length,
-      keep_count: dirs.length - removable.length,
-      current: current ? current.name : null,
-      message: message,
-      warning: warning,
-      dirs: dirs,
-    };
-  };
-  // 清理的实际动作（与「立即清理」按钮和「启动后自动清理」共用一份，真后端也是同一个函数）。
-  const doCleanup = () => {
-    const cache = S.cache || (S.cache = { supported: true, dirs: [] });
-    const removable = (cache.dirs || []).filter((dir) => !dir.keep);
-    const freedBytes = removable.reduce((sum, dir) => sum + dir.bytes, 0);
-    if (cache.cleanupFails) {
-      return {
-        removed: [],
-        failed: removable.map((dir) => ({
-          label: dir.label,
-          path: "D:\\\\IT\\\\Scoop\\\\User\\\\persist\\\\nodejs\\\\cache\\\\_npx\\\\" + dir.name,
-          reason: "文件被占用（可能 DSH 正在运行）：拒绝访问。 (os error 32)",
-        })),
-        freedBytes: 0,
-        freed_bytes: 0,
-        message: "这次一个目录都没能清掉，原因见下面的逐条结果。",
-        state: cacheState(cache),
-      };
-    }
-    cache.dirs = (cache.dirs || []).filter((dir) => dir.keep);
-    return {
-      removed: removable.map((dir) => ({
-        label: dir.label,
-        bytes: dir.bytes,
-        bytesText: humanBytes(dir.bytes),
-        bytes_text: humanBytes(dir.bytes),
-      })),
-      failed: [],
-      freedBytes: freedBytes,
-      freed_bytes: freedBytes,
-      message:
-        removable.length === 0
-          ? "没有需要清理的目录。"
-          : "已清掉 " + removable.length + " 个目录，释放 " + humanBytes(freedBytes) + "。",
-      state: cacheState(cache),
-    };
-  };
-  // 真的 DSH 拉起成功后、开关开着时，后端会自己跑一次清理并把结果留着等界面来取。
-  // 预览里用假数据把这条链路补上：只有开关开着才跑，且每次 seq 自增一次。
-  const maybeAutoCleanup = () => {
-    const shell = S.lastSavedShell || S.savedShell;
-    if (!shell || !shell.cacheCleanup) return;
-    const result = doCleanup();
-    S.autoCleanupSeq = (S.autoCleanupSeq || 0) + 1;
-    S.autoCleanup = {
-      seq: S.autoCleanupSeq,
-      message: "启动后自动清理：" + result.message,
-      result: result,
-    };
-  };
-  const cmds = {    app_info: () => ({
+  const cmds = {
+    app_info: () => ({
       name: "DSHarbor",
       version: "0.0.0-mock",
       coreVersion: "0.0.0-mock",
@@ -425,6 +334,7 @@ window.__mockUnimplemented = [];
     // 命令行集成：假状态。改 S.cli 里的字段就能预览各种分支
     // （supported:false 看「仅在 Windows 宿主可用」、shadow 有值看「排在更前面」提示）。
     cli_integration_state: () => {
+      if (S.cliFails) throw "读不到 PATH";
       const cli = S.cli || (S.cli = { supported: true, enabled: false, onPath: false, shadow: null });
       if (cli.supported === undefined) cli.supported = true;
       if (cli.enabled === undefined) cli.enabled = !!S.savedShell.cliIntegration;
@@ -533,23 +443,33 @@ window.__mockUnimplemented = [];
     },
     dsh_status: () => status(),
     bridge_state: () => bridgeState(),
-    // 缓存盘面：只读扫描。
-    cache_state: () => {
-      const cache = S.cache || (S.cache = { supported: true, dirs: [] });
-      return cacheState(cache);
+    // 已装 DSH 版本：只读扫描（npx 缓存 + npm 全局）。
+    installed_dsh_versions: () => {
+      seen("installed_dsh_versions");
+      if (S.installedDshFails) throw "读取已装 DSH 版本失败：npm 不在 PATH 里";
+      return S.installedDsh || [];
     },
-    // 立即清理：把 keep=false 的目录从假数据里拿掉，返回逐条结果与清理后的新盘面。
-    // cleanupFails=true 时假装删不掉（预览「没清掉 + 原因」那几行）。
-    cleanup_cache: () => {
-      seen("cleanup_cache");
-      return doCleanup();
+    // 卸载 npm 全局那一份：从假数据里拿掉 source=npm 的行，界面重扫后少一行。
+    uninstall_dsh_global: () => {
+      seen("uninstall_dsh_global");
+      const before = (S.installedDsh || []).length;
+      S.installedDsh = (S.installedDsh || []).filter((item) => item.source !== "npm");
+      if (S.installedDsh.length === before) {
+        throw "npm 全局没有装 @deepseek-ai/dsh。";
+      }
+      return "已卸载全局安装的 DSH。";
     },
-    // 启动后自动清理的结果：since 是界面已经播报过的序号，只有更新的才返回。
-    auto_cleanup_report: (a) => {
-      seen("auto_cleanup_report");
-      const report = S.autoCleanup;
-      const since = (a && a.since) || 0;
-      return report && report.seq > since ? report : null;
+    // 删掉 npx 缓存里的某一份：按 path 从假数据里拿掉那一行。
+    delete_dsh_npx: (args) => {
+      seen("delete_dsh_npx");
+      const before = (S.installedDsh || []).length;
+      S.installedDsh = (S.installedDsh || []).filter(
+        (item) => !(item.source === "npx" && item.path === args?.path),
+      );
+      if (S.installedDsh.length === before) {
+        throw "这一份 npx 安装已经不在缓存里了，刷新一下列表。";
+      }
+      return "已删掉 npx 缓存里的那一份。";
     },
     profile_port_hint: () => S.portHint,
     // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」；
@@ -673,9 +593,27 @@ window.__mockUnimplemented = [];
       };
     },
     // ---- 插件开关 ------------------------------------------------------------
+    // 清单读取的人工延时把成功与失败都包住：骨架屏测试要一个确定的加载窗口，
+    // 读取失败的分支也要先有骨架、再看到它被撤掉。
     plugin_list: (a) => {
       seen("plugin_list:" + (a && a.name ? a.name : "?"));
-      return (S.plugins && S.plugins[a && a.name]) || [];
+      const settle = () => {
+        if (S.pluginListFails) {
+          throw "读取插件清单失败：ENOENT 找不到补丁层（假数据）";
+        }
+        return (S.plugins && S.plugins[a && a.name]) || [];
+      };
+      return S.pluginListDelay > 0
+        ? new Promise((done, fail) => {
+            setTimeout(() => {
+              try {
+                done(settle());
+              } catch (err) {
+                fail(err);
+              }
+            }, S.pluginListDelay);
+          })
+        : settle();
     },
     plugin_toggle: (a) => {
       const name = a && a.name;
@@ -710,19 +648,128 @@ window.__mockUnimplemented = [];
         items: list,
       };
     },
+    // ---- 插件更新 --------------------------------------------------------------
+    plugin_updates_list: (a) => {
+      seen("plugin_updates_list:" + (a && a.name ? a.name : "?") + "/" + (a && a.force ? "force" : "cached"));
+      const rows = (S.pluginUpdates && S.pluginUpdates[a && a.name]) || [];
+      return S.pluginCheckDelay > 0
+        ? new Promise((done) => setTimeout(() => done(rows), S.pluginCheckDelay))
+        : rows;
+    },
+    plugin_update: async (a) => {
+      const name = a && a.name;
+      const plugin = a && a.plugin;
+      seen("plugin_update:" + name + "/" + (plugin || "all"));
+      if (S.session === "running") {
+        throw busyText("更新插件", name);
+      }
+      const rows = (S.pluginUpdates[name] = S.pluginUpdates[name] || []);
+      const scope = plugin ? rows.filter((it) => it.name === plugin) : rows.filter((it) => it.hasUpdate);
+      if (plugin && scope.length === 0) {
+        throw "环境「" + name + "」的更新清单里没有插件「" + plugin + "」，先「检查更新」再试。";
+      }
+      // 进度通道：真后端把 Channel 序列化成 "__CHANNEL__:<id>"，假后端拿到的就是 Channel
+      // 实例本身，按 id 找回挂在 window 上的回调就能回放。index 必须从 0 递增，否则前端会
+      // 把它排队等前一条（真后端也是这个顺序约定）。
+      const channel = a && a.progress;
+      let seq = 0;
+      const push = (message) => {
+        if (!channel) return;
+        const cb = window["_" + channel.id];
+        if (typeof cb === "function") cb({ index: seq++, message });
+      };
+      const total = scope.filter((it) => it.hasUpdate).length;
+      const okList = [];
+      const failList = [];
+      // 人工延时放在**回放之前**：互斥用例靠它拿确定的忙态窗口，回放本身按
+      // pluginUpdateStepDelay 逐插件走，二者互不影响。
+      if (S.pluginUpdateDelay > 0) {
+        await new Promise((r) => setTimeout(r, S.pluginUpdateDelay));
+      }
+      for (const it of scope) {
+        if (!it.hasUpdate) continue;
+        const index = okList.length + failList.length + 1;
+        push({ phase: "start", index, total, plugin: it.name, ok: null, message: null });
+        if (S.pluginUpdateStepDelay > 0) {
+          await new Promise((r) => setTimeout(r, S.pluginUpdateStepDelay));
+        }
+        const failAt = (S.pluginUpdateFail || []).indexOf(it.name);
+        if (failAt >= 0) {
+          // 失败一次就把它从名单里划掉：行留着、原因留着，「重试」那次会成功。
+          S.pluginUpdateFail.splice(failAt, 1);
+          failList.push(it.name);
+          push({
+            phase: "done",
+            index,
+            total,
+            plugin: it.name,
+            ok: false,
+            message: "更新命令 npm install " + it.name + " 失败：E404 找不到包（假数据）",
+          });
+          continue;
+        }
+        it.current = it.target;
+        it.hasUpdate = false;
+        okList.push(it.name + "@" + it.current);
+        push({
+          phase: "done",
+          index,
+          total,
+          plugin: it.name,
+          ok: true,
+          message: "已更新到 " + it.current,
+        });
+      }
+      const message = plugin
+        ? failList.length
+          ? "更新「" + plugin + "」失败：" + failList[0] + "。原因见行内提示。"
+          : okList.length
+            ? "已把「" + plugin + "」更新到 " + okList[0].split("@").pop() + "。重启 DSH 后生效。"
+            : "已是最新版本，未做任何改动。"
+        : failList.length === 0
+          ? okList.length === 0
+            ? "没有需要更新的插件。"
+            : "全部更新完成：成功 " + okList.length + " 个（" + okList.join("、") + "）。重启 DSH 后生效。"
+          : "更新完成：成功 " + okList.length + " 个（" + okList.join("、") + "）；失败 " +
+            failList.length + " 个（" + failList.join("、") + "）。重启 DSH 后生效。";
+      const result = {
+        ok: failList.length === 0,
+        message: message,
+        backupDir: "C:\\Users\\mock\\AppData\\Roaming\\DSHarbor\\backups\\backup-mock",
+      };
+      return result;
+    },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,
     // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 刷新按钮转圈」。
     // 下载源记进 calls（键名形如 query_dsh_versions:official），预览时一眼能看出这次请求带的是哪个源。
     query_dsh_versions: (a) => {
       seen("query_dsh_versions:" + (a && a.source ? a.source : "?") + (a && a.force ? ":force" : ""));
-      if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
-      return S.registry;
+      const settle = () => {
+        if (S.registry === null) throw "npm view @deepseek-ai/dsh versions 失败：ENOTFOUND registry.npmjs.org";
+        return S.registry;
+      };
+      // 延时把成功与失败都包住：测方钮忙态时（成功打勾 / 失败不打勾）都要有确定的忙态窗口。
+      return S.registryDelay > 0
+        ? new Promise((done, fail) => {
+            setTimeout(() => {
+              try {
+                done(settle());
+              } catch (err) {
+                fail(err);
+              }
+            }, S.registryDelay);
+          })
+        : settle();
     },
-    // 本机 npx 缓存里现有的版本：「已缓存」徽章的数据源（预览里固定给一组假版本）。
+    // 本机 npx 缓存里现有的版本：「已缓存」徽章的数据源（预览里固定给一组假版本）；
+    // pinServed 是钉版本写法能直接复用的部分（不重合的版本提示「选了还会再下载」）。
     npx_cached_versions: () => {
       seen("npx_cached_versions");
-      return S.npxCachedVersions || [];
+      return {
+        versions: S.npxCachedVersions || [],
+        pinServed: S.npxPinServedVersions || [],
+      };
     },
 
     // 自检：结论与失败原因都从 __MOCK_STATE__.selfCheck 来（改它能预览三种文案），
@@ -749,9 +796,9 @@ window.__mockUnimplemented = [];
             : null,
       };
     },
-    start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
+    start_dsh: () => { seen("start_dsh"); S.counter += 1; S.session = "running"; return status(); },
     stop_dsh: () => { seen("stop_dsh"); S.counter += 1; S.session = "stopped"; return status(); },
-    restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; maybeAutoCleanup(); return status(); },
+    restart_dsh: () => { seen("restart_dsh"); S.counter += 1; S.session = "running"; return status(); },
     // 工具条主按钮区在「运行中」时点「重启 DSH」：与 start_dsh 一样产生输出。
     // 「复制登录链接」每次现取（token 是一次性铸造的），预览里给个固定假地址。
     dsh_login_url: () => {
@@ -804,6 +851,17 @@ window.__mockUnimplemented = [];
       return handler(a === undefined ? {} : a);
     },
   };
+  // 剪贴板替身：127.0.0.1 下 navigator.clipboard 在无头浏览器里不一定给写权限，
+  // 复制按钮会掉到 execCommand 兜底、结果随浏览器而异。这里给一个必定成功的假实现，
+  // 让「已复制」反馈在预览与自动化测试里稳定复现；测试要验失败态时自行覆写。
+  try {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async () => undefined, readText: async () => "" },
+    });
+  } catch {
+    // 老浏览器不允许改 navigator 属性时保留原生实现，不影响预览其余部分。
+  }
   // 运行中时日志行每秒增长，用来验证「滚动 / 拖选时界面不会被刷没」
   window.setInterval(() => { if (S.session === "running" && !S.freezeLog) S.counter += 1; }, 1000);
 })();
