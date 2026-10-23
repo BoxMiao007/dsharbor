@@ -2,9 +2,13 @@
  * 前端接缝测试：「官方 npx 命令」的版本下拉（原「渠道」）。
  *
  * 只测这一个接缝——`#npx-version-picker` 展开后的列表：
- *  1. 首项固定是「自动最新版本」，右侧徽章写 npm latest 指向的版本号，它不带版本号（选它 = 跟 latest 走）；
- *  2. 列表按新到旧直列官方发布过的版本，不打渠道分组；npm latest 那一行挂「最新」；
- *  3. npx 缓存里已有的版本挂「已缓存」（数据来自 `npx_cached_versions`）；选中的版本不额外挂「已装」
+ *  1. 首项固定是「自动最新版本」，徽章把 latest 标签名与它指向的版本号合成一枚（`latest 0.2.1-rc.2`），
+ *     它不带版本号（选它 = 跟 latest 走）；
+ *  2. 列表按新到旧直列官方发布过的版本，不打渠道分组；每个版本按 npm 的 dist-tag 挂 tag 徽章
+ *     （latest / next / beta / alpha / canary / 自定义），顺序 latest → next → 其他字母序，
+ *     最多 3 枚、超出折成「+N」；
+ *  3. npx 缓存里已有的版本挂「已缓存」（数据来自 `npx_cached_versions`），它不占 tag 的 3 枚名额，
+ *     排在 tag 徽章后面；选中的版本不额外挂「已装」
  *     （「已装」原来按「当前选中的值」判，选中未安装的版本也会误显示，已删）；
  *  4. 「本机已经装过」提示的两种口径：缓存那份是钉版本写法（`dsh@<版本>`）→「不会再下载」；
  *     只是裸包名写法留下的 →「会再下载一份」（npx 按命令写法各存一份缓存）；
@@ -94,11 +98,16 @@ async function openList(page) {
 function readList(page) {
   return page.evaluate(() => {
     const items = Array.from(document.querySelectorAll("#npx-version-picker .picker-option"));
-    return items.map((li) => ({
-      label: li.querySelector(".text")?.textContent ?? "",
-      badges: Array.from(li.querySelectorAll(".picker-badge")).map((b) => b.textContent),
-      isAction: li.classList.contains("is-action"),
-    }));
+    return items.map((li) => {
+      const badges = Array.from(li.querySelectorAll(".picker-badge"));
+      return {
+        label: li.querySelector(".text")?.textContent ?? "",
+        badges: badges.map((b) => b.textContent),
+        // 悬停气泡（tag 含义 / 被「+N」折叠掉的标签名）一并读出来，断言才看得见。
+        tips: badges.map((b) => b.getAttribute("data-tip")),
+        isAction: li.classList.contains("is-action"),
+      };
+    });
   });
 }
 
@@ -122,14 +131,15 @@ after(async () => {
   preview?.kill();
 });
 
-test("首项是「自动最新版本」并带 latest 版本号徽章", { skip: skipReason }, async () => {
+test("首项是「自动最新版本」，徽章把 latest 标签与版本号合成一枚", { skip: skipReason }, async () => {
   const page = await openLaunchPage(browser);
   try {
     await openList(page);
     const rows = await readList(page);
     assert.equal(rows[0].label, "自动最新版本", "首项文案固定为「自动最新版本」");
-    assert.ok(rows[0].badges.length > 0, "首项右侧要有版本号徽章");
-    assert.match(rows[0].badges[0], /^\d+\.\d+\.\d+/, "首项徽章写的是具体版本号");
+    assert.equal(rows[0].badges.length, 1, "首项只挂一枚合并徽章");
+    // 合并形态：`latest 0.2.1-rc.2` —— 既写标签名，也把这次会用到的版本号写出来。
+    assert.match(rows[0].badges[0], /^latest \d+\.\d+\.\d+\S*$/, "首项徽章是「latest + 版本号」的合并形态");
     // 首项不是「更多…」那种动作行，选中它就是一个可保存的值（空字符串 = 不带版本号）。
     assert.equal(rows[0].isAction, false, "首项是可选项，不是动作行");
   } finally {
@@ -137,7 +147,7 @@ test("首项是「自动最新版本」并带 latest 版本号徽章", { skip: s
   }
 });
 
-test("版本按新到旧直列，latest 那行挂「最新」，缓存里有的挂「已缓存」", { skip: skipReason }, async () => {
+test("版本按新到旧直列，latest 那行挂 latest 徽章，缓存里有的挂「已缓存」", { skip: skipReason }, async () => {
   const page = await openLaunchPage(browser);
   try {
     await openList(page);
@@ -150,11 +160,11 @@ test("版本按新到旧直列，latest 那行挂「最新」，缓存里有的�
       assert.match(name, /^\d+\.\d+\.\d+/, `版本行只写版本号，实际「${name}」`);
     }
 
-    // 首项徽章里的版本号，正是列表里挂「最新」的那一行。
-    const latestVersion = rows[0].badges[0];
+    // 首项徽章里的版本号（`latest 0.2.1-rc.2` 去掉标签名），正是列表里挂 latest 的那一行。
+    const latestVersion = rows[0].badges[0].replace(/^latest /, "");
     const latestRow = rows.find((r) => r.label === latestVersion);
-    assert.ok(latestRow, "「最新」那一行应能在列表里找到");
-    assert.deepEqual(latestRow.badges, ["最新"], "latest 指向的版本挂「最新」");
+    assert.ok(latestRow, "latest 那一行应能在列表里找到");
+    assert.deepEqual(latestRow.badges, ["latest"], "latest 指向的版本挂 latest 徽章");
 
     // 假数据里 0.2.1-rc.1 与 0.2.0-rc.2 在 npx 缓存里。
     for (const cached of ["0.2.1-rc.1", "0.2.0-rc.2"]) {
@@ -166,6 +176,129 @@ test("版本按新到旧直列，latest 那行挂「最新」，缓存里有的�
     for (const row of rows) {
       assert.ok(!row.badges.includes("已装"), `「${row.label}」不该挂「已装」`);
     }
+  } finally {
+    await page.close();
+  }
+});
+
+test("next 标签指向的版本挂 next 徽章，气泡写明是抢先体验版", { skip: skipReason }, async () => {
+  const page = await openLaunchPage(browser);
+  try {
+    await openList(page);
+    const rows = await readList(page);
+    // 假数据里 next 指向 0.2.1-rc.3，latest 指向 0.2.1-rc.2：两个标签各挂各的行。
+    const row = rows.find((r) => r.label === "0.2.1-rc.3");
+    assert.ok(row, "假数据的 next 指向 0.2.1-rc.3");
+    assert.deepEqual(row.badges, ["next"], "next 那一行挂 next 徽章");
+    assert.equal(row.tips[0], "抢先体验版，可能有 bug", "悬停说明要说人话，不用 tag 名糊弄");
+  } finally {
+    await page.close();
+  }
+});
+
+test("同一个版本挂多个标签时按 latest → next → 其他字母序 → 已缓存 排", { skip: skipReason }, async () => {
+  // 默认假数据里 latest 与 next 指向不同版本，拼不出完整顺序，
+  // 所以用 ?state= 造一个「同一版本挂 latest + next + 自定义 tag，且本机已缓存」的场面。
+  const three = {
+    registry: {
+      distTags: {
+        latest: "0.2.1-rc.2",
+        tags: { latest: "0.2.1-rc.2", next: "0.2.1-rc.2", zeta: "0.2.1-rc.2" },
+      },
+      versions: ["0.2.1-rc.2", "0.2.1-rc.1", "0.2.0-rc.2"],
+    },
+    npxCachedVersions: ["0.2.1-rc.2"],
+  };
+  const page = await openLaunchPage(browser, three);
+  try {
+    await openList(page);
+    const rows = await readList(page);
+    const row = rows.find((r) => r.label === "0.2.1-rc.2");
+    assert.deepEqual(row.badges, ["latest", "next", "zeta", "已缓存"], "固定顺序：latest → next → 其他 → 已缓存");
+  } finally {
+    await page.close();
+  }
+
+  // 其余标签之间按字母序（注入顺序故意打乱），跟 `latest` 有没有排第一无关。
+  const alphabetical = {
+    registry: {
+      distTags: {
+        latest: null,
+        tags: { zeta: "0.2.1-alpha.4", alpha: "0.2.1-alpha.4", mu: "0.2.1-alpha.4" },
+      },
+      versions: ["0.2.1-alpha.4", "0.2.1-rc.2"],
+    },
+    npxCachedVersions: ["0.2.1-alpha.4"],
+  };
+  const page2 = await openLaunchPage(browser, alphabetical);
+  try {
+    await openList(page2);
+    const rows = await readList(page2);
+    const row = rows.find((r) => r.label === "0.2.1-alpha.4");
+    assert.deepEqual(row.badges, ["alpha", "mu", "zeta", "已缓存"], "自定义标签按字母序，已缓存永远排最后");
+  } finally {
+    await page2.close();
+  }
+});
+
+test("tag 超过 3 枚时折叠成 +N，悬停气泡列出被折叠的标签名", { skip: skipReason }, async () => {
+  const page = await openLaunchPage(browser);
+  try {
+    await openList(page);
+    const rows = await readList(page);
+    // 假数据里 0.2.1-alpha.4 挂了 alpha / canary / experimental / legacy 四个标签。
+    const row = rows.find((r) => r.label === "0.2.1-alpha.4");
+    assert.ok(row, "假数据里 0.2.1-alpha.4 挂着 4 个 tag");
+    // experimental 是 12 个字符，超过 10 个就截断成「experiment…」（全名留在气泡里）。
+    assert.deepEqual(row.badges, ["alpha", "canary", "experiment…", "+1"], "最多 3 枚 tag，其余折成 +1");
+    assert.equal(row.tips[3], "legacy", "被折叠掉的标签名写在 +N 的气泡里");
+    assert.equal(row.tips[2], "自定义标签 experimental", "截断的徽章在气泡里给全名");
+    assert.equal(row.tips[0], "alpha 内测版", "前三枚各自的悬停解释照旧");
+  } finally {
+    await page.close();
+  }
+});
+
+test("收起态只显一枚，有 tag 时优先 tag 徽章而不是「已缓存」", { skip: skipReason }, async () => {
+  const page = await openLaunchPage(browser);
+  try {
+    await openList(page);
+    // 0.2.0-rc.2 既挂 beta 标签、又在本机 npx 缓存里：收起态显 beta，而不是「已缓存」。
+    await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll("#npx-version-picker .picker-option"));
+      items.find((li) => li.querySelector(".text")?.textContent === "0.2.0-rc.2")?.click();
+    });
+    await sleep(200);
+    const label = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("#npx-version-picker .picker-label .picker-badge")).map((b) => b.textContent),
+    );
+    assert.deepEqual(label, ["beta"], "收起态只显第一枚，tag 排在「已缓存」之前");
+  } finally {
+    await page.close();
+  }
+});
+
+test("拿不到 tags 字段时不显示 tag 徽章（老缓存只剩 distTags.latest）", { skip: skipReason }, async () => {
+  // 老缓存 / 旧版命令返回里只有 `distTags.latest`、没有 `tags`：宁可一枚 tag 都不挂，也不猜。
+  const legacy = {
+    registry: {
+      distTags: { latest: "0.2.1-rc.2" },
+      versions: ["0.2.1-rc.2", "0.2.1-rc.1", "0.2.0-rc.2"],
+    },
+  };
+  const page = await openLaunchPage(browser, legacy);
+  try {
+    await openList(page);
+    const rows = await readList(page);
+    const tagNames = ["latest", "next", "beta", "alpha", "canary"];
+    for (const row of rows) {
+      for (const badge of row.badges) {
+        assert.ok(!tagNames.includes(badge), `「${row.label}」不该挂 tag 徽章，实际出现「${badge}」`);
+      }
+    }
+    assert.deepEqual(rows[0].badges, [], "首项也拿不到标签名，合并徽章留空");
+    // 「已缓存」不依赖 tags，照常挂。
+    assert.deepEqual(rows.find((r) => r.label === "0.2.1-rc.1").badges, ["已缓存"]);
   } finally {
     await page.close();
   }
@@ -187,7 +320,7 @@ test("选中未安装的版本不显示「已装」徽章", { skip: skipReason }
     }));
     assert.ok(label.text.includes("0.2.1-alpha.5"), "应已选中 0.2.1-alpha.5");
     assert.ok(!label.badges.includes("已装"), "未安装的版本不该挂「已装」");
-    assert.deepEqual(label.badges, [], "未安装、非 latest 的版本不挂任何徽章");
+    assert.deepEqual(label.badges, [], "没有 tag、也不在本机缓存里的版本不挂任何徽章");
   } finally {
     await page.close();
   }

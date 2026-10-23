@@ -4,21 +4,29 @@
 //! 在开发机上不好稳定复现；而「谁比谁新」是纯字符串与版本号比较，放这里可以全自动测。
 //! 外壳（src-tauri）只负责执行命令与缓存。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::launch::NPX_PACKAGE;
 
-/// npm 的 dist-tag 快照。界面只需要 `latest`：版本下拉直接列全量版本，
-/// 不再按渠道分组，其余标签（next / alpha…）解析时忽略。
+/// npm 的 dist-tag 快照。版本下拉给每个版本挂标签徽章（latest / next / beta…），
+/// 所以全部标签都要收；`latest` 另单留一份，前端「自动最新版本」一行要用它。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DistTags {
     /// `latest` 标签指向的版本（也是 `npx @deepseek-ai/dsh` 不指定版本时跑的那个）。
+    /// 两个字段都带 default：老缓存里只有 `latest`、没有 `tags`，缺字段不能当解析失败。
+    #[serde(default)]
     pub latest: Option<String>,
+    /// 全部标签，键是标签名（latest / next / canary / 自定义…）、值是它指向的版本。
+    /// 用 BTreeMap 而不是 HashMap：序列化出来的键序稳定，前端与测试不会因为顺序抖动。
+    #[serde(default)]
+    pub tags: BTreeMap<String, String>,
 }
 
-/// 界面要用的版本清单：npm 上的全部版本（从新到旧）+ latest 标签。
+/// 界面要用的版本清单：npm 上的全部版本（从新到旧）+ 全部 dist-tag。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegistryInfo {
@@ -91,21 +99,23 @@ fn versions_from(value: &Value) -> Result<Vec<String>, String> {
     Ok(versions)
 }
 
-/// 从 JSON 值里取 dist-tags；别的键（next / alpha…）一律忽略。
+/// 从 JSON 值里取全部 dist-tags。
+///
+/// 值不是字符串（npm 偶尔混进 null）或不是版本号形态的条目直接丢掉：
+/// 徽章上写的东西要能当命令参数用，脏值混进来只会拼出非法命令行。
 fn dist_tags_from(value: &Value) -> Result<DistTags, String> {
     let object = value
         .as_object()
         .ok_or_else(|| "标签信息不是 JSON 对象".to_string())?;
-    let read = |key: &str| {
-        object
-            .get(key)
-            .and_then(Value::as_str)
-            .filter(|value| is_version_like(value))
-            .map(str::to_string)
-    };
-    Ok(DistTags {
-        latest: read("latest"),
-    })
+    let mut tags = BTreeMap::new();
+    for (name, value) in object {
+        if let Some(version) = value.as_str().filter(|value| is_version_like(value)) {
+            tags.insert(name.clone(), version.to_string());
+        }
+    }
+    // latest 从同一份表里取，两处口径天然一致（前端「自动最新版本」一行靠它对名字）。
+    let latest = tags.get("latest").cloned();
+    Ok(DistTags { latest, tags })
 }
 
 /// 版本号形态（与 `launch::validate_version` 同一套字符）：只含字母数字与 `. - + _`，
@@ -224,7 +234,7 @@ mod tests {
     use super::*;
 
     /// 实机 `npm view @deepseek-ai/dsh dist-tags versions --json` 的形状（截取）。
-    /// dist-tags 里仍带着 next / alpha 这类别的标签，正好用来盯「只认 latest」。
+    /// dist-tags 里带着 next / alpha 这类别的标签，正好用来盯「全部标签都收进来」。
     const COMBINED: &str = r#"{
         "dist-tags": {"latest":"0.2.0-rc.2","alpha":"0.2.1-alpha.5","next":"0.2.1-rc.2"},
         "versions": ["0.0.1-rc.1","0.2.1-alpha.3","0.2.0-rc.2","0.2.1-alpha.4","0.2.1-rc.1","0.2.1-rc.2","0.2.1-alpha.5"]
@@ -250,13 +260,42 @@ mod tests {
     }
 
     #[test]
-    fn ignores_dist_tags_other_than_latest() {
-        // npm 仍然返回 next / alpha 等标签，解析时只认 latest。
+    fn collects_all_dist_tags() {
+        // 版本下拉按标签给每个版本挂徽章，所以 next / alpha 这些也得收进来，不再只认 latest。
         let info = parse(COMBINED).unwrap();
-        let json = serde_json::to_string(&info).unwrap();
         assert_eq!(info.dist_tags.latest.as_deref(), Some("0.2.0-rc.2"));
-        assert!(!json.contains(r#""next""#), "{json}");
-        assert!(!json.contains(r#""alpha""#), "{json}");
+        assert_eq!(
+            info.dist_tags.tags,
+            [
+                ("alpha".to_string(), "0.2.1-alpha.5".to_string()),
+                ("latest".to_string(), "0.2.0-rc.2".to_string()),
+                ("next".to_string(), "0.2.1-rc.2".to_string()),
+            ]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>()
+        );
+        // 前端读的是序列化后的 distTags.tags：字段名（camelCase）与键序都要稳定。
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(
+            json.contains(
+                r#""distTags":{"latest":"0.2.0-rc.2","tags":{"alpha":"0.2.1-alpha.5","latest":"0.2.0-rc.2","next":"0.2.1-rc.2"}}"#
+            ),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn ignores_non_string_dist_tags() {
+        // 非字符串值（null / 数字 / 对象）不是版本号：忽略掉，但不能因此让整次查询失败。
+        let info = parse(
+            r#"{"dist-tags":{"latest":"0.2.0-rc.2","next":null,"broken":42,"legacy":{"x":1}},"versions":["0.2.0-rc.2"]}"#,
+        )
+        .unwrap();
+        assert_eq!(info.dist_tags.latest.as_deref(), Some("0.2.0-rc.2"));
+        assert_eq!(
+            info.dist_tags.tags.keys().collect::<Vec<_>>(),
+            vec!["latest"]
+        );
     }
 
     #[test]

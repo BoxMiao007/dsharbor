@@ -40,7 +40,15 @@ export interface LaunchConfig {
 
 /** 与 Rust 侧 `registry::RegistryInfo` 对应：dist-tag 与全部已发布版本（从新到旧）。 */
 export interface RegistryInfo {
-  distTags: { latest: string | null };
+  distTags: {
+    latest: string | null;
+    /**
+     * 全部 dist-tag：键是标签名（latest / next / beta / alpha / canary / 自定义），
+     * 值是它指向的版本号；数据来自 `npm view @deepseek-ai/dsh dist-tags`。
+     * 老缓存 / 命令返回里没有这个字段，界面此时一律不挂 tag 徽章。
+     */
+    tags?: Record<string, string>;
+  };
   /** npm 上发布过的全部版本，从新到旧；界面按「先 6 个 + 更多…」分页展示。 */
   versions: string[];
 }

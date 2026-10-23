@@ -54,8 +54,10 @@
   border-radius: 50%;
 }
 
-/* 行尾小徽章（最新 / 已缓存 / 手动）：比选项文字再小一号的胶囊。
-   顺序与配色都在调用方定死，同一行反复渲染长得一样。 */
+/* 行尾小徽章（dist-tag / 已缓存 / 手动）：比选项文字再小一号的胶囊。
+   顺序与配色都在调用方定死，同一行反复渲染长得一样。
+   带解释的徽章另挂 `.has-tip` + `data-tip`（tag 含义、被「+N」折叠掉的标签名），
+   气泡体系与图标钮、信息角标共用，见 src/styles/50-info.css。 */
 .picker-badge {
   flex: none;
   padding: 1px 7px;
@@ -68,9 +70,72 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* latest = npm 的 latest 标签指向的那一版：用「运行中」那一档绿，表示「正式发布的就是它」。 */
 .picker-badge-latest {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+
+/* next = npm 的 next 标签：抢先体验版，气泡里会写明可能有 bug。 */
+.picker-badge-next {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+
+/* beta / alpha / canary 三档预发布标签各给一种颜色，同时挂几枚时也能一眼分开。 */
+.picker-badge-beta {
+  color: var(--tag-beta);
+  background: color-mix(in srgb, var(--tag-beta) 16%, transparent);
+}
+
+.picker-badge-alpha {
+  color: var(--tag-alpha);
+  background: color-mix(in srgb, var(--tag-alpha) 16%, transparent);
+}
+
+.picker-badge-canary {
+  color: var(--tag-canary);
+  background: color-mix(in srgb, var(--tag-canary) 16%, transparent);
+}
+
+/* 自定义 tag 与「+N」折叠计数：与「已缓存」同款灰底，信息量最低，不跟上面几种抢眼。 */
+.picker-badge-other {
+  color: var(--fg-dim);
+  background: var(--elev);
+}
+
+/* 弹层是滚动容器（`.picker-list` 有 overflow-y: auto），气泡向上展开会被列表上沿裁掉，
+   贴列表右缘的徽章还会让最多 240px 的气泡探出弹层右缘。这里按 50-info.css 里
+   「贴边元素气泡改右对齐」「首行气泡翻转」这两条既有做法各补一条：
+   1. 徽章气泡一律右对齐、向左展开，整个落在弹层里；
+   2. 首行（「自动最新版本」）上方没有空间，气泡改成向下展开。 */
+.picker-list .picker-badge[data-tip]::after {
+  left: auto;
+  right: 0;
+  transform: translateY(2px);
+}
+
+.picker-list .picker-badge[data-tip]::before {
+  left: auto;
+  right: 12px;
+  margin-left: 0;
+}
+
+.picker-list .picker-badge[data-tip]:hover::after,
+.picker-list .picker-badge[data-tip]:focus-visible::after {
+  transform: translateY(0);
+}
+
+.picker-list .picker-option:first-child .picker-badge[data-tip]::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+/* 小三角跟着翻到徽章下方、尖朝上（45° + 180°）。 */
+.picker-list .picker-option:first-child .picker-badge[data-tip]::before {
+  bottom: auto;
+  top: calc(100% + 4px);
+  transform: rotate(225deg);
 }
 
 /* 「已缓存」= 本机 npx 缓存里已有这一版，选它启动不用重新下载。 */

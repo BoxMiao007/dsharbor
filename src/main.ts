@@ -221,32 +221,104 @@ async function main(): Promise<void> {
     const latestVersion = (): string | null => registry?.distTags.latest ?? null;
 
     /**
-     * 版本行尾的徽章。顺序固定（最新 → 已缓存），同一行反复渲染长得一样。
+     * 全部 dist-tag（标签名 → 版本号）。老缓存 / 命令返回里没有 `tags` 字段时给空对象：
+     * 界面据此一律不挂 tag 徽章，而不是把徽章显示成一串猜出来的名字。
+     */
+    const distTags = (): Record<string, string> => registry?.distTags.tags ?? {};
+
+    /** tag 名超过这个字符数就截断显示，全名留给悬停气泡（自定义 tag 名长度不可控）。 */
+    const TAG_NAME_MAX = 10;
+
+    /** 有固定排位的 tag：其余 tag 按字母序跟在后面。 */
+    const TAG_ORDER: readonly string[] = ["latest", "next"];
+
+    /** 内置 tag 的悬停解释（说人话）；没登记的 tag 一律按「自定义标签」处理。 */
+    const TAG_TIPS: Record<string, string | undefined> = {
+      latest: "最新正式版",
+      next: "抢先体验版，可能有 bug",
+      beta: "beta 测试版",
+      alpha: "alpha 内测版",
+      canary: "金丝雀版本，随时可能变",
+    };
+
+    /** tag 名 → 徽章配色（与 `.picker-badge-*` 的类名后缀一一对应）。 */
+    const TAG_TONES: Record<string, PickerBadge["tone"] | undefined> = {
+      latest: "latest",
+      next: "next",
+      beta: "beta",
+      alpha: "alpha",
+      canary: "canary",
+    };
+
+    /** tag 徽章最多挂几枚，超出的折成一枚「+N」；「已缓存」「手动」不占这个名额。 */
+    const TAG_BADGE_MAX = 3;
+
+    /** 某个版本上挂的 tag 名：latest → next → 其余按字母序。 */
+    function tagsOf(version: string): string[] {
+      const tags = distTags();
+      const names = Object.keys(tags).filter((tag) => tags[tag] === version);
+      const rest = names.filter((tag) => !TAG_ORDER.includes(tag)).sort();
+      return TAG_ORDER.filter((tag) => names.includes(tag)).concat(rest);
+    }
+
+    /** 一枚 tag 徽章：长名字截断，悬停气泡里给全名与含义（自定义标签的解释本身带全名）。 */
+    function tagBadge(tag: string): PickerBadge {
+      const text = tag.length > TAG_NAME_MAX ? `${tag.slice(0, TAG_NAME_MAX)}…` : tag;
+      const tip = TAG_TIPS[tag] ?? `自定义标签 ${tag}`;
+      return { text, tone: TAG_TONES[tag] ?? "other", tip };
+    }
+
+    /** 版本行的 tag 徽章：最多 3 枚，其余折成「+N」，悬停列出被折叠的 tag 名。 */
+    function tagBadges(version: string): PickerBadge[] {
+      const names = tagsOf(version);
+      const badges = names.slice(0, TAG_BADGE_MAX).map(tagBadge);
+      const folded = names.slice(TAG_BADGE_MAX);
+      if (folded.length > 0) {
+        badges.push({ text: `+${folded.length}`, tone: "other", tip: folded.join("，") });
+      }
+      return badges;
+    }
+
+    /**
+     * 版本行尾的徽章。顺序固定（tag → 已缓存），同一行反复渲染长得一样。
+     * tag 徽章排在前面、且「已缓存」不占 tag 的 3 枚名额，所以收起态只显第一枚时
+     * 自然先显 tag，没有 tag 才轮到「已缓存」（「手动」那一行本来就只挂一枚）。
      * 「已缓存」只按本机 npx 缓存里有没有这一版来判（`cachedVersions`），与「当前选中哪一行」无关：
      * 选中只是下拉里的一个值，不代表这一版已经装在本机，所以不能再拿 `selectedVersion` 当「已装」。
      * 选中的那一行靠行首的 ✓ 认，不需要额外的「已装」徽章（与「已缓存」也是同一件事）。
      */
     function versionBadges(version: string): PickerBadge[] {
-      const badges: PickerBadge[] = [];
-      if (version === latestVersion()) {
-        badges.push({ text: "最新", tone: "latest" });
-      }
+      const badges = tagBadges(version);
       if (cachedVersions.includes(version)) {
         badges.push({ text: "已缓存", tone: "cached" });
       }
       return badges;
     }
 
+    /**
+     * 「自动最新版本」一行的徽章：tag 名与版本号合成一枚（`latest 0.2.1-rc.2`），
+     * 让人一眼看到「自动」这次用的是哪个标签、指向哪个版本。
+     * 它不是一个具体版本，所以不挂「已缓存」（缓存里存的是确切版本号）。
+     * `distTags.latest` 与 `tags.latest` 对不上（老缓存只有前者）时宁可不挂：
+     * 这时拼出来的名字是猜的，挂在「自动」这一行上会误导人。
+     */
+    function autoBadges(): PickerBadge[] {
+      const latest = latestVersion();
+      if (latest === null || distTags().latest !== latest) {
+        return [];
+      }
+      return [{ text: `latest ${latest}`, tone: "latest", tip: TAG_TIPS["latest"] }];
+    }
+
     /** 版本候选：首项「自动最新版本」+ 具体版本（先 6 个）+ 末尾「更多…」。 */
     function versionChoices(): PickerChoice[] {
-      const latest = latestVersion();
       const choices: PickerChoice[] = [
         {
           value: AUTO_VERSION,
           label: VERSION_AUTO_LABEL,
           // 首项挂的是「latest 标签当前指向哪个版本号」——让人看见「自动」这次会用哪个；
           // 它不是一个具体版本，所以不挂「已缓存」（缓存里存的是确切版本号）。
-          badges: latest ? [{ text: latest, tone: "latest" }] : [],
+          badges: autoBadges(),
         },
       ];
       const versions = registry?.versions ?? [];

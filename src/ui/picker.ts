@@ -2,11 +2,24 @@
 
 import { escapeHtml } from "./markup";
 
-/** 行内小徽章：显示在选项文字右边（「最新 / 已缓存 / 手动」）。 */
+/** 行内小徽章：显示在选项文字右边（dist-tag / 已缓存 / 手动）。 */
 export interface PickerBadge {
   text: string;
-  /** 只决定配色，与语义绑死，不跟具体文案走。 */
-  tone: "latest" | "cached" | "manual";
+  /** 只决定配色，与语义绑死，不跟具体文案走（`other` 给自定义 tag 与「+N」用）。 */
+  tone:
+    | "latest"
+    | "next"
+    | "beta"
+    | "alpha"
+    | "canary"
+    | "other"
+    | "cached"
+    | "manual";
+  /**
+   * 悬停气泡的正文，走全站同一套 `.has-tip` + `data-tip`（见 src/styles/50-info.css）。
+   * 一两个字的文案说不清的地方才用：tag 的含义、被「+N」折叠掉的标签名。
+   */
+  tip?: string;
 }
 
 export interface PickerChoice {
@@ -110,16 +123,22 @@ export class Picker {
     return choice.dot ? `<span class="picker-dot picker-dot-${choice.dot}"></span>` : "";
   }
 
-  /** 行尾小徽章。`compact` 是收起状态（按钮里那一行），只留一枚，免得框内挤成一团。 */
+  /**
+   * 行尾小徽章。`compact` 是收起状态（按钮里那一行），只留第一枚，免得框内挤成一团。
+   * 调用方按「tag 徽章在前、已缓存 / 手动在后」排好序，所以收起态天然先显 tag，
+   * 没有 tag 时才轮到「已缓存」「手动」。
+   */
   private static badgesHtml(choice: PickerChoice, compact = false): string {
     const badges = choice.badges ?? [];
     const shown = compact ? badges.slice(0, 1) : badges;
-    return shown
-      .map(
-        (badge) =>
-          `<span class="picker-badge picker-badge-${badge.tone}">${escapeHtml(badge.text)}</span>`,
-      )
-      .join("");
+    return shown.map((badge) => Picker.badgeHtml(badge)).join("");
+  }
+
+  /** 一枚徽章；带 tip 的挂 `.has-tip` + `data-tip`，与图标钮、信息角标同一套气泡。 */
+  private static badgeHtml(badge: PickerBadge): string {
+    const tipClass = badge.tip ? " has-tip" : "";
+    const tipAttr = badge.tip ? ` data-tip="${escapeHtml(badge.tip)}"` : "";
+    return `<span class="picker-badge picker-badge-${badge.tone}${tipClass}"${tipAttr}>${escapeHtml(badge.text)}</span>`;
   }
 
   /**
@@ -207,12 +226,20 @@ export class Picker {
         option.appendChild(node);
         badgeNodes.push(node);
       }
-      const badgeClass = `picker-badge picker-badge-${badge.tone}`;
+      const badgeClass = `picker-badge picker-badge-${badge.tone}${badge.tip ? " has-tip" : ""}`;
       if (node.className !== badgeClass) {
         node.className = badgeClass;
       }
       if (node.textContent !== badge.text) {
         node.textContent = badge.text;
+      }
+      // 气泡文案跟着徽章一起就地改：整行不重建，属性也得自己同步。
+      if (badge.tip) {
+        if (node.getAttribute("data-tip") !== badge.tip) {
+          node.setAttribute("data-tip", badge.tip);
+        }
+      } else if (node.hasAttribute("data-tip")) {
+        node.removeAttribute("data-tip");
       }
     });
   }
