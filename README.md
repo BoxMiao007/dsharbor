@@ -108,8 +108,8 @@ pnpm exec tauri build
 | `plugins/dsharbor-bridge/` | DSH 桥接插件（随安装包以 tgz 分发） |
 | `src-tauri/` | Tauri 2 外壳（启动器、登录链接、轻量模式、托盘、桥接插件管理） |
 | `src/` | 前端界面（Vite 8 + TypeScript 7，无 UI 框架）：`main.ts` 是入口与全部交互逻辑，`ui/` 放类型、常量、配置项、图标与 HTML 骨架，`styles/` 放样式 |
-| `src/ui/` | 九个前端模块：`build-html.ts`（整页 HTML 骨架）、`types.ts`、`picker.ts`、`config.ts`、`spin.ts`、`icons.ts`、`markup.ts`、`theme.ts`、`prefs.ts` |
-| `src/styles/` | 12 个按功能分区的 CSS（`00-tokens` 令牌与变量 → `99-hidden` 工具类）；入口 `src/style.css` 只是一串**有顺序的** `@import`，层叠依赖声明顺序，新增样式按区插进对应文件，不要换顺序 |
+| `src/ui/` | 13 个前端模块：`build-html.ts`（整页 HTML 骨架）、`types.ts`、`picker.ts`、`config.ts`、`spin.ts`、`sqbusy.ts`（方钮忙态与完成打勾）、`copy-feedback.ts`（复制类按钮反馈）、`toast.ts`（右下角动作回执）、`motion.ts`（动效开关的读写与落地）、`icons.ts`、`markup.ts`、`theme.ts`、`prefs.ts` |
+| `src/styles/` | 14 个按功能分区的 CSS（`00-tokens` 令牌与变量 → `99-hidden` 工具类）；入口 `src/style.css` 只是一串**有顺序的** `@import`，层叠依赖声明顺序，新增样式按区插进对应文件，不要换顺序 |
 | `test/frontend/` | 前端界面接缝测试（`puppeteer-core` + 本机 Edge，在假数据预览台上跑） |
 | `scripts/` | 开发脚本：`mock-preview.mjs`（假数据预览台）、`ui-candidates.mjs`（界面候选稿预览台） |
 | `assets/` | 图标源：`icon-source.png`（主用）、`icon-source.svg`（备用）、`logo.png` |
