@@ -96,6 +96,9 @@ function readButton(page, id) {
       label: el.getAttribute("aria-label") ?? "",
       title: el.getAttribute("title") ?? "",
       tip: el.getAttribute("data-tip") ?? "",
+      ariaBusy: el.getAttribute("aria-busy") ?? "",
+      /* 「启动中」那只细环：有它就说明走的是过渡态而不是停止态长条。 */
+      spin: el.querySelectorAll(".launch-spin").length,
       texts,
       svgRect: svg
         ? (() => {
@@ -182,6 +185,37 @@ test("停止态：只剩「启动 DSH」，「重启 DSH」真的不显示", { s
     // 回归点：`.round` 的 display 用过 ID 特指度，把 .hidden 顶掉后这颗钮会一直露出来。
     assert.equal(restart.visible, false, "停止态「重启 DSH」必须隐藏（0×0）");
     assert.equal(restart.className.includes("hidden"), true, "停止态「重启 DSH」应带 .hidden");
+  } finally {
+    await page.close();
+  }
+});
+
+test("启动中：同一根长条换成「启动中…」+ 细环，重启仍不出现，尺寸与停止态一致", { skip: skipReason }, async () => {
+  // 启动中 = 进程起来了、登录链接还没就绪（isStarting）。假后端用 loginPending 造这个态。
+  const page = await openPage(browser, { session: "running", loginPending: true });
+  try {
+    const busy = await readButton(page, "btn-toggle");
+    const restart = await readButton(page, "btn-restart");
+    const stoppedWidth = 127; // --btn-w
+
+    assert.equal(busy.visible, true, "启动中应看到按钮");
+    assert.ok(busy.className.includes("busy"), `启动中应挂 .busy，实际 ${busy.className}`);
+    assert.equal(busy.className.includes("round"), false, "启动中不该变圆钮（圆钮是运行态）");
+    assert.notEqual(busy.radius, "50%", "启动中仍是长条按钮");
+    assert.ok(
+      busy.texts.some((t) => t.text.includes("启动中")),
+      `启动中应显示「启动中…」，实际 ${JSON.stringify(busy.texts)}`,
+    );
+    assert.equal(busy.spin, 1, "启动中应有一只 .launch-spin 细环");
+    assert.equal(busy.ariaBusy, "true", "启动中应给读屏 aria-busy=true");
+    assert.match(busy.label, /停止/, `启动中的可访问名应说明还能点成停止，实际「${busy.label}」`);
+    // 尺寸与停止态一致：形态切换不许让整排按钮跳位。
+    assert.equal(busy.width, stoppedWidth, `启动中宽度应与停止态一致（${stoppedWidth}px），实际 ${busy.width}`);
+    assert.equal(busy.height, 34, `启动中高度应为 --btn-h，实际 ${busy.height}`);
+
+    // 关键回归点：登录链接没就绪之前，「重启 DSH」不能提前蹦出来。
+    assert.equal(restart.visible, false, "启动中「重启 DSH」必须仍隐藏（0×0）");
+    assert.equal(restart.className.includes("hidden"), true, "启动中「重启 DSH」应带 .hidden");
   } finally {
     await page.close();
   }

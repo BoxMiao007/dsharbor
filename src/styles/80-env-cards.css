@@ -182,42 +182,31 @@ html[data-motion="off"] .env-card:hover .env-more {
   stroke: none;
 }
 
-/* 行末一列三颗按钮：新建空白环境 / 桥接插件 / 补丁层，后两颗各自弹浮窗。
+/* 行末一列两颗按钮：新建空白环境 / 桥接插件，后者弹浮窗。
    新建排在最上（维护者要求）：它是这一列里唯一造新东西的动作。 */
 .env-aside {
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  /* 140px 刚好容下「新建空白环境」六字加一枚加号，再窄就折成两行。 */
+  /* 140px 刚好容下「新建空白环境」六个字，再窄就折成两行。 */
   width: 140px;
 }
 
+/* 两颗按钮同高、同宽、同一套排布（inline-flex 居中 + 行高压成 1）：
+   之前「新建空白环境」多带一枚加号、又是唯一走 flex 排布的那颗，字号/字体回退稍有
+   差别就与纯文字的「桥接插件」看着一大一小（维护者反复反馈的那处）。现在两颗都是
+   纯文字 + 同一套盒模型，视觉上再无差异。 */
 .env-aside button {
   width: 100%;
-  /* 两颗按钮固定同高：新建那颗带加号图标，纯文字那颗不约束就会被行高撑得矮一截。 */
   height: 34px;
-  padding: 0 12px;
-  /* 一列按钮文案固定，宽度跟着列走，不让它自己折行。 */
-  white-space: nowrap;
-}
-
-/* 「新建空白环境」带一枚加号，与下面两颗纯文字按钮区分开。 */
-.env-new {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-}
-
-.env-new svg {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
+  padding: 0 12px;
+  line-height: 1;
+  /* 一列按钮文案固定，宽度跟着列走，不让它自己折行。 */
+  white-space: nowrap;
 }
 
 /* 环境操作菜单：跟着三点按钮定位（坐标由 JS 算，贴边会往里收）。 */

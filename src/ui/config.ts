@@ -74,6 +74,12 @@ export const START_PROFILE = "web";
 export const TOGGLE_TEXT_REST = "启动 DSH";
 export const TOGGLE_TEXT_HOVER = "开始运行";
 
+/** 启动过程中按钮上那一行字：进程起来了、登录链接还没就绪（npx 首次下载就卡在这）。 */
+export const TOGGLE_TEXT_STARTING = "启动中…";
+
 /** 运行态两颗圆钮的气泡文案（也是 aria-label）：纯图标按钮没有可见文字，必须补上。 */
 export const TOOLTIP_STOP = "停止 DSH";
 export const TOOLTIP_RESTART = "重启 DSH";
+
+/** 启动中那颗长条按钮的气泡：它同时是「点一下能取消」，所以文案要说清两件事。 */
+export const TOOLTIP_STARTING = "正在拉起 DSH、等登录链接就绪；点一下可停止。";

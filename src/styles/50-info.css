@@ -192,6 +192,27 @@
   transform: translateY(0);
 }
 
+/* 贴着卡片右缘那颗图标钮（「监听端口」行末的还原按钮）：气泡从居中改成右对齐、向左展开。
+   否则 240px 宽的气泡有一半探出卡片右缘，把这层滚动容器的 scrollWidth 撑大几十像素
+   ——主卡就会冒出横向滚动条（维护者反馈的「启动方式卡片有横条」）。改成右对齐后气泡
+   整个落在卡片内，scrollWidth 与 clientWidth 重新相等。 */
+.block .port-row > .has-tip:last-child::after {
+  left: auto;
+  right: 0;
+  transform: translateY(2px);
+}
+
+.block .port-row > .has-tip:last-child::before {
+  left: auto;
+  right: 13px;
+  margin-left: 0;
+}
+
+.block .port-row > .has-tip:last-child:hover::after,
+.block .port-row > .has-tip:last-child:focus-visible::after {
+  transform: translateY(0);
+}
+
 .badge-stopped {
   border-color: var(--line-strong);
   background: var(--elev);

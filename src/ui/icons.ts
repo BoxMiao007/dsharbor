@@ -3,7 +3,7 @@
 import iconDs from "../assets/dsh-mark.svg";
 import type { PanelKey } from "./types";
 
-/** 左侧导航的分区图标 + 新建按钮图标：统一 24 单位视框、描边 1.55，与左栏底部的浅/深图标同源。 */
+/** 左侧导航的分区图标：统一 24 单位视框、描边 1.55，与左栏底部的浅/深图标同源。 */
 export const ICON_LAUNCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5 3 21l4.5-1.5" /><path d="M14 4c3.5-1 6 1.5 5 5-1.2 4.2-5.6 7.6-8.4 9.1L8 15.4C9.5 12.6 11.3 5.2 14 4Z" /><circle cx="14.6" cy="9.4" r="1.6" /></svg>`;
 export const ICON_ENV = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5" /><path d="M12 12v9" /></svg>`;
 export const ICON_INTEG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2.5" /><path d="m6.5 10 2.5 2.5L6.5 15" /><path d="M12 15.5h5" /></svg>`;
@@ -11,8 +11,6 @@ export const ICON_TRAYNET = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle
 export const ICON_ABOUT = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" /></svg>`;
 /** 日志分区：方块里几行字——与「集成」的终端框区分开（那边有 > 与下划线）。 */
 export const ICON_LOG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M6.6 9.4h10.8" /><path d="M6.6 12.4h10.8" /><path d="M6.6 15.4h6" /></svg>`;
-/** 「新建空白环境」：一枚加号。 */
-export const ICON_PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5v13" /><path d="M5.5 12h13" /></svg>`;
 
 /** 浅/深切换的两颗图标：显示的是「点下去会变成什么」，不是当前状态。
     两颗同时常驻切换按钮（见 .theme-morph），由 html[data-mode] 决定谁在场、谁退场

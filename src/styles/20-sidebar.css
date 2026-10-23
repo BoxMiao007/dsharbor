@@ -146,13 +146,22 @@
   white-space: nowrap;
 }
 
-.ico-item:hover {
+/* 悬停底色只给「没被选中」的项：选中项的底色已经由 .rail-ind 那块滑动指示在铺，
+   按钮自己再铺一层就是两块淡色底叠在一起（同色不同层，边缘发虚像两个框）。
+   选择器带 :not([aria-current="true"])，特指度 (0,3,0) 也压过 60-controls.css 的
+   全站 `button:hover:not(:disabled){background:var(--accent-soft)}`（0,2,1）——
+   不然悬停时铺的是 accent-soft，和指示块同色，看着就是两层框。 */
+.ico-item:hover:not([aria-current="true"]) {
   background: var(--elev);
   color: var(--fg);
 }
 
-/* 选中项只提亮文字：底色与左侧竖条都由 .rail-ind 统一给，选中态才不会「两块一起动」。 */
-.ico-item[aria-current="true"] {
+/* 选中项只提亮文字：底色与左侧竖条都由 .rail-ind 统一给，选中态才不会「两块一起动」。
+   悬停/聚焦选中项时也要把全站那条 button:hover 底压回透明，任何时刻都只有指示块一个框。 */
+.ico-item[aria-current="true"],
+.ico-item[aria-current="true"]:hover,
+.ico-item[aria-current="true"]:focus-visible {
+  background: transparent;
   color: var(--fg);
 }
 

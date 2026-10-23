@@ -103,6 +103,9 @@
 }
 
 /* 分区入场（#36）：换分区时内容往后落 8px 再淡入，和左栏滑块的移动接上节奏。
+   动的只是「卡里的内容」——大卡片本身固定不动（维护者要求：整张大卡跟着位移会像
+   整页在跳）。所以选择器分两支：主卡自己排除掉，它的子元素（单元格/卡头/正文框）
+   才拿动画；主卡之外若还有次卡，也照常入场。
    子项按 0 / 24 / 48 / 72ms 依次起，前 4 块错开就够，再往后错开只是拖慢。
    backwards 让等待期间就停在起点（否则会先满屏闪一下再动）；跑完 transform 回到
    元素自己的 none，类留在身上也不会残留中间态，下次切回来重新挂一次即可。 */
@@ -113,19 +116,19 @@
   }
 }
 
-.panel.is-enter .panel-body > * {
+.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *) {
   animation: panel-enter var(--m-base) var(--ease-out) backwards;
 }
 
-.panel.is-enter .panel-body > *:nth-child(2) {
+.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *):nth-child(2) {
   animation-delay: 24ms;
 }
 
-.panel.is-enter .panel-body > *:nth-child(3) {
+.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *):nth-child(3) {
   animation-delay: 48ms;
 }
 
-.panel.is-enter .panel-body > *:nth-child(4) {
+.panel.is-enter :is(.panel-body > *:not(.main-card), .main-card > *):nth-child(4) {
   animation-delay: 72ms;
 }
 
@@ -192,6 +195,22 @@
   gap: 20px;
   padding: 32px;
   overflow-y: auto;
+  /* 横向绝不出现滚动条（维护者要求）：卡片里那些自绘气泡（.has-tip / .info-dot 的
+     ::after）是绝对定位元素，会把滚动容器的 scrollWidth 撑大。具体那条（贴右缘的
+     「还原」钮）已在 50-info.css 改成右对齐向左展开、从根上不再溢出；这里再兜一道，
+     任何将来溢出的内容也不会把横条带出来。 */
+  overflow-x: hidden;
+  /* 原生滚动条整个藏掉，右侧那条自绘胶囊顶替它（.scroll-track / .scroll-thumb，
+     挂在 .content-main 上、由 main.ts 按主卡几何定位）。
+     原生滚动条是方的：滑块滚到顶时正好骑在 14px 圆角上，看着就是「滚动条穿出卡片
+     圆角」（维护者反馈）。藏掉之后没有任何方角露在圆角外，滚动提示仍由那条圆头
+     胶囊给——它带 border-radius: 999px、宽度只有 5px，还随滚动淡入淡出。 */
+  scrollbar-width: none;
+}
+
+.block.main-card::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 /* 主卡里的小卡：靠明度与主卡拉开一档（深色再亮、浅色再沉），圆角比主卡收窄两圈，

@@ -299,6 +299,31 @@ button.primary:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
+/* 「启动中」过渡态（维护者要求：点了「启动 DSH」不能一下子蹦出「停止 / 重启」两颗）。
+   还是同一根蓝底长条，左边换一只细环、文案换「启动中…」——形状、宽度、位置全不变，
+   只有里面的内容交接，所以整排按钮不会因为形态切换而左右跳。
+   环用 currentColor（主按钮是白字，所以是白环 + 淡轨道），粗细与方钮那个 spinner 同档。 */
+#btn-toggle.busy {
+  gap: 8px;
+  font-weight: 600;
+}
+
+#btn-toggle.busy .launch-spin {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-top-color: currentColor;
+  animation: launch-spin var(--spin-ms) linear infinite;
+}
+
+@keyframes launch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 「启动 DSH」按钮停止态的悬停动效：两组文字逐字上下切换 + 轻抖动。
    改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±0.5px。
    只在停止态生效（标记带 .swap，见 src/ui/markup.ts 的 toggleSwapHtml）；

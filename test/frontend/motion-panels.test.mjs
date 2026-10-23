@@ -87,6 +87,9 @@ async function openApp(browser, { panel = "launch", motion = null } = {}) {
   );
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector('[data-panel-btn="launch"]');
+  // 等左栏那块指示块拿到「首帧贴位完成」的标记（main.ts 在下一帧才给 .rail[data-ready]，
+  // 从那时起才允许过渡）。不等它就读，会偶发读到 transition: none，测出的位移是硬跳。
+  await page.waitForFunction(() => document.querySelector(".rail[data-ready]") !== null, { timeout: 5000 });
   await sleep(150); // 等首帧内联脚本与挂载跑完、样式重算
   return page;
 }
@@ -203,31 +206,39 @@ test("快速连续点不同分区：指示块跟上，最终停在最后那个�
   }
 });
 
-test("内容区入场：切过去的分区带入场类、首个子项有入场动画，跑完后位移归零", { skip: skipReason }, async () => {
+test("内容区入场：切过去的分区带入场类、卡里的内容有入场动画，大卡片自己不动", { skip: skipReason }, async () => {
   const page = await openApp(browser, { panel: "launch" });
   try {
     await page.click('[data-panel-btn="traynet"]');
     const entering = await page.evaluate(() => {
       const panel = document.querySelector('.panel[data-panel="traynet"]');
-      const first = panel?.querySelector(".panel-body > *");
-      if (!panel || !first) return null;
+      const card = panel?.querySelector(".main-card");
+      const inner = card?.querySelector(":scope > *");
+      if (!panel || !card || !inner) return null;
       return {
         className: panel.className,
-        animationName: getComputedStyle(first).animationName,
-        height: first.getBoundingClientRect().height,
+        cardAnimation: getComputedStyle(card).animationName,
+        innerAnimation: getComputedStyle(inner).animationName,
+        height: inner.getBoundingClientRect().height,
       };
     });
     assert.ok(entering, "应能读到托盘与网络分区");
     assert.match(entering.className, /(^|\s)is-enter(\s|$)/, "切入的分区应挂上入场类");
-    assert.equal(entering.animationName, "panel-enter", "内容区首个子项应跑入场动画");
+    assert.equal(entering.cardAnimation, "none", "大卡片本身固定不动，不跑入场动画");
+    assert.equal(entering.innerAnimation, "panel-enter", "卡里的内容才跑入场动画");
     assert.ok(entering.height > 0, "入场时内容应已可见");
 
     await sleep(500);
     const settled = await page.evaluate(() => {
-      const first = document.querySelector('.panel[data-panel="traynet"] .panel-body > *');
-      return getComputedStyle(first).transform;
+      const card = document.querySelector('.panel[data-panel="traynet"] .main-card');
+      const inner = card?.querySelector(":scope > *");
+      return {
+        card: getComputedStyle(card).transform,
+        inner: getComputedStyle(inner).transform,
+      };
     });
-    assert.equal(settled, "none", "入场动画跑完后位移应归零，不留中间态");
+    assert.equal(settled.card, "none", "大卡片全程不产生位移");
+    assert.equal(settled.inner, "none", "入场动画跑完后内容位移应归零，不留中间态");
   } finally {
     await page.close();
   }
