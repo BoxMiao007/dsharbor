@@ -56,8 +56,7 @@
 
 /* 行尾小徽章（dist-tag / 已缓存 / 手动）：比选项文字再小一号的胶囊。
    顺序与配色都在调用方定死，同一行反复渲染长得一样。
-   带解释的徽章另挂 `.has-tip` + `data-tip`（tag 含义、被「+N」折叠掉的标签名），
-   气泡体系与图标钮、信息角标共用，见 src/styles/50-info.css。 */
+   悬停气泡（真节点 `.picker-tip`）见下方「徽章气泡」一段。 */
 .picker-badge {
   flex: none;
   padding: 1px 7px;
@@ -98,10 +97,11 @@
   background: color-mix(in srgb, var(--tag-canary) 16%, transparent);
 }
 
-/* 自定义 tag 与「+N」折叠计数：与「已缓存」同款灰底，信息量最低，不跟上面几种抢眼。 */
+/* 自定义 tag 与「+N」折叠计数：与「已缓存」同款灰底，信息量最低，不跟上面几种抢眼。
+   浅色下 --elev 就是纯白、压在白底的下拉里没有轮廓，沉一档用 --cell 才像一枚徽章。 */
 .picker-badge-other {
   color: var(--fg-dim);
-  background: var(--elev);
+  background: var(--cell);
 }
 
 /* 徽章气泡：气泡里要放「看得见的徽章」（tag 名、被「+N」折叠掉的标签名），而
@@ -124,8 +124,9 @@
   padding: 5px 8px;
   border-radius: 8px;
   background: var(--tip-bg);
-  /* 轮廓交给柔和阴影 + 发丝边，不用 1px 满强度描边（界面规范 4）。 */
-  box-shadow: var(--shadow);
+  /* 轮廓交给柔和阴影 + 发丝边，不用 1px 满强度描边（界面规范 4）；
+     浅色下 --shadow 太轻（白气泡贴白底没轮廓），走专门的 --tip-shadow 压深一档。 */
+  box-shadow: var(--tip-shadow);
   border: 1px solid var(--hairline);
   font-size: 11px;
   line-height: 1.5;
@@ -163,10 +164,11 @@
   transform: translateY(-2px);
 }
 
-/* 「已缓存」= 本机 npx 缓存里已有这一版，选它启动不用重新下载。 */
+/* 「已缓存」= 本机 npx 缓存里已有这一版，选它启动不用重新下载。
+   底色与 .picker-badge-other 同理：浅色下 --elev 是纯白，要用 --cell 才有轮廓。 */
 .picker-badge-cached {
   color: var(--fg-dim);
-  background: var(--elev);
+  background: var(--cell);
 }
 
 /* 官方列表里已经没有、但配置里仍然记着的版本：提醒它是手写的，不是当前可选版本。 */
