@@ -99,12 +99,21 @@ function readList(page) {
   return page.evaluate(() => {
     const items = Array.from(document.querySelectorAll("#npx-version-picker .picker-option"));
     return items.map((li) => {
-      const badges = Array.from(li.querySelectorAll(".picker-badge"));
+      // 只看行里直接挂的徽章：气泡内部也有一模一样的 `.picker-badge`（气泡里的那几枚），
+      // 用不带 `:scope >` 的选择器会把它们一起算进来，行徽章列表就会变成「名字 + 空串」交替。
+      const badges = Array.from(li.querySelectorAll(":scope > .picker-badge"));
       return {
         label: li.querySelector(".text")?.textContent ?? "",
-        badges: badges.map((b) => b.textContent),
-        // 悬停气泡（tag 含义 / 被「+N」折叠掉的标签名）一并读出来，断言才看得见。
-        tips: badges.map((b) => b.getAttribute("data-tip")),
+        // 徽章节点里还嵌着气泡，文字只读外层那一枚 `.picker-badge-text`。
+        badges: badges.map((b) => b.querySelector(":scope > .picker-badge-text")?.textContent ?? ""),
+        // 悬停气泡（被「+N」折叠掉的标签名、被截断标签的全名）：气泡里只有徽章，读成一组名字。
+        tips: badges.map((b) => {
+          const tip = b.querySelector(":scope > .picker-tip");
+          if (tip === null) {
+            return null;
+          }
+          return Array.from(tip.querySelectorAll(".picker-badge")).map((x) => x.textContent ?? "");
+        }),
         isAction: li.classList.contains("is-action"),
       };
     });
@@ -181,7 +190,7 @@ test("版本按新到旧直列，latest 那行挂 latest 徽章，缓存里有�
   }
 });
 
-test("next 标签指向的版本挂 next 徽章，气泡写明是抢先体验版", { skip: skipReason }, async () => {
+test("next 标签指向的版本挂 next 徽章；已经完整显示的标签不再挂气泡", { skip: skipReason }, async () => {
   const page = await openLaunchPage(browser);
   try {
     await openList(page);
@@ -190,7 +199,7 @@ test("next 标签指向的版本挂 next 徽章，气泡写明是抢先体验版
     const row = rows.find((r) => r.label === "0.2.1-rc.3");
     assert.ok(row, "假数据的 next 指向 0.2.1-rc.3");
     assert.deepEqual(row.badges, ["next"], "next 那一行挂 next 徽章");
-    assert.equal(row.tips[0], "抢先体验版，可能有 bug", "悬停说明要说人话，不用 tag 名糊弄");
+    assert.equal(row.tips[0], null, "next 已经完整显示，再弹一遍同样的徽章没有信息量");
   } finally {
     await page.close();
   }
@@ -241,7 +250,7 @@ test("同一个版本挂多个标签时按 latest → next → 其他字母序 �
   }
 });
 
-test("tag 超过 3 枚时折叠成 +N，悬停气泡列出被折叠的标签名", { skip: skipReason }, async () => {
+test("tag 超过 3 枚时折叠成 +N，气泡只补「看不全」的那两处", { skip: skipReason }, async () => {
   const page = await openLaunchPage(browser);
   try {
     await openList(page);
@@ -251,9 +260,10 @@ test("tag 超过 3 枚时折叠成 +N，悬停气泡列出被折叠的标签名"
     assert.ok(row, "假数据里 0.2.1-alpha.4 挂着 4 个 tag");
     // experimental 是 12 个字符，超过 10 个就截断成「experiment…」（全名留在气泡里）。
     assert.deepEqual(row.badges, ["alpha", "canary", "experiment…", "+1"], "最多 3 枚 tag，其余折成 +1");
-    assert.equal(row.tips[3], "legacy", "被折叠掉的标签名写在 +N 的气泡里");
-    assert.equal(row.tips[2], "自定义标签 experimental", "截断的徽章在气泡里给全名");
-    assert.equal(row.tips[0], "alpha 内测版", "前三枚各自的悬停解释照旧");
+    assert.deepEqual(row.tips[3], ["legacy"], "被折叠掉的标签名在气泡里是一枚一枚的徽章");
+    assert.deepEqual(row.tips[2], ["experimental"], "截断的徽章在气泡里给全名");
+    assert.equal(row.tips[0], null, "alpha 已经完整显示，不挂气泡");
+    assert.equal(row.tips[1], null, "canary 已经完整显示，不挂气泡");
   } finally {
     await page.close();
   }
@@ -270,7 +280,7 @@ test("收起态只显一枚，有 tag 时优先 tag 徽章而不是「已缓存�
     });
     await sleep(200);
     const label = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("#npx-version-picker .picker-label .picker-badge")).map((b) => b.textContent),
+      Array.from(document.querySelectorAll("#npx-version-picker .picker-label .picker-badge .picker-badge-text")).map((b) => b.textContent),
     );
     assert.deepEqual(label, ["beta"], "收起态只显第一枚，tag 排在「已缓存」之前");
   } finally {
@@ -316,7 +326,7 @@ test("选中未安装的版本不显示「已装」徽章", { skip: skipReason }
     await sleep(200);
     const label = await page.evaluate(() => ({
       text: document.querySelector("#npx-version-picker .picker-label")?.textContent ?? "",
-      badges: Array.from(document.querySelectorAll("#npx-version-picker .picker-label .picker-badge")).map((b) => b.textContent),
+      badges: Array.from(document.querySelectorAll("#npx-version-picker .picker-label .picker-badge .picker-badge-text")).map((b) => b.textContent),
     }));
     assert.ok(label.text.includes("0.2.1-alpha.5"), "应已选中 0.2.1-alpha.5");
     assert.ok(!label.badges.includes("已装"), "未安装的版本不该挂「已装」");

@@ -16,10 +16,17 @@ export interface PickerBadge {
     | "cached"
     | "manual";
   /**
-   * 悬停气泡的正文，走全站同一套 `.has-tip` + `data-tip`（见 src/styles/50-info.css）。
-   * 一两个字的文案说不清的地方才用：tag 的含义、被「+N」折叠掉的标签名。
+   * 悬停气泡里摆出来的徽章：就是这一枚枚徽章本身，没有文字说明。
+   * `data-tip` 只能塞纯文本、装不下徽章，所以这类气泡不走 `.has-tip` 的伪元素，
+   * 改成 `.picker-tip` 真节点（见 Picker.badgeHtml）。
    */
-  tip?: string;
+  tip?: PickerTipBadge[];
+}
+
+/** 气泡里的一枚徽章：写完整标签名（行内那枚可能已截断），配色与行内一致。 */
+export interface PickerTipBadge {
+  text: string;
+  tone: PickerBadge["tone"];
 }
 
 export interface PickerChoice {
@@ -131,14 +138,30 @@ export class Picker {
   private static badgesHtml(choice: PickerChoice, compact = false): string {
     const badges = choice.badges ?? [];
     const shown = compact ? badges.slice(0, 1) : badges;
-    return shown.map((badge) => Picker.badgeHtml(badge)).join("");
+    return shown.map((badge) => Picker.badgeHtml(badge, !compact)).join("");
   }
 
-  /** 一枚徽章；带 tip 的挂 `.has-tip` + `data-tip`，与图标钮、信息角标同一套气泡。 */
-  private static badgeHtml(badge: PickerBadge): string {
-    const tipClass = badge.tip ? " has-tip" : "";
-    const tipAttr = badge.tip ? ` data-tip="${escapeHtml(badge.tip)}"` : "";
-    return `<span class="picker-badge picker-badge-${badge.tone}${tipClass}"${tipAttr}>${escapeHtml(badge.text)}</span>`;
+  /**
+   * 一枚徽章；带 tip 的挂 `.picker-badge-tip` 与气泡节点。
+   * `allowTip=false` 用于收起态（按钮里那一行）：`.picker-label` 是 `overflow: hidden`，
+   * 气泡在那里会被裁掉边，索性不挂。
+   */
+  private static badgeHtml(badge: PickerBadge, allowTip = true): string {
+    const chip = `<span class="picker-badge-text">${escapeHtml(badge.text)}</span>`;
+    const tip = allowTip && badge.tip ? Picker.tipHtml(badge.tip) : "";
+    const tipClass = tip ? " picker-badge-tip" : "";
+    return `<span class="picker-badge picker-badge-${badge.tone}${tipClass}">${chip}${tip}</span>`;
+  }
+
+  /**
+   * 气泡内容：只有徽章、没有文字。徽章写完整标签名、配色跟行内那几枚一致，
+   * 所以「+N 里到底折叠了谁」「这枚被截断的徽章全名是什么」都能直接看出来。
+   */
+  private static tipHtml(tip: PickerTipBadge[]): string {
+    const badges = tip
+      .map((badge) => `<span class="picker-badge picker-badge-${badge.tone}">${escapeHtml(badge.text)}</span>`)
+      .join("");
+    return `<span class="picker-tip" role="tooltip">${badges}</span>`;
   }
 
   /**
@@ -223,23 +246,33 @@ export class Picker {
       let node = badgeNodes[badgeIndex];
       if (!node) {
         node = document.createElement("span");
+        // 先建出文字层，后面的更新只改它，气泡节点才有位置可挂。
+        node.innerHTML = '<span class="picker-badge-text"></span>';
         option.appendChild(node);
         badgeNodes.push(node);
       }
-      const badgeClass = `picker-badge picker-badge-${badge.tone}${badge.tip ? " has-tip" : ""}`;
+      const hasTip = badge.tip !== undefined;
+      const badgeClass = `picker-badge picker-badge-${badge.tone}${hasTip ? " picker-badge-tip" : ""}`;
       if (node.className !== badgeClass) {
         node.className = badgeClass;
       }
-      if (node.textContent !== badge.text) {
+      // 徽章文字放在 `.picker-badge-text` 里改，别用 textContent 整个覆盖 —— 那会把气泡节点一起抹掉。
+      const label = node.querySelector<HTMLElement>(":scope > .picker-badge-text");
+      if (label) {
+        if (label.textContent !== badge.text) {
+          label.textContent = badge.text;
+        }
+      } else if (node.textContent !== badge.text) {
         node.textContent = badge.text;
       }
-      // 气泡文案跟着徽章一起就地改：整行不重建，属性也得自己同步。
-      if (badge.tip) {
-        if (node.getAttribute("data-tip") !== badge.tip) {
-          node.setAttribute("data-tip", badge.tip);
+      // 气泡内容跟着徽章一起就地更新：整行不重建，气泡节点也得自己同步（换内容才动节点）。
+      const tipKey = badge.tip === undefined ? "" : JSON.stringify(badge.tip);
+      if ((node.dataset.tipKey ?? "") !== tipKey) {
+        node.querySelector(":scope > .picker-tip")?.remove();
+        if (badge.tip !== undefined) {
+          node.insertAdjacentHTML("beforeend", Picker.tipHtml(badge.tip));
         }
-      } else if (node.hasAttribute("data-tip")) {
-        node.removeAttribute("data-tip");
+        node.dataset.tipKey = tipKey;
       }
     });
   }

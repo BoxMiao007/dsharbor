@@ -232,15 +232,6 @@ async function main(): Promise<void> {
     /** 有固定排位的 tag：其余 tag 按字母序跟在后面。 */
     const TAG_ORDER: readonly string[] = ["latest", "next"];
 
-    /** 内置 tag 的悬停解释（说人话）；没登记的 tag 一律按「自定义标签」处理。 */
-    const TAG_TIPS: Record<string, string | undefined> = {
-      latest: "最新正式版",
-      next: "抢先体验版，可能有 bug",
-      beta: "beta 测试版",
-      alpha: "alpha 内测版",
-      canary: "金丝雀版本，随时可能变",
-    };
-
     /** tag 名 → 徽章配色（与 `.picker-badge-*` 的类名后缀一一对应）。 */
     const TAG_TONES: Record<string, PickerBadge["tone"] | undefined> = {
       latest: "latest",
@@ -261,20 +252,28 @@ async function main(): Promise<void> {
       return TAG_ORDER.filter((tag) => names.includes(tag)).concat(rest);
     }
 
-    /** 一枚 tag 徽章：长名字截断，悬停气泡里给全名与含义（自定义标签的解释本身带全名）。 */
+    /**
+     * 一枚 tag 徽章：长名字截断，气泡里补一枚写全名的徽章（行内那枚已经写全的就不再挂气泡——
+     * 一样的东西再弹一遍没有信息量）。
+     */
     function tagBadge(tag: string): PickerBadge {
-      const text = tag.length > TAG_NAME_MAX ? `${tag.slice(0, TAG_NAME_MAX)}…` : tag;
-      const tip = TAG_TIPS[tag] ?? `自定义标签 ${tag}`;
-      return { text, tone: TAG_TONES[tag] ?? "other", tip };
+      const truncated = tag.length > TAG_NAME_MAX;
+      const text = truncated ? `${tag.slice(0, TAG_NAME_MAX)}…` : tag;
+      const tone = TAG_TONES[tag] ?? "other";
+      return truncated ? { text, tone, tip: [{ text: tag, tone }] } : { text, tone };
     }
 
-    /** 版本行的 tag 徽章：最多 3 枚，其余折成「+N」，悬停列出被折叠的 tag 名。 */
+    /** 版本行的 tag 徽章：最多 3 枚，其余折成「+N」，悬停把被折叠的 tag 一枚枚摆出来。 */
     function tagBadges(version: string): PickerBadge[] {
       const names = tagsOf(version);
       const badges = names.slice(0, TAG_BADGE_MAX).map(tagBadge);
       const folded = names.slice(TAG_BADGE_MAX);
       if (folded.length > 0) {
-        badges.push({ text: `+${folded.length}`, tone: "other", tip: folded.join("，") });
+        badges.push({
+          text: `+${folded.length}`,
+          tone: "other",
+          tip: folded.map((tag) => ({ text: tag, tone: TAG_TONES[tag] ?? "other" })),
+        });
       }
       return badges;
     }
@@ -307,7 +306,8 @@ async function main(): Promise<void> {
       if (latest === null || distTags().latest !== latest) {
         return [];
       }
-      return [{ text: `latest ${latest}`, tone: "latest", tip: TAG_TIPS["latest"] }];
+      // 标签名与版本号都写在徽章上了，没有「看不全」的部分，所以不挂气泡。
+      return [{ text: `latest ${latest}`, tone: "latest" }];
     }
 
     /** 版本候选：首项「自动最新版本」+ 具体版本（先 6 个）+ 末尾「更多…」。 */
