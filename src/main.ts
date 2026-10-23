@@ -769,6 +769,11 @@ async function main(): Promise<void> {
     const selectPanel = (key: PanelKey, persist: boolean): void => {
       const previous = currentPanel;
       currentPanel = key;
+      // 已经停在这一页、又没有别的分区要让位：没有「交接」可放，重播入场只会让整块内容
+      // 从全透明淡回一次——那正是维护者报的频闪。点击监听那边已挡过一次，但代码里还有
+      // 别的入口（桥接安装/卸载/恢复后要切到「环境」面板，用户可能本来就停在那儿），
+      // 所以在真正放动画的地方再挡一次，从源头保证「同一页不重播」。
+      const switching = previous !== key;
       for (const button of navButtons) {
         button.setAttribute("aria-current", button.dataset.panelBtn === key ? "true" : "false");
       }
@@ -787,7 +792,7 @@ async function main(): Promise<void> {
         panel.classList.remove("is-leaving");
       }
 
-      const leaving = previous !== key ? panelSections.find((panel) => panel.dataset.panel === previous) : undefined;
+      const leaving = switching ? panelSections.find((panel) => panel.dataset.panel === previous) : undefined;
 
       for (const panel of panelSections) {
         const showing = panel.dataset.panel === key;
@@ -798,7 +803,8 @@ async function main(): Promise<void> {
           // 先摘类、强制一次回流，再挂回去：同一个分区来回切也能重播。
           panel.classList.remove("is-enter");
           void panel.offsetWidth;
-          panel.classList.add("is-enter");
+          // 真换了分区才挂入场；没换（含首帧、桥接操作顺带切回同一页）不重播。
+          if (switching) panel.classList.add("is-enter");
         }
       }
 
@@ -1435,8 +1441,8 @@ async function main(): Promise<void> {
      * 渲染「启动 / 停止」按钮，三种形态：
      * - `swap`（未启动）：蓝底长条「启动 DSH」+ 两组文字逐字切换（60-controls.css 的
      *   `#btn-toggle.swap`）；
-     * - `busy`（启动中）：同一根蓝底长条，换成一只细环 + 「启动中…」。点下去仍是停止，
-     *   所以它同时保留 `.has-tip` 气泡说明「点一下可停止」——启动慢的时候不至于只能干等；
+     * - `busy`（启动中）：同一根蓝底长条，换成一只细环 + 「启动中…」。命令在途时这一下
+     *   按不动（后端仍是 stopped，再发一条只会被拒），气泡如实说明「在等」；
      * - `round`（运行中）：红底**圆形图标钮**（维护者要求：与「重启 DSH」同形）。
      * 三种形态只在跨状态时重建一次，逐帧调用不会反复重排 DOM。
      */
@@ -1456,10 +1462,11 @@ async function main(): Promise<void> {
         return;
       }
       if (mode === "busy") {
-        // 启动中仍是长条按钮（还能点成停止），所以气泡照旧有用，只是文案换成「点一下可停止」。
+        // 启动中仍是长条按钮。气泡说实话：这一下按不动（命令在途时后端还是 stopped，
+        // 再发一条只会被拒），等进程真的起来、变红圆钮之后才谈得上停止。
         btnToggle.classList.add("has-tip");
         btnToggle.dataset.tip = TOOLTIP_STARTING;
-        btnToggle.setAttribute("aria-label", `${TOGGLE_TEXT_STARTING}点一下可停止`);
+        btnToggle.setAttribute("aria-label", `${TOGGLE_TEXT_STARTING}正在等待 DSH 起来`);
         btnToggle.innerHTML = `<span class="launch-spin" aria-hidden="true"></span><span class="btn-text">${TOGGLE_TEXT_STARTING}</span>`;
         return;
       }
@@ -1470,10 +1477,28 @@ async function main(): Promise<void> {
       btnToggle.innerHTML = toggleSwapHtml();
     }
 
+    /**
+     * 按「在途 / 启动中 / 运行 / 未启动」重画「启动 / 停止」这一支（形态 + 主色 + aria-busy +
+     * 重启钮要不要露面）。轮询渲染与点击瞬间都走这一条，免得两处各算一遍 `busy` 之后
+     * 算出不同的结论（点击时先切「启动中」，靠的就是这里同一套推导）。
+     */
+    function paintToggle(): void {
+      const running = currentStatus?.state === "running";
+      const starting = currentStatus ? isStarting(currentStatus) : false;
+      const busy = launchPending || starting;
+      renderToggleButton(busy ? "busy" : running ? "round" : "swap");
+      // 启动中仍是蓝底主按钮（不是运行态那枚红圆钮），所以主色跟着 busy / 未启动走。
+      btnToggle.classList.toggle("primary", !running || busy);
+      // 读屏软件靠它知道「按下去之后还在忙」，不依赖那只转圈的动画。
+      btnToggle.setAttribute("aria-busy", busy ? "true" : "false");
+      // 「重启 DSH」只在**真正起来之后**出现（维护者要求）：启动中整排仍只有一颗按钮，
+      // 登录链接就绪、状态落定才放出「停止 / 重启」。
+      btnRestart.classList.toggle("hidden", !running || busy);
+    }
+
     function render(status: SessionStatus): void {
       currentStatus = status;
       // 运行状态不入徽章：只看主按钮的蓝/红与文案。
-      const starting = isStarting(status);
       // DSH 版本：后端在每次成功启动后异步补上，重启壳后为「未知」直到再次启动。
       versionText.textContent = status.dshVersion ? `DSH v${status.dshVersion}` : "DSH 版本未知";
       aboutDsh.textContent = status.dshVersion ?? "未知";
@@ -1488,21 +1513,10 @@ async function main(): Promise<void> {
         errorEl.classList.add("hidden");
       }
       syncLogFromTail(status.logTail);
-      const running = status.state === "running";
       // 「启动中」= 命令刚发出去还没回来，或进程起来了、登录链接还没就绪（npx 首次下载、
       // DSH 冷启动都停在这一步）。这一段不能直接跳到运行态，否则点了「启动 DSH」会一下子
-      // 蹦出「停止 / 重启」两颗（维护者反馈的突变）。
-      const busy = launchPending || starting;
-      // 「启动 DSH」与「停止」是同一个按钮（维护者要求）：按状态换形态与语义。
-      // 后端只在子进程还活着时给 Running，Failed 必然是进程已退出，所以 running 就够二分终态。
-      renderToggleButton(busy ? "busy" : running ? "round" : "swap");
-      // 启动中仍是蓝底主按钮（不是运行态那枚红圆钮），所以主色跟着 busy / 未启动走。
-      btnToggle.classList.toggle("primary", !running || busy);
-      // 读屏软件靠它知道「按下去之后还在忙」，不依赖那只转圈的动画。
-      btnToggle.setAttribute("aria-busy", busy ? "true" : "false");
-      // 「重启 DSH」只在**真正起来之后**出现（维护者要求）：启动中整排仍只有一颗按钮，
-      // 登录链接就绪、状态落定才放出「停止 / 重启」。
-      btnRestart.classList.toggle("hidden", !running || busy);
+      // 蹦出「停止 / 重启」两颗（维护者反馈的突变）。推导与形态切换都在 paintToggle 里。
+      paintToggle();
       // 「打开方式」：启动前后都在，只在登录链接就绪后可点（没链接时点开也没用）。
       btnOpen.disabled = !status.loginReady;
       btnOpenMore.disabled = !status.loginReady;
@@ -1516,7 +1530,7 @@ async function main(): Promise<void> {
         loginNote.classList.add("hidden");
       }
       // 「重启 DSH」的持续转动：拿这次状态过一遍收场条件（每秒轮询都会走到这里）。
-      updateRestartSpin(status, starting);
+      updateRestartSpin(status, isStarting(status));
       // 日志会不断长个儿，顺带把滚动指示条的几何刷新一下（这里只算不显示）。
       updateScrollThumbHook();
     }
@@ -1573,8 +1587,10 @@ async function main(): Promise<void> {
       // 命令还在途：按钮已经显示「启动中…」，再点一次只会在后端排第二条启动命令。
       if (launchPending) return;
       // 立刻切到「启动中」形态，不等这条命令返回——后端那一轮可能要等 npx 下载。
+      // 走 paintToggle 而不是直接 renderToggleButton("busy")：形态、主色、aria-busy、
+      // 重启钮的显隐是同一套推导，别在点击瞬间另写一份结论。
       launchPending = true;
-      renderToggleButton("busy");
+      paintToggle();
       void startOrRestart("start_dsh");
     });
     // 「重启 DSH」：点击瞬间开始持续转动（不等悬停那圈的 300ms 提前量），转动期间照旧可点、重点即重新计时。
@@ -4023,8 +4039,15 @@ async function main(): Promise<void> {
   const scrollThumb = document.createElement("div");
   scrollThumb.className = "scroll-thumb";
   scrollTrack.appendChild(scrollThumb);
-  /** 胶囊轨道相对主卡上下各让进多少：取卡片圆角（--radius-card = 14px）减去 2px 余量。 */
-  const TRACK_INSET = 12;
+  /**
+   * 胶囊轨道相对主卡上下各让进多少：取卡片圆角（`--radius-card`）减去 2px 余量。
+   * 圆角是从令牌读的、不抄数字——维护者改令牌时这里跟着走（同 `motionMs` 的思路）。
+   */
+  function trackInset(): number {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--radius-card").trim();
+    const radius = Number.parseFloat(raw);
+    return (Number.isFinite(radius) && radius > 0 ? radius : 14) - 2;
+  }
 
   /**
    * 滚动容器是当前分区那张主卡（`.block.main-card`）：只有它内部滚，下方并排的小卡
@@ -4062,15 +4085,16 @@ async function main(): Promise<void> {
     }
     scrollHost = host;
     // 轨道贴住主卡的上下边界（内容区里除了主卡还有小卡与日志条，轨道理应只覆盖主卡）。
-    // 上下各让进 TRACK_INSET：胶囊是方的滚动条替身，贴到边就会骑在卡片圆角上
-    // ——那正是维护者看到的「滚动条穿出圆角」。让进 12px（圆角 14px）刚好落在直边里。
+    // 上下各让进 inset：胶囊是方的滚动条替身，贴到边就会骑在卡片圆角上
+    // ——那正是维护者看到的「滚动条穿出圆角」。让进圆角减 2px 后刚好落在直边里。
     const holder = scrollTrack.parentElement;
     if (holder) {
+      const inset = trackInset();
       const hostRect = host.getBoundingClientRect();
       const holderRect = holder.getBoundingClientRect();
-      scrollTrack.style.top = `${Math.round(hostRect.top - holderRect.top) + TRACK_INSET}px`;
+      scrollTrack.style.top = `${Math.round(hostRect.top - holderRect.top) + inset}px`;
       scrollTrack.style.bottom = "auto";
-      scrollTrack.style.height = `${Math.max(0, Math.round(hostRect.height) - TRACK_INSET * 2)}px`;
+      scrollTrack.style.height = `${Math.max(0, Math.round(hostRect.height) - inset * 2)}px`;
     }
     const viewport = host.clientHeight;
     const total = host.scrollHeight;

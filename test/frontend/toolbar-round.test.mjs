@@ -113,6 +113,15 @@ function readButton(page, id) {
   }, id);
 }
 
+/** 从令牌读按钮的基准尺寸（不把 --btn-w / --btn-h 的数字抄进断言，改令牌时测试跟着走）。 */
+function readTokens(page) {
+  return page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const px = (name) => Math.round(Number.parseFloat(cs.getPropertyValue(name)));
+    return { btnW: px("--btn-w"), btnH: px("--btn-h") };
+  });
+}
+
 let preview = null;
 let browser = null;
 
@@ -196,7 +205,7 @@ test("启动中：同一根长条换成「启动中…」+ 细环，重启仍不
   try {
     const busy = await readButton(page, "btn-toggle");
     const restart = await readButton(page, "btn-restart");
-    const stoppedWidth = 127; // --btn-w
+    const { btnW, btnH } = await readTokens(page);
 
     assert.equal(busy.visible, true, "启动中应看到按钮");
     assert.ok(busy.className.includes("busy"), `启动中应挂 .busy，实际 ${busy.className}`);
@@ -208,10 +217,12 @@ test("启动中：同一根长条换成「启动中…」+ 细环，重启仍不
     );
     assert.equal(busy.spin, 1, "启动中应有一只 .launch-spin 细环");
     assert.equal(busy.ariaBusy, "true", "启动中应给读屏 aria-busy=true");
-    assert.match(busy.label, /停止/, `启动中的可访问名应说明还能点成停止，实际「${busy.label}」`);
-    // 尺寸与停止态一致：形态切换不许让整排按钮跳位。
-    assert.equal(busy.width, stoppedWidth, `启动中宽度应与停止态一致（${stoppedWidth}px），实际 ${busy.width}`);
-    assert.equal(busy.height, 34, `启动中高度应为 --btn-h，实际 ${busy.height}`);
+    // 这一下按下去是空操作（命令在途时后端仍报 stopped），所以可访问名不能说「能停止」。
+    assert.match(busy.label, /启动中/, `启动中的可访问名应说明正在启动，实际「${busy.label}」`);
+    assert.equal(/停止/.test(busy.label), false, `启动中那一按按不动，可访问名不该承诺停止，实际「${busy.label}」`);
+    // 尺寸与停止态一致：形态切换不许让整排按钮跳位（基准取自 --btn-w / --btn-h 令牌）。
+    assert.equal(busy.width, btnW, `启动中宽度应为 --btn-w（${btnW}px），实际 ${busy.width}`);
+    assert.equal(busy.height, btnH, `启动中高度应为 --btn-h（${btnH}px），实际 ${busy.height}`);
 
     // 关键回归点：登录链接没就绪之前，「重启 DSH」不能提前蹦出来。
     assert.equal(restart.visible, false, "启动中「重启 DSH」必须仍隐藏（0×0）");

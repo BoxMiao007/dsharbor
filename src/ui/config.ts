@@ -81,5 +81,6 @@ export const TOGGLE_TEXT_STARTING = "启动中…";
 export const TOOLTIP_STOP = "停止 DSH";
 export const TOOLTIP_RESTART = "重启 DSH";
 
-/** 启动中那颗长条按钮的气泡：它同时是「点一下能取消」，所以文案要说清两件事。 */
-export const TOOLTIP_STARTING = "正在拉起 DSH、等登录链接就绪；点一下可停止。";
+/** 启动中那颗长条按钮的气泡：这一下按不动（命令在途时后端仍是 stopped，再发一条只会被拒），
+ *  所以文案只描述「在等」，不承诺能停——进程起来之后按钮才变红圆钮、那时才真能停。 */
+export const TOOLTIP_STARTING = "启动命令已发出，正在等 DSH 起来；起来之前这一下按不动。";

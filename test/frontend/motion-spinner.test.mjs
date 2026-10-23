@@ -166,7 +166,7 @@ test("忙态：方钮换成居中的环形 spinner，原语义图标不再转；
     const look = await readBusyLook(page, "#btn-plugin-check-updates");
     assert.equal(look.hasSpinner, true, "忙态方钮里应有环形 spinner（[data-busy-spinner]）");
     assert.equal(look.ariaBusy, "true", "忙态应标 aria-busy=\"true\"");
-    assert.equal(look.spinnerAnim, "btn-restart-spin", `环形应匀速转，实际 animation-name=${look.spinnerAnim}`);
+    assert.equal(look.spinnerAnim, "spin-turn", `环形应匀速转，实际 animation-name=${look.spinnerAnim}`);
     assert.notEqual(look.spinnerOpacity, "0", "环形应可见");
     assert.notEqual(look.spinnerVisibility, "hidden", "环形应可见");
     // 关键回归：转的不能再是语义图标本身（非旋转对称图形绕盒子中心转会画圈晃）。

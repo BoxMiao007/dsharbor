@@ -252,8 +252,10 @@ button.primary:hover:not(:disabled) {
   transform: scale(0.94);
 }
 
-/* 图标的转圈关键帧：只留给「重启进行中」与方钮忙态的环形 spinner 复用。 */
-@keyframes btn-restart-spin {
+/* 转圈的共用关键帧：重启进行中的图标、方钮忙态的环形 spinner、「启动中」那只细环都用它。
+   只有 `to rotate(360deg)` 一帧，所以别再写第二条同形关键帧——名字取中性的是因为用它的地方
+   早就不只「重启」一处。 */
+@keyframes spin-turn {
   to {
     transform: rotate(360deg);
   }
@@ -264,7 +266,7 @@ button.primary:hover:not(:disabled) {
    （会话状态离开「启动中」/ 启动失败 / 点「停止」/ 30 秒兜底），
    收工后这里的类一去掉就交回悬停规则。 */
 #btn-restart.is-restarting svg {
-  animation: btn-restart-spin var(--spin-ms) linear infinite;
+  animation: spin-turn var(--spin-ms) linear infinite;
 }
 
 /* 「停止 / 重启 DSH」：红/黄实底（维护者定的配色）。
@@ -315,14 +317,9 @@ button.primary:hover:not(:disabled) {
   border-radius: 50%;
   border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
   border-top-color: currentColor;
-  animation: launch-spin var(--spin-ms) linear infinite;
+  animation: spin-turn var(--spin-ms) linear infinite;
 }
 
-@keyframes launch-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 
 /* 「启动 DSH」按钮停止态的悬停动效：两组文字逐字上下切换 + 轻抖动。
    改编自 dongtai.css：只保留动效、贴合本按钮原有尺寸与配色，抖动幅度由 ±2px 减半到 ±0.5px。
@@ -603,7 +600,7 @@ button.primary:hover:not(:disabled) {
 .square-btn.is-spinning > .sq-spinner {
   opacity: 1;
   visibility: visible;
-  animation: btn-restart-spin var(--spin-ms) linear infinite;
+  animation: spin-turn var(--spin-ms) linear infinite;
 }
 
 /* 完成：藏图标、显勾（弹回一点点，单次 200ms）。 */
