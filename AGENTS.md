@@ -100,7 +100,6 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 - **发布 GitHub 的安装包必须用「性能优先」构建，禁止发「速度优先」的包**：`[profile.release]` 默认是速度优先（thin LTO + codegen-units 16，本地测试用），发布构建在它之上用环境变量覆盖成 fat LTO + 单 codegen 单元——`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 pnpm exec tauri build`。发过速度优先的包要用性能优先重编后替换资产。
 - **资产只放安装包**：不单独放裸 exe——程序需要同目录的 `resources/`。安装包文件名与 `--title` 沿用 `DSHarbor vX.Y.Z`。
 - **Release 正文只写使用者能感知的变化**：分类节只出现有内容的 `## 新增` / `## 修复` / `## 变更` / `## 已知问题`；条目说人话、用界面上的原文（如「启动 DSH」「桥接插件」「轻量模式」），不逐条带日期（Release 页面自带发布日期）。不写构建或编译参数、重构、依赖升级、体积变化与性能数字、内部工具（预览台脚本、CI）、版本号元信息、安装包名/大小/SHA-256。
-- **已推送的 tag 与已发布 Release 正文不可回改**，需要纠正只能发新版本。
 
 ## 知识沉淀(保证任何新会话都能接手)
 
