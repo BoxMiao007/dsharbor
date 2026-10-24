@@ -23,6 +23,19 @@ import { showToast } from "./ui/toast";
 import { attachScrollThumb } from "./ui/scroll-thumb";
 import { buildHtml } from "./ui/build-html";
 
+/** 通知微标的统一文案：超过 99 截成「99+」，防止多位数把圆形微标撑宽（形状见
+ *  90-modals.css 的 .btn-badge 与 20-sidebar.css 的 .ico-count）。 */
+function countBadgeText(count: number): string {
+  return count > 99 ? "99+" : String(count);
+}
+
+/** 把计数画进微标并按是否截断挂 .is-dense（缩一号字），0 画成空文案。 */
+function paintCountBadge(el: HTMLElement, count: number): void {
+  const capped = count > 99;
+  el.textContent = count <= 0 ? "" : countBadgeText(count);
+  el.classList.toggle("is-dense", capped);
+}
+
 async function main(): Promise<void> {
   const app = document.querySelector<HTMLDivElement>("#app");
   if (!app) {
@@ -1036,9 +1049,9 @@ async function main(): Promise<void> {
     /** 上拍定时器的 id；0 表示队列已经走完（没在跑）。 */
     let logUnreadTimer = 0;
 
-    /** 把当前「已显示值」画成文案：0 时空着（CSS 的 :empty 收成不渲染），过百显示 99+。 */
+    /** 把当前「已显示值」画成文案：0 时空着（CSS 的 :empty 收成不渲染），过百显示 99+ 并缩字号。 */
     function renderLogUnread(): void {
-      logUnreadEl.textContent = logUnreadShown === 0 ? "" : logUnreadShown > 99 ? "99+" : String(logUnreadShown);
+      paintCountBadge(logUnreadEl, logUnreadShown);
     }
 
     /** 弹一下：先摘掉动画类、强制回流，再加回去——不然连着两拍之间类名没真正离开过，动画不会重播。 */
@@ -1970,7 +1983,8 @@ async function main(): Promise<void> {
       return marks;
     }
 
-    /** 一排环境大按钮：点卡片切管理目标，点右上角三点展开操作菜单。 */
+    /** 一排环境大按钮：点卡片切管理目标，点右上角三点展开操作菜单；
+     *  查过更新的环境再挂一枚「可更新插件数」微标（.btn-badge，样式见 90-modals.css）。 */
     function renderEnvCards(): void {
       if (!profilesSupported) {
         profileCards.innerHTML = "";
@@ -1986,12 +2000,19 @@ async function main(): Promise<void> {
           const marks = envMarks(item);
           const marksHtml =
             marks.length > 0 ? `<span class="env-card-marks">${marks.join(" · ")}</span>` : "";
+          // 该环境最近一次检查得到的可更新插件数：>0 才画微标，没查过或为 0 都不显示。
+          const pending = pluginUpdateCounts.get(item.name) ?? 0;
+          const badgeHtml =
+            pending > 0
+              ? `<span class="btn-badge${pending > 99 ? " is-dense" : ""}" aria-hidden="true">${countBadgeText(pending)}</span>`
+              : "";
           return `<div class="env-card${active}" data-env="${escapeHtml(item.name)}">
             <button class="env-card-main" type="button" data-env-pick="${escapeHtml(item.name)}">
               <span class="env-card-name">${escapeHtml(item.name)}</span>
               <span class="env-card-meta">${item.plugins} 个插件</span>
               ${marksHtml}
             </button>
+            ${badgeHtml}
             <button class="env-more" type="button" title="环境操作" aria-label="环境操作" aria-haspopup="menu" aria-expanded="false" data-env-more="${escapeHtml(item.name)}">${ICON_MORE}</button>
           </div>`;
         })
@@ -2933,6 +2954,20 @@ async function main(): Promise<void> {
     let pluginUpdateItems: PluginUpdateItem[] = [];
     /** 当前环境是否已检查过（没查过时行里不显示版本号，免得像「没有版本」）。 */
     let pluginUpdatesChecked = false;
+    /** 每个环境最近一次检查得到的可更新插件数（键＝环境名）：环境卡微标按它显示。
+     *  只在对应环境的检查/更新流程里写入；没查过或为 0 的环境没有微标。 */
+    const pluginUpdateCounts = new Map<string, number>();
+
+    /** 当前环境的可更新计数增减并刷新环境卡微标（没查过的环境不动）：
+     *  更新动作成功一个就实时递减一枚，权威数字随后由重查回来的更新清单覆盖。 */
+    function bumpPluginUpdateCount(delta: number): void {
+      const current = pluginUpdateCounts.get(prefs.profile);
+      if (current === undefined || current + delta < 0) {
+        return;
+      }
+      pluginUpdateCounts.set(prefs.profile, current + delta);
+      renderEnvCards();
+    }
     /** 插件更新动作是否在跑（忙时更新按钮与开关全部置灰，防重复提交）。 */
     let pluginUpdateBusy = false;
     /** 这轮更新是不是「全部更新」发起的：只有它让工具条上那枚图标转起来，单行更新不转。 */
@@ -3166,7 +3201,7 @@ async function main(): Promise<void> {
       setSquareBusy(btnPluginCheckUpdates, pluginCheckBusy);
       setSquareBusy(btnPluginUpdateAll, pluginUpdateBusy && pluginUpdateRunningAll);
       // 右上角微标 = 当前可更新的插件数；没有可更新时收掉，按钮本身置灰已足够。
-      btnUpdateAllBadge.textContent = pending > 0 ? String(pending) : "";
+      paintCountBadge(btnUpdateAllBadge, pending);
       btnUpdateAllBadge.classList.toggle("hidden", pending === 0);
     }
 
@@ -3251,6 +3286,10 @@ async function main(): Promise<void> {
           message: ok ? (event.message ?? null) : (event.message ?? "原因未知"),
         });
         markFreshPhase(event.plugin);
+        // 更新成功一个，环境卡微标就实时递减一枚（失败的仍是可更新，不递减）。
+        if (ok) {
+          bumpPluginUpdateCount(-1);
+        }
         finishPluginProgressIfComplete();
       }
       renderPluginList();
@@ -3347,6 +3386,9 @@ async function main(): Promise<void> {
         }
         pluginUpdateItems = items;
         pluginUpdatesChecked = true;
+        // 环境卡微标跟着这份清单走：按环境分别计数，不是全局总数。
+        pluginUpdateCounts.set(name, items.filter((item) => item.hasUpdate).length);
+        renderEnvCards();
         ok = true;
         renderPluginList();
         renderPluginSummary();
@@ -3447,6 +3489,10 @@ async function main(): Promise<void> {
             message: outcome.ok ? null : outcome.message,
           });
           markFreshPhase(name);
+          // 单个更新成功同样实时递减环境卡微标（随后重查回来的清单会覆盖成权威值）。
+          if (outcome.ok) {
+            bumpPluginUpdateCount(-1);
+          }
         }
         if (outcome.ok) {
           const disabled = scope.filter(

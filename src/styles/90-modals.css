@@ -516,15 +516,16 @@ button.danger:hover:not(:disabled) {
   height: 28px;
 }
 
-/* 「全部更新」右上角的微标：可更新的插件数。骑在按钮外沿一点，不占按钮内部空间。 */
-.plugin-head-actions .btn-badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 15px;
+/* 通知类计数微标的统一形状：「全部更新」按钮与环境卡片共用。
+   固定 15px 圆——宽=高、内容居中，两位数靠 tabular-nums 也放得下；
+   超过 99 显示 99+ 时挂 .is-dense 缩一号字，任何数值都不把圆撑成胶囊。 */
+.btn-badge {
+  display: grid;
+  place-items: center;
+  width: 15px;
   height: 15px;
-  padding: 0 4px;
-  border-radius: 8px;
+  border-radius: 50%;
+  overflow: hidden;
   /* 用 --accent-fill（实底蓝）而不是 --accent（浅冰蓝）：深色主题下 --accent 是
      #7fb2ff，白字压它只有 2.16:1，那颗「5」几乎糊掉；--accent-fill 深色 #2f6fd0 /
      浅色 #1c5fd0，白字都是 4.9~5.8:1，两套主题都清楚。 */
@@ -532,10 +533,21 @@ button.danger:hover:not(:disabled) {
   color: #ffffff;
   font-size: 10px;
   font-weight: 600;
-  line-height: 15px;
-  text-align: center;
-  /* 显示可更新插件数，等宽数字让计数变化时微标不忽宽忽窄。 */
+  line-height: 1;
+  /* 显示可更新插件数，等宽数字让计数变化时圆内不左右抖。 */
   font-variant-numeric: tabular-nums;
+}
+
+.btn-badge.is-dense {
+  font-size: 8px;
+  letter-spacing: -0.5px;
+}
+
+/* 「全部更新」右上角的落点：骑在按钮外沿一点，不占按钮内部空间。 */
+.plugin-head-actions .btn-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
 }
 
 .plugin-head-actions .square-btn svg {

@@ -187,7 +187,8 @@
 
 /* 左栏「日志」条目上的未读数字：只在有未读时出现——没有未读时容器内容是空的，
    由下面的 :empty 收成不渲染，不需要界面再挂一个隐藏类。
-   尺寸对齐工具条徽章（字号 13px、圆角 999px、等宽数字），但矮一档取 20px：
+   固定 20px 圆——宽=高、不随内容拉伸：一位/两位数靠 tabular-nums 放得下，
+   超过 99 显示 99+ 时挂 .is-dense 缩一号字，任何数值都不撑成胶囊。
    它挤在 44px 高的导航条目里，与 24px 的独立徽章同高会顶掉条目的上下留白。
    margin-left: auto 把它推到条目最右，flex: none 让它挨着最小窗口宽度也不被压窄。
    底色用 --accent-fill（深一档实底）而不是 --accent：白字压浅冰蓝只有 ~2.1:1，
@@ -197,18 +198,23 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
+  width: 20px;
   height: 20px;
   margin-left: auto;
-  padding: 0 7px;
-  border-radius: 999px;
+  border-radius: 50%;
+  overflow: hidden;
   background: var(--accent-fill);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+}
+
+/* 99+ 三个字符缩一号字才放得进 20px 的圆；负字距把加号贴紧数字。 */
+.ico-count.is-dense {
+  font-size: 10px;
+  letter-spacing: -0.5px;
 }
 
 .ico-count:empty {

@@ -104,6 +104,14 @@ html[data-motion="off"] .env-card:focus-within {
   color: var(--fg-dim);
 }
 
+/* 环境卡右上角的可更新计数微标：形状走统一的 .btn-badge 圆形（见 90-modals.css），
+   这里只给落点——骑在卡片上沿、三点按钮（右 4~28px）左侧，两者不重叠。 */
+.env-card > .btn-badge {
+  position: absolute;
+  top: -6px;
+  right: 28px;
+}
+
 /* 三点按钮：叠在卡片右上角，本身不占布局宽度。
    平时淡出、往右让 4px，指针进卡（或焦点进卡）才浮出来（#36）：一排卡片各挂一颗
    三点会把「环境卡」读成一排工具条，收起来后卡片先看名字，要用时才给入口。
