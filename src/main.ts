@@ -2947,10 +2947,21 @@ async function main(): Promise<void> {
     let pluginProgressFailed = 0;
     /** 收尾汇总文案（null＝这一轮还没跑完，进度区显示进行中的已完成数）。 */
     let pluginProgressSummary: string | null = null;
+    /** 刚落定成已更新／失败的那几行：接下来几次重画给小签挂一次性强调动画，
+     *  到点自动出组。列表每次整块重画，纯 CSS 动画会跟着重画重演，
+     *  所以「只演一次」由这组标记兜住，不靠样式记忆。 */
+    const pluginFreshPhase = new Set<string>();
+
+    /** 给刚出结果的小签挂一次性强调：0.9s 动画播完就出组，之后的重画不再挂。 */
+    function markFreshPhase(name: string): void {
+      pluginFreshPhase.add(name);
+      window.setTimeout(() => pluginFreshPhase.delete(name), 1000);
+    }
 
     /** 清掉上一轮的进度与行级状态（换环境、重新检查、开始新一轮时用）。 */
     function resetPluginProgress(): void {
       pluginUpdatePhases = new Map();
+      pluginFreshPhase.clear();
       pluginProgressTotal = 0;
       pluginProgressDone = 0;
       pluginProgressFailed = 0;
@@ -3006,7 +3017,7 @@ async function main(): Promise<void> {
       if (!state) {
         return "";
       }
-      return `<span class="plugin-phase plugin-phase-${state.phase}">${updatePhaseLabel[state.phase]}</span>`;
+      return `<span class="plugin-phase plugin-phase-${state.phase}${pluginFreshPhase.has(name) ? " is-fresh" : ""}">${updatePhaseLabel[state.phase]}</span>`;
     }
 
     /** 失败行把原因留在行里（可读、可核对），成功行不占位。 */
@@ -3196,6 +3207,7 @@ async function main(): Promise<void> {
           continue;
         }
         pluginUpdatePhases.set(plugin, { phase: "fail", message: "没有收到结果" });
+        markFreshPhase(plugin);
       }
       pluginProgressFailed = pluginProgressTotal - successes;
       pluginProgressDone = pluginProgressTotal;
@@ -3238,6 +3250,7 @@ async function main(): Promise<void> {
           phase: ok ? "done" : "fail",
           message: ok ? (event.message ?? null) : (event.message ?? "原因未知"),
         });
+        markFreshPhase(event.plugin);
         finishPluginProgressIfComplete();
       }
       renderPluginList();
@@ -3433,6 +3446,7 @@ async function main(): Promise<void> {
             phase: outcome.ok ? "done" : "fail",
             message: outcome.ok ? null : outcome.message,
           });
+          markFreshPhase(name);
         }
         if (outcome.ok) {
           const disabled = scope.filter(
@@ -3451,6 +3465,7 @@ async function main(): Promise<void> {
         showToast(`更新插件失败：${String(err)}`, "error");
         if (name) {
           pluginUpdatePhases.set(name, { phase: "fail", message: String(err) });
+          markFreshPhase(name);
         }
       } finally {
         pluginUpdateBusy = false;
