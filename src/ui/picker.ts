@@ -1,6 +1,7 @@
 /* 自绘下拉框：PickerChoice 与 Picker（圆角弹层、键盘可达） —— 自 main.ts 原样搬出（2026-10 模块化拆分），声明加 export，其余未改。 */
 
 import { escapeHtml } from "./markup";
+import { attachScrollThumb, type ScrollThumb } from "./scroll-thumb";
 
 /** 行内小徽章：显示在选项文字右边（dist-tag / 已缓存 / 手动）。 */
 export interface PickerBadge {
@@ -55,6 +56,8 @@ export class Picker {
   private readonly button: HTMLButtonElement;
   private readonly label: HTMLElement;
   private readonly list: HTMLUListElement;
+  /** 列表藏了原生滚动条（style.css），滚动指示条开列表时懒挂：轨道挂在 root 上。 */
+  private thumb: ScrollThumb | null = null;
   private choices: PickerChoice[] = [];
   private selected = "";
   private activeIndex = -1;
@@ -295,6 +298,9 @@ export class Picker {
     this.list.classList.remove("hidden");
     this.button.setAttribute("aria-expanded", "true");
     this.applyGeometry(true);
+    // 弹层几何落定后再挂/刷新指示条（z-index 要压过列表的 30，否则胶囊被盖住看不见）。
+    this.thumb ??= attachScrollThumb(this.list, this.root, 10, 31);
+    this.thumb.update();
     this.onOpen?.();
   }
 
@@ -312,6 +318,7 @@ export class Picker {
     this.renderOptions();
     this.applyGeometry(false);
     this.list.scrollTop = scrollTop;
+    this.thumb?.update();
   }
 
   /** 弹层能占的上下边界：视口，再与最近的滚动/隐藏祖先求交。 */
@@ -355,6 +362,8 @@ export class Picker {
 
   private close(): void {
     this.list.classList.add("hidden");
+    // 轨道虽透明但那条 5px 会吃指针事件，弹层收起时连轨道一起藏，别挡住底下的按钮。
+    this.thumb?.hide();
     this.button.setAttribute("aria-expanded", "false");
     this.activeIndex = -1;
   }

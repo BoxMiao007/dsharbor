@@ -359,6 +359,15 @@ html::-webkit-scrollbar {
   background: transparent;
 }
 
+/* 版本下拉、日志正文与 dsh 垫片：原生滚动条藏起来、右侧改用自绘胶囊顶替
+   （src/ui/scroll-thumb.ts，与主卡同一套思路）。经典滚动条（WebView2）是方的、
+   条带贴满内容盒，会骑在容器的圆角上——藏掉就没有方角能露出来。 */
+.log-body,
+.log-box pre,
+.picker-list {
+  scrollbar-width: none;
+}
+
 /* 展开开关（缓存明细 / 垫片内容这类折叠块）：整行可点、带旋转箭头指示 */
 .log-box {
   padding: 10px 14px;

@@ -20,6 +20,7 @@ import { escapeHtml, toggleSwapHtml } from "./ui/markup";
 import { applyRestartSpin, beginRestartSpin, endRestartSpin, updateRestartSpin, setStatusRefresher } from "./ui/spin";
 import { setSquareBusy, flashSquareDone } from "./ui/sqbusy";
 import { showToast } from "./ui/toast";
+import { attachScrollThumb } from "./ui/scroll-thumb";
 import { buildHtml } from "./ui/build-html";
 
 async function main(): Promise<void> {
@@ -58,6 +59,8 @@ async function main(): Promise<void> {
   // 挂在 window / document 上的监听（窗口缩放、托盘轮询、自绘滚动条）也只注册一次，
   // 通过下面三个钩子指到当前这套界面。
   let updateScrollThumbHook: () => void = () => {};
+  /** mount() 里挂的内层自绘胶囊（日志正文、dsh 垫片）的刷新钩子，随分区切换一起调。 */
+  let refreshInnerScrollThumbsHook: () => void = () => {};
   let syncMaximizeIconHook: () => void = () => {};
   let refreshNowHook: () => Promise<void> = async () => {};
 
@@ -792,6 +795,19 @@ async function main(): Promise<void> {
     const cliShimPath = $<HTMLElement>("cli-shim-path");
     const cliManual = $<HTMLElement>("cli-manual");
     const cliShimText = $<HTMLPreElement>("cli-shim-text");
+    // 日志正文与 dsh 垫片同样藏了原生滚动条、改用自绘胶囊（工具见 scroll-thumb.ts）：
+    // 前者轨道挂 .content-main（与主卡轨道同一挂点），后者挂 .log-area（定位壳）。
+    // 垫片在折叠块里，details 开合改变几何，toggle 时刷新一次。
+    // 挂点必须是「本分区」的 .content-main（每张分区各有一个），不能拿全文档第一个。
+    const contentMain = logEl.closest<HTMLElement>(".content-main");
+    const logThumb = contentMain ? attachScrollThumb(logEl, contentMain, 10) : null;
+    const shimArea = cliShimText.closest<HTMLElement>(".log-area");
+    const shimThumb = shimArea ? attachScrollThumb(cliShimText, shimArea, 6) : null;
+    cliShimText.closest("details")?.addEventListener("toggle", () => shimThumb?.update());
+    refreshInnerScrollThumbsHook = () => {
+      logThumb?.update();
+      shimThumb?.update();
+    };
     const cliMessage = $<HTMLParagraphElement>("cli-message");
     const cliError = $<HTMLParagraphElement>("cli-error");
     const btnCliDir = $<HTMLButtonElement>("btn-cli-dir");
@@ -4261,7 +4277,12 @@ async function main(): Promise<void> {
     syncScrollHost();
   });
   window.setInterval(() => void refreshNowHook(), 1000);
-  updateScrollThumbHook = updateScrollThumb;
+  updateScrollThumbHook = () => {
+    updateScrollThumb();
+    // mount() 里给日志正文与垫片挂的自绘胶囊（见 logThumb/shimThumb）：
+    // 分区切换会改变它们的几何，随主卡轨道一并刷新。
+    refreshInnerScrollThumbsHook();
+  };
 
   // 浅色/深色镜像给 Rust：老配置里没有这份镜像（主题本来只存 localStorage），启动时补齐，
   // 下次开窗（含托盘重开）就能第一时间按主题铺底色，避免首帧闪一下另一种色。
