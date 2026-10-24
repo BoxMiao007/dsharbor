@@ -104,12 +104,14 @@ html[data-motion="off"] .env-card:focus-within {
   color: var(--fg-dim);
 }
 
-/* 环境卡左上角的可更新计数微标：形状走统一的 .btn-badge 圆形（见 90-modals.css），
-   这里只给落点——骑在卡片左上外沿，与右上角的三点按钮彻底错开。 */
+/* 环境卡右上角的可更新计数微标：形状走统一的 .btn-badge 圆形（见 90-modals.css）。
+   落点比「全部更新」那枚再往外挪一档（-10px），骑在卡片外沿上，与内侧三点
+   按钮（右 4~28px）的包围盒错开；三点平时淡出、悬停才出现，同屏也互不压盖。 */
 .env-card > .btn-badge {
   position: absolute;
-  top: -6px;
-  left: -6px;
+  top: -8px;
+  right: -8px;
+  z-index: 1;
 }
 
 /* 三点按钮：叠在卡片右上角，本身不占布局宽度。
