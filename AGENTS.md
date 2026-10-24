@@ -71,19 +71,43 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 - 提交粒度:一个独立功能、一处缺陷修复或一次重构各提交一次;提交前验证门必须全部通过。
 - 密钥、凭据等敏感内容一律不提交;新增构建产物或本地环境文件类型时,同步补充 `.gitignore`。
 
-## 发布(用户明确说发版时才做)
+## 版本与发布(用户明确说发版时才做)
 
-- 版本号:外观增强与缺陷修复递增末位(先例 0.3.1 / 0.3.3 / 0.3.4);只有窗口结构级大改才递增中位(先例 0.3.0)。
-- **发布 GitHub 的安装包必须用「性能优先」构建，禁止发「速度优先」的包**:`[profile.release]` 默认是速度优先(thin LTO + codegen-units 16,本地测试用),发布构建在它之上用环境变量覆盖成 fat LTO + 单 codegen 单元——`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 pnpm exec tauri build`。速度优先的包已经发布过的,要用性能优先重编后替换资产。
-- tag `vX.Y.Z`(注释 tag)+ `gh release create vX.Y.Z <安装包> --title "DSHarbor vX.Y.Z" --notes-file <说明>`;资产只放安装包(不单独放裸 exe——程序需要同目录的 `resources/`)。
-- **发布说明只写使用者能感知的变化**:正文从分类节开始,只出现有内容的节——`## 新增` / `## 修复` / `## 变更` / `## 已知问题`(没有就不出现);条目说人话、用界面上的原文(如「启动 DSH」「桥接插件」「轻量模式」),不逐条带日期(Release 页面自带发布日期)。写的是「用户能感觉到什么」,不是「改了多少东西」。
-- **不写**:构建或编译参数、重构、依赖升级、体积变化与性能数字、内部工具(预览台脚本、CI)、版本号元信息、安装包名/大小/SHA-256(GitHub 资产区自带文件名与大小)。
+本项目遵循 SemVer 2.0.0，标签格式 `vX.Y.Z`。递增由当前版本阶段与 Commit 类型机械决定：
+
+- `BREAKING CHANGE:` footer，或任意类型携带 `!`（如 `feat!:`、`fix!:`、`refactor!:`）→ 升 MAJOR；
+- `feat:` → 升 MINOR；
+- 其余类型一律升 PATCH（如 `fix:`、`perf:`、`docs:`、`chore:`、`test:`、`ci:`、`build:`）；
+- 处于 `0.y.z` 阶段时，凡按上述规则应升 MAJOR 的，改为升 MINOR；
+- 无法机械判定时，暂停自动决策，列出候选版本号及理由，请用户选择。
+
+发布流程：
+
+1. 更新承载版本号的文件（如 `VERSION`、`package.json`）。
+2. 创建本地 annotated tag：`git tag -a vX.Y.Z -m "Release vX.Y.Z"`，**不推送**。
+3. 停下并等待用户批准（闸门规则见全局 `AGENTS.md`「发布闸门」）。
+4. 获批准后推送 tag 并执行 `gh release create`，Release 正文写清本次版本号与变更分类（breaking / feature / fix）。
+
+验证：宣称发布完成须附 `git tag -l vX.Y.Z` 与 `gh release view vX.Y.Z` 实际输出，并确认版本号文件与 tag 一致。
+
+本仓库落地（DSHarbor，上面骨架以主本为准，本块只写本仓库特有约定）：
+
+- **只在用户明确说「发版」时才动版本号与 tag**，agent 不自行发版。
+- **提交类型是机械判定的唯一输入**：提交信息用 `type(scope): 中文描述`，type 限 `feat` / `fix` / `perf` / `docs` / `chore` / `test` / `ci` / `build` / `refactor`，scope 可选（常用 `ui` / `launcher` / `plugin` / `tray` / `wsl` / `core` / `release`），破坏性变更用 `!` 或 `BREAKING CHANGE:` footer。历史提交不追溯；判定区间是「上一版本 tag..HEAD」的全部提交，取最高优先级（`BREAKING > feat > 其余`），一个区间只出一个结论。
+- **三处版本号必须一致**：`package.json`、`src-tauri/tauri.conf.json`、`Cargo.toml` 的 `[workspace.package].version`（两个 crate 用 `version.workspace = true` 继承，`Cargo.lock` 随构建自动更新）。
+- **升版提交写作 `chore(release): X.Y.Z`**，且不参与升版判定（否则每次发版会再涨一位）。
+- **`1.0.0` 只能由用户明确指定**：agent 仅在已发布功能走完 `docs/manual-acceptance.md` 本机验收、且无已知阻断问题时，才在发布闸门里顺带提议。
+- **发布 GitHub 的安装包必须用「性能优先」构建，禁止发「速度优先」的包**：`[profile.release]` 默认是速度优先（thin LTO + codegen-units 16，本地测试用），发布构建在它之上用环境变量覆盖成 fat LTO + 单 codegen 单元——`CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 pnpm exec tauri build`。发过速度优先的包要用性能优先重编后替换资产。
+- **资产只放安装包**：不单独放裸 exe——程序需要同目录的 `resources/`。安装包文件名与 `--title` 沿用 `DSHarbor vX.Y.Z`。
+- **Release 正文只写使用者能感知的变化**：分类节只出现有内容的 `## 新增` / `## 修复` / `## 变更` / `## 已知问题`；条目说人话、用界面上的原文（如「启动 DSH」「桥接插件」「轻量模式」），不逐条带日期（Release 页面自带发布日期）。不写构建或编译参数、重构、依赖升级、体积变化与性能数字、内部工具（预览台脚本、CI）、版本号元信息、安装包名/大小/SHA-256。
+- **已推送的 tag 与已发布 Release 正文不可回改**，需要纠正只能发新版本。
 
 ## 知识沉淀(保证任何新会话都能接手)
 
 - 全新环境的依赖安装命令(已在 Windows 本机实测):安装 VS Build Tools(含 C++ 桌面开发 + Windows SDK,即 `link.exe`)、Rust 工具链(宿主 `x86_64-pc-windows-msvc`,带 `rustfmt` / `clippy`)、Node.js + pnpm(`pnpm install`);NSIS 由 `tauri build` 首次打包时自动下载到 `%LOCALAPPDATA%\tauri\NSIS`(需能访问 GitHub,墙内要开代理)。不再需要 clang/lld/llvm/cargo-xwin。步骤变化时同步更新 README。
 - 重大技术决策(选型、数据模型、外部服务)在 `docs/decisions.md` 记一行:日期、决策、为什么、放弃了什么。技术栈选型是第一条要记的决策。发布前至少走一遍界面预览台 `node scripts/mock-preview.mjs` 确认界面能渲染、核心交互可用;`docs/manual-acceptance.md` 保留作真机复核清单,需要时再照它走。
 - README 面向用户维护:项目是什么、怎么启动、日常怎么用,保持非程序员能看懂。
+- 版本与发布的**通用骨架主本**在 `D:\AAA\Backups\Agents 配置文件\项目级 AGENTS.md`:改这类通用规则先改那份,再同步本文件 `## 版本与发布` 的骨架段;`本仓库落地(DSHarbor)` 那一块是本仓库专属,不写进主本。
 
 ## Agent skills
 
