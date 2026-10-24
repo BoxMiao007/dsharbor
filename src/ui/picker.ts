@@ -299,7 +299,12 @@ export class Picker {
     this.button.setAttribute("aria-expanded", "true");
     this.applyGeometry(true);
     // 弹层几何落定后再挂/刷新指示条（z-index 要压过列表的 30，否则胶囊被盖住看不见）。
-    this.thumb ??= attachScrollThumb(this.list, this.root, 10, 31);
+    this.thumb ??= attachScrollThumb({
+      getScroller: () => this.list,
+      getHolder: () => this.root,
+      inset: () => 10,
+      zIndex: 31,
+    });
     this.thumb.update();
     this.onOpen?.();
   }

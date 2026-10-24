@@ -800,9 +800,13 @@ async function main(): Promise<void> {
     // 垫片在折叠块里，details 开合改变几何，toggle 时刷新一次。
     // 挂点必须是「本分区」的 .content-main（每张分区各有一个），不能拿全文档第一个。
     const contentMain = logEl.closest<HTMLElement>(".content-main");
-    const logThumb = contentMain ? attachScrollThumb(logEl, contentMain, 10) : null;
+    const logThumb = contentMain
+      ? attachScrollThumb({ getScroller: () => logEl, getHolder: () => contentMain, inset: () => 10 })
+      : null;
     const shimArea = cliShimText.closest<HTMLElement>(".log-area");
-    const shimThumb = shimArea ? attachScrollThumb(cliShimText, shimArea, 6) : null;
+    const shimThumb = shimArea
+      ? attachScrollThumb({ getScroller: () => cliShimText, getHolder: () => shimArea, inset: () => 6 })
+      : null;
     cliShimText.closest("details")?.addEventListener("toggle", () => shimThumb?.update());
     refreshInnerScrollThumbsHook = () => {
       logThumb?.update();
@@ -4127,17 +4131,10 @@ async function main(): Promise<void> {
     });
   }
 
-  // 自绘滚动指示条：主卡（`.block.main-card`）的原生滚动条已在 style.css 里藏起来，滚动时它
-  // 右边缘浮出一条细胶囊，停手约 1 秒后淡出。只做视觉，不拦内容事件（轨道 5px 窄、
-  // 只在身上收指针），滚轮 / 键盘 / 触控板照旧。
-  //
-  // 挂的是「当前分区的主卡」而不是视口：界面定高，只有主卡内部滚、下方小卡固定可见，
-  // 视口永远不可滚，绑在视口上就等于没有。
-  const scrollTrack = document.createElement("div");
-  scrollTrack.className = "scroll-track";
-  const scrollThumb = document.createElement("div");
-  scrollThumb.className = "scroll-thumb";
-  scrollTrack.appendChild(scrollThumb);
+  // 自绘滚动指示条：主卡（`.block.main-card`）的原生滚动条已在样式里藏起来，滚动时它
+  // 右边缘浮出一条细胶囊，停手约 1 秒后淡出。机制在 scroll-thumb.ts（与日志正文、
+  // 版本下拉共用一份）。挂的是「当前分区的主卡」而不是视口：界面定高，只有主卡内部滚、
+  // 下方小卡固定可见，视口永远不可滚，绑在视口上就等于没有。
   /**
    * 胶囊轨道相对主卡上下各让进多少：取卡片圆角（`--radius-card`）减去 2px 余量。
    * 圆角是从令牌读的、不抄数字——维护者改令牌时这里跟着走（同 `motionMs` 的思路）。
@@ -4158,127 +4155,22 @@ async function main(): Promise<void> {
     return root.querySelector<HTMLElement>(".panel:not(.hidden):not(.is-leaving) .block.main-card");
   }
 
-  let scrollHost: HTMLElement | null = null;
-  /**
-   * 指示条挂在 `.content-main` 上：主卡自己是滚动容器，绝对定位的子元素会跟着
-   * 内容一起滚走，挂在外层才定得住（要贴住主卡右侧，见 style.css 的 .scroll-track）。
-   */
-  function mountScrollTrack(): void {
-    const holder = root.querySelector<HTMLElement>(".content-main");
-    if (holder && scrollTrack.parentElement !== holder) holder.appendChild(scrollTrack);
-  }
-
-  function syncScrollHost(): void {
-    mountScrollTrack();
-    scrollHost = activePanel();
-    updateScrollThumb();
-  }
-
-  const updateScrollThumb = (): void => {
-    mountScrollTrack();
-    // 以当前可见分区的主卡为准：切分区时记着的旧主卡已经随分区隐藏了。
-    const host = activePanel() ?? scrollHost;
-    if (!host) {
-      scrollThumb.style.height = "0px";
-      return;
-    }
-    scrollHost = host;
-    // 轨道贴住主卡的上下边界（内容区里除了主卡还有小卡与日志条，轨道理应只覆盖主卡）。
-    // 上下各让进 inset：胶囊是方的滚动条替身，贴到边就会骑在卡片圆角上
-    // ——那正是维护者看到的「滚动条穿出圆角」。让进圆角减 2px 后刚好落在直边里。
-    const holder = scrollTrack.parentElement;
-    if (holder) {
-      const inset = trackInset();
-      const hostRect = host.getBoundingClientRect();
-      const holderRect = holder.getBoundingClientRect();
-      scrollTrack.style.top = `${Math.round(hostRect.top - holderRect.top) + inset}px`;
-      scrollTrack.style.bottom = "auto";
-      scrollTrack.style.height = `${Math.max(0, Math.round(hostRect.height) - inset * 2)}px`;
-    }
-    const viewport = host.clientHeight;
-    const total = host.scrollHeight;
-    const trackHeight = scrollTrack.clientHeight;
-    if (total <= viewport + 1 || trackHeight <= 0) {
-      scrollThumb.style.height = "0px";
-      return;
-    }
-    const height = Math.max(28, (viewport / total) * trackHeight);
-    const top = (host.scrollTop / (total - viewport)) * (trackHeight - height);
-    scrollThumb.style.height = `${height}px`;
-    scrollThumb.style.transform = `translateY(${top}px)`;
-  };
-
-  let scrollIdleTimer = 0;
-  let dragState: { pointerId: number; startY: number; startScrollTop: number; scale: number } | null = null;
-  const showScrollThumb = (): void => {
-    scrollThumb.classList.add("visible");
-    window.clearTimeout(scrollIdleTimer);
-    scrollIdleTimer = window.setTimeout(() => scrollThumb.classList.remove("visible"), 900);
-  };
-  // 面板是滚动容器本身：滚动事件不从 window 冒泡上去，只能挂在面板上，
-  // 所以在最外层（只注册一次）用捕获阶段接住任意面板的滚动。
-  document.addEventListener(
-    "scroll",
-    (event) => {
-      const target = event.target;
-      // 滚动容器就是当前分区那张主卡（.block.main-card）。原来这里还写着「必须带 .split」——
-      // 主卡从来没有这个类，于是滚动一律被挡在门外：胶囊的高度与位置从不更新、也从不
-      // 变可见，等于只剩一条原生滚动条在干活（那道方角还会顶穿卡片圆角）。
-      if (!(target instanceof HTMLElement) || !target.classList.contains("main-card")) return;
-      if (target !== scrollHost) syncScrollHost();
-      updateScrollThumb();
-      // 拖动期间不跑这个计时器，否则按住不动 0.9 秒胶囊会在手里淡掉
-      if (!dragState) showScrollThumb();
-    },
-    { capture: true, passive: true },
-  );
-  window.addEventListener("resize", () => {
-    syncScrollHost();
-    updateScrollThumb();
+  // 轨道挂 `.content-main`：主卡自己是滚动容器，绝对定位的子元素会跟着内容一起滚走，
+  // 挂在外层才定得住；界面重建后由 getHolder 现取，仍能找回新节点。
+  const mainThumb = attachScrollThumb({
+    getScroller: activePanel,
+    getHolder: () => root.querySelector<HTMLElement>(".content-main"),
+    inset: trackInset,
   });
-
-  // 按住胶囊上下拖 = 直接改面板的滚动位置。位移按「胶囊能走的距离 ↔ 内容还能滚的距离」等比换算。
-  scrollThumb.addEventListener("pointerdown", (event) => {
-    const host = scrollHost ?? activePanel();
-    if (!host) return;
-    const travel = scrollTrack.clientHeight - scrollThumb.offsetHeight;
-    const scrollable = host.scrollHeight - host.clientHeight;
-    if (travel <= 0 || scrollable <= 1) return;
-    event.preventDefault();
-    dragState = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startScrollTop: host.scrollTop,
-      scale: scrollable / travel,
-    };
-    scrollThumb.setPointerCapture(event.pointerId);
-    scrollThumb.classList.add("dragging");
-  });
-  scrollThumb.addEventListener("pointermove", (event) => {
-    const host = scrollHost;
-    if (!dragState || !host || event.pointerId !== dragState.pointerId) return;
-    host.scrollTop = dragState.startScrollTop + (event.clientY - dragState.startY) * dragState.scale;
-  });
-  const endScrollDrag = (event: PointerEvent): void => {
-    if (!dragState || event.pointerId !== dragState.pointerId) return;
-    dragState = null;
-    scrollThumb.classList.remove("dragging");
-    if (scrollThumb.hasPointerCapture(event.pointerId)) scrollThumb.releasePointerCapture(event.pointerId);
-    showScrollThumb();
-  };
-  scrollThumb.addEventListener("pointerup", endScrollDrag);
-  scrollThumb.addEventListener("pointercancel", endScrollDrag);
-
-  syncScrollHost();
 
   // 窗口尺寸变化与 1 秒状态轮询只注册一次，通过钩子指向当前这套界面。
   window.addEventListener("resize", () => {
     syncMaximizeIconHook();
-    syncScrollHost();
+    mainThumb.update();
   });
   window.setInterval(() => void refreshNowHook(), 1000);
   updateScrollThumbHook = () => {
-    updateScrollThumb();
+    mainThumb.update();
     // mount() 里给日志正文与垫片挂的自绘胶囊（见 logThumb/shimThumb）：
     // 分区切换会改变它们的几何，随主卡轨道一并刷新。
     refreshInnerScrollThumbsHook();
