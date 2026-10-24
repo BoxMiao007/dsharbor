@@ -26,3 +26,6 @@ src-tauri/resources/*.tgz
 
 # 界面调研候选稿（仅本地草稿，不入库）
 /design/
+
+# Agent skills 本地安装产物（不入库）
+/.agents/
