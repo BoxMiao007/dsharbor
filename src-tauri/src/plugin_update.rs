@@ -292,6 +292,12 @@ fn update_one(
         package: package.clone(),
     };
     let command = plugin::plugin_command(config, profile, &op, &env)?;
+    let command_line = plugin::plugin_command_line(config, profile, &op).unwrap_or_else(|_| {
+        format!(
+            "dsh plugin --profile {} add {package}",
+            plugin::cli_profile_label(profile)
+        )
+    });
     let (code, output) = plugin::run_capture(command, plugin::PLUGIN_OP_TIMEOUT)?;
     let verify = verify_installed_version(&target, &dir, name, &latest);
     let ok = code == 0 && verify.is_ok();
@@ -302,14 +308,22 @@ fn update_one(
         Ok(()) => format!("版本已换成 {latest} ✓"),
         Err(err) => format!("{err} ✗"),
     };
+    // 首行必须能直接定位问题：命令退了非零就给退出码 + CLI 报错摘要，
+    // 命令退了零但校验不过就给校验原因；其余细节（完整命令、输出、备份）
+    // 挪到后面——界面失败行与汇总只取首行，报错被埋在末尾等于看不见。
+    let first_line = match (&verify, code) {
+        (Err(err), _) => format!("已执行但校验未过：{err}（退出码 {code}）"),
+        (Ok(()), code) => format!(
+            "更新命令失败（退出码 {code}）：{}",
+            cli_error_digest(&output)
+        ),
+    };
     let message = format!(
-        "更新命令：dsh plugin --profile {} add {package}（经 {}）\n\
-         插件包：{package}\n\
-         退出码：{code}\n\
+        "{first_line}\n\
+         命令：{command_line}（经 {}）\n\
          校验：{verify_text}\n\
          输出：\n{}\n\
          备份目录：{}{}",
-        plugin::cli_profile_label(profile),
         target.label(),
         plugin::tail_chars(&output, 4000),
         backup.dir,
@@ -321,6 +335,31 @@ fn update_one(
         eprintln!("[plugin-update] {name} 更新失败：\n{message}");
         Err(message)
     }
+}
+
+/// 从 CLI 输出里抓最像报错的一段做摘要：从末尾往前找报错头（pnpm/npm 的
+/// `Error:`/`×`/`ERR_` 与中文「失败」），从那一行起拼到输出结束；找不到就落回
+/// 最后一个非空行。只用于失败首行，压成一行并截断——完整输出仍留在「输出：」块里。
+fn cli_error_digest(output: &str) -> String {
+    let lines: Vec<&str> = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let start = lines
+        .iter()
+        .rposition(|line| {
+            line.starts_with("Error")
+                || line.starts_with('×')
+                || line.starts_with("ERR_")
+                || line.contains("失败")
+        })
+        .unwrap_or(lines.len().saturating_sub(1));
+    let mut text = lines[start.min(lines.len())..].join(" ");
+    if text.chars().count() > 240 {
+        text = text.chars().take(240).collect();
+    }
+    text
 }
 
 /// 更新单个（`name=Some`）或全部有更新的第三方插件（`name=None`，逐个执行、
@@ -456,6 +495,36 @@ pub fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn digest_prefers_the_error_block_over_progress_lines() {
+        let output = "Progress: resolved 0, reused 1\n\
+                      Error: ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY\n\
+                      \n\
+                      ╰─▶ Broken lockfile: no entry for 'billion-context@0.1.206'\n\
+                      dsh: plugin command failed; diagnostics: C:\\x\\pnpm.log\n";
+        let digest = cli_error_digest(output);
+        assert!(digest.starts_with("Error: ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY"));
+        assert!(digest.contains("Broken lockfile"));
+        assert!(digest.contains("diagnostics"));
+    }
+
+    #[test]
+    fn digest_without_an_error_marker_falls_back_to_the_last_line() {
+        assert_eq!(
+            cli_error_digest("line one\nline two\n\nline three"),
+            "line three"
+        );
+        assert_eq!(cli_error_digest(""), "");
+    }
+
+    #[test]
+    fn digest_is_capped_and_single_line() {
+        let long = format!("Error: {}\n", "x".repeat(600));
+        let digest = cli_error_digest(&long);
+        assert!(digest.chars().count() <= 240);
+        assert!(!digest.contains('\n'));
+    }
 
     /// 本进程专用的临时目录（与 plugin_switch 测试同一套做法）。
     fn temp_root(tag: &str) -> std::path::PathBuf {

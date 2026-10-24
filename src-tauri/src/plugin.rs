@@ -641,6 +641,22 @@ pub(crate) fn plugin_command(
     }))
 }
 
+/// 与 [`plugin_command`] 同一套计划算出的命令行回显（不执行）。失败回执等
+/// 要给用户看「到底跑了什么」的场合用它，避免文案里硬编码 `dsh` 与实际
+/// 启动方式（npx / 全局 / 二进制 / WSL）对不上。
+pub(crate) fn plugin_command_line(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &PluginOp,
+) -> Result<String, String> {
+    ensure_cli_alias(&Target::of(config), profile)?;
+    let spawn = build_plugin_plan(config, profile, op)?;
+    Ok(match spawn {
+        dsharbor_core::launch::SpawnPlan::ShellLine { line, .. } => line,
+        other => format!("{other:?}"),
+    })
+}
+
 /// 暂存目录：pnpm 会把含空格的 `file:` 规格在空格处截断（`file:D:\Program` → 当包名
 /// 去 registry 查 → 404），而默认安装目录 `D:\Program Files\DSHarbor` 就含空格，
 /// 所以插件包必须先复制到一个不含空格的路径再安装。
