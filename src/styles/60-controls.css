@@ -869,12 +869,113 @@ input[type="number"] {
      到卡片宽度为止折行；折成多行时胶囊两端仍是圆的，视觉上依然成立。 */
   width: fit-content;
   max-width: 100%;
+  /* 长句限一行（用户反馈折三四行的胶囊不好看）：放不下就省略号，全文挪进
+     下方 [data-tip] 悬停气泡。短句放得下，这些规则对它没有可见影响。
+     用 clip 而不是 hidden：hidden 会把纵向也变成裁切上下文、裁掉挂在胶囊上的
+     气泡；clip 可以只裁横向、纵向保持可见（CSS Overflow 允许 clip+visible 组合）。 */
+  overflow: clip visible;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   padding: 2px 9px;
   border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--card));
   border-radius: 999px;
   background: color-mix(in srgb, var(--warn) 14%, var(--card));
   color: var(--warn);
+  /* 限一行后长句顶满胶囊，字号收一号（12→11）让它读起来不那么满。 */
+  font-size: 11px;
   line-height: 1.6;
+}
+
+/* 限行后全文走悬停气泡：结构沿用 50-info.css 那套自绘气泡（::after 画气泡、
+   ::before 画箭头、同一组时长令牌），差别只在锚定——胶囊是「一行里的整块」，
+   气泡左边缘对齐胶囊左缘、向右展开，不搞居中（居中会往卡片左缘外撑）。
+   只有挂着 data-tip 的动态提示才有气泡；静态说明没有 data-tip，不受影响。 */
+.hint.notice[data-tip]:not(.hidden) {
+  position: relative;
+}
+
+.hint.notice[data-tip]:not(.hidden)::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  max-width: 420px;
+  padding: 6px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--tip-bg);
+  box-shadow: var(--tip-shadow);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(2px);
+  transition:
+    opacity var(--m-tip-fade) var(--ease-out),
+    transform var(--m-tip-fade) var(--ease-out),
+    visibility 0s linear var(--m-tip-fade);
+}
+
+/* 箭头：与 50-info.css 同款旋转小方块，骑在气泡下沿。 */
+.hint.notice[data-tip]:not(.hidden)::before {
+  content: "";
+  position: absolute;
+  z-index: 20;
+  left: 12px;
+  bottom: calc(100% + 4px);
+  width: 7px;
+  height: 7px;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--tip-bg);
+  transform: rotate(45deg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--m-tip-fade) var(--ease-out),
+    visibility 0s linear var(--m-tip-fade);
+}
+
+.hint.notice[data-tip]:not(.hidden):hover::after,
+.hint.notice[data-tip]:not(.hidden):focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition-delay: var(--m-tip-delay), var(--m-tip-delay), var(--m-tip-delay);
+}
+
+.hint.notice[data-tip]:not(.hidden):hover::before,
+.hint.notice[data-tip]:not(.hidden):focus-visible::before {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: var(--m-tip-delay), var(--m-tip-delay);
+}
+
+/* 登录提示贴着窗口顶（.content 首行），上面没有空间：气泡翻到下面，箭头指上。 */
+#login-note[data-tip]:not(.hidden)::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateY(-2px);
+}
+
+#login-note[data-tip]:not(.hidden)::before {
+  bottom: auto;
+  top: calc(100% + 4px);
+  border-right: none;
+  border-bottom: none;
+  border-left: 1px solid var(--hairline);
+  border-top: 1px solid var(--hairline);
+}
+
+#login-note[data-tip]:not(.hidden):hover::after,
+#login-note[data-tip]:not(.hidden):focus-visible::after {
+  transform: translateY(0);
 }
 
 .hint code,

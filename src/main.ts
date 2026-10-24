@@ -397,19 +397,31 @@ async function main(): Promise<void> {
       return `v${selectedVersion} 本机 npx 缓存里已有这一份，但选它启动会再下载一份——npx 按命令写法各存一份缓存，缓存里那份是裸包名写法（不带 @版本）留下的。`;
     }
 
+    /**
+     * 动态提示胶囊统一入口：正文在 CSS 里限成一行（.hint.notice），全文挂 data-tip
+     * 走悬停气泡。文字为空时连同 data-tip 一起清掉，免得留一颗空气泡。
+     */
+    function setNoticeHint(el: HTMLElement, text: string): void {
+      el.textContent = text;
+      if (text === "") {
+        delete el.dataset.tip;
+        el.classList.add("hidden");
+        return;
+      }
+      el.dataset.tip = text;
+      el.classList.remove("hidden");
+    }
+
     /** 版本下拉、命令预览、提示行与刷新按钮的状态一处刷齐。 */
     function renderVersionUI(): void {
       npxVersionPicker.setChoices(versionChoices());
       npxVersionPicker.setValue(selectedVersion ?? AUTO_VERSION);
       npxCommandPreview.textContent = npxCommandOf(selectedVersion);
       const hint = registryHint();
-      npxVersionsHint.textContent = hint;
-      npxVersionsHint.classList.toggle("hidden", hint === "");
-      // 读不到列表时这句要像错误一样显眼（黄色胶囊），读得到时就是普通灰字。
+      setNoticeHint(npxVersionsHint, hint);
       npxVersionsHint.classList.toggle("notice", registryError !== null && !registryLoading);
       const installed = installedHint();
-      npxInstalledHint.textContent = installed;
-      npxInstalledHint.classList.toggle("hidden", installed === "");
+      setNoticeHint(npxInstalledHint, installed);
       // 读列表期间刷新按钮转圈并禁用：连点会让每次强制查询都真发一次 npm view。
       // 转的是叠加的环形 spinner，不是语义图标本身（见 src/ui/sqbusy.ts）。
       npxVersionsRefresh.disabled = registryLoading;
@@ -1596,10 +1608,9 @@ async function main(): Promise<void> {
       // 顶部徽章只报告「桥接插件装没装」（纯两态）；文案由 paintBridgeBadge 统一写。
       // 登录链接本身的状态不占一格，但出问题时仍要能看见：有错就写进下面那一行。
       if (status.loginError) {
-        loginNote.textContent = status.loginError;
-        loginNote.classList.remove("hidden");
+        setNoticeHint(loginNote, status.loginError);
       } else {
-        loginNote.classList.add("hidden");
+        setNoticeHint(loginNote, "");
       }
       // 「重启 DSH」的持续转动：拿这次状态过一遍收场条件（每秒轮询都会走到这里）。
       updateRestartSpin(status, isStarting(status));
@@ -3311,15 +3322,21 @@ async function main(): Promise<void> {
         // 只有用户主动点的「检查更新」才写日志：进卡自动查是背景动作，结果就在
         // 行内版本号与徽章上，写日志只会让每次开卡都冒出一条没动作的未读。
         if (force) {
-          logAction(
-            `已重新检查插件更新：${pending} 个可更新` + (broken ? `、${broken} 个查不到` : ""),
-          );
+          const summary =
+            `已重新检查插件更新：${pending} 个可更新` + (broken ? `、${broken} 个查不到` : "");
+          logAction(summary);
+          // 用户主动点的「检查更新」完成后右下角也回执一条（自动查是背景动作，不打扰）。
+          showToast(summary, "info");
         }
       } catch (err) {
         if (prefs.profile === name) {
           setPluginNote(`检查插件更新失败：${String(err)}`);
         }
         logAction(`检查插件更新失败：${String(err)}`);
+        // 只有用户主动点的「检查更新」失败才弹 toast：自动查失败安静落日志。
+        if (force) {
+          showToast(`检查插件更新失败：${String(err)}`, "error");
+        }
       } finally {
         if (force) {
           pluginCheckBusy = false;
@@ -3547,13 +3564,7 @@ async function main(): Promise<void> {
 
     /** 桥接关掉后的提醒：一字不改地用后端那句，免两处口径不一样。 */
     function setPluginWarning(text: string | null): void {
-      if (!text) {
-        pluginWarning.textContent = "";
-        pluginWarning.classList.add("hidden");
-        return;
-      }
-      pluginWarning.textContent = text;
-      pluginWarning.classList.remove("hidden");
+      setNoticeHint(pluginWarning, text ?? "");
     }
 
     /** 环境清单变化后统一刷三处：环境按钮、补丁层浮窗、插件卡。 */

@@ -98,10 +98,13 @@
 }
 
 /* 自定义 tag 与「+N」折叠计数：与「已缓存」同款灰底，信息量最低，不跟上面几种抢眼。
-   浅色下 --elev 就是纯白、压在白底的下拉里没有轮廓，沉一档用 --cell 才像一枚徽章。 */
+   浅色下 --elev 是纯白、压在白底的下拉里没有轮廓；--cell 也只沉了半档（用户反馈
+   依旧不显眼），所以再混一点前景色压深，并加一圈同源的内描边把胶囊轮廓立起来。
+   深色下混入亮前景是往亮里走，同样是在拉开与弹层底的距离，两套外观方向一致。 */
 .picker-badge-other {
   color: var(--fg-dim);
-  background: var(--cell);
+  background: color-mix(in srgb, var(--fg) 8%, var(--cell));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent);
 }
 
 /* 徽章气泡：气泡里要放「看得见的徽章」（tag 名、被「+N」折叠掉的标签名），而
@@ -165,10 +168,11 @@
 }
 
 /* 「已缓存」= 本机 npx 缓存里已有这一版，选它启动不用重新下载。
-   底色与 .picker-badge-other 同理：浅色下 --elev 是纯白，要用 --cell 才有轮廓。 */
+   底色与描边跟 .picker-badge-other 同一套（见那里的说明），两枚灰底胶囊长相一致。 */
 .picker-badge-cached {
   color: var(--fg-dim);
-  background: var(--cell);
+  background: color-mix(in srgb, var(--fg) 8%, var(--cell));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent);
 }
 
 /* 官方列表里已经没有、但配置里仍然记着的版本：提醒它是手写的，不是当前可选版本。 */
