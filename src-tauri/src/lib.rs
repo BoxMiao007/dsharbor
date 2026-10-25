@@ -1307,6 +1307,28 @@ async fn plugin_update(
     .map_err(|err| format!("后台更新插件失败：{err}"))?
 }
 
+/// 把一份环境里装着的插件装进另一份环境（插件行的右键菜单「添加到其他环境」）。
+///
+/// 版本取源环境实际装着的那一份，装完回读校验；两套环境必须在同一个运行环境里。
+/// 要写目标环境的 `node_modules`，所以同样要求会话已停止。
+#[tauri::command]
+async fn plugin_install_into(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: LaunchConfig,
+    source: String,
+    target: String,
+    plugin: String,
+) -> Result<plugin_update::UpdateOutcome, String> {
+    ensure_session_stopped(&state, "把插件装到别的环境", &target)?;
+    // pnpm add 要几十秒到几分钟，不能占着主线程（与 plugin_update 同一理由）。
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_update::install_into(&app, &config, &source, &target, &plugin)
+    })
+    .await
+    .map_err(|err| format!("后台把插件装到别的环境失败：{err}"))?
+}
+
 /// 记录界面主题（Rust 侧镜像）。
 ///
 /// 主题本体记在 WebView 的 localStorage，Rust 读不到；但窗口装饰（主题 3 换系统
@@ -1701,6 +1723,7 @@ pub fn run() {
             plugin_toggle,
             plugin_updates_list,
             plugin_update,
+            plugin_install_into,
             open_external,
             save_ui_theme,
             check_binary_path,

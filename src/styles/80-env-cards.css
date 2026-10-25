@@ -271,6 +271,51 @@ html[data-motion="off"] .env-card:hover .env-more {
   color: var(--danger);
 }
 
+/* 插件行的右键菜单：复用 .env-menu 的浮层形状，只补标题与目标环境按钮的排布。
+   定位同样由 JS 算（按鼠标点夹在视口内），这里只定内部结构。 */
+.plugin-menu-title {
+  margin: 0 0 2px;
+  padding: 4px 10px 6px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  /* 包名可能很长：单行截断，完整名字在下面几个按钮的气泡里。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-menu-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plugin-menu-targets button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* 目标环境那一行的右侧小字（是当前正在看的那个环境 / 已装着同版本）。
+   等宽数字：里面会带版本号，换目标环境时宽度不抖。 */
+.plugin-menu-targets .menu-note {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.plugin-menu-empty {
+  margin: 0;
+  padding: 6px 10px 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* 插件卡里的插件清单：外层不再画框（小卡已经是卡中卡那一层）。 */
 .plugin-panel {
   display: flex;

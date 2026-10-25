@@ -200,6 +200,8 @@ const state = {
   /** 这一段里注定失败的插件名（数组）：回放 done 时带 ok:false 与原因；
       失败的名字会从数组里移除，所以「重试」那次会成功——和真后端一样，失败可重来。 */
   pluginUpdateFail: [],
+  /** 跨环境搬运（plugin_install_into）的人工延时（毫秒）：给行内转环一个确定的忙态窗口。 */
+  pluginTransferDelay: 0,
   /** 版本列表查询的人工延时：给方钮忙态（环形 spinner / 完成勾）测一个确定的忙态窗口。 */
   registryDelay: 0,
   /** 插件清单（`plugin_list`）的人工延时（毫秒，按「每条命令」计）：给骨架屏一个确定的
@@ -769,6 +771,51 @@ window.__mockUnimplemented = [];
         backupDir: "C:\\Users\\mock\\AppData\\Roaming\\DSHarbor\\backups\\backup-mock",
       };
       return result;
+    },
+    // 跨环境搬运：把当前环境的某个插件装进另一个环境（命令名 plugin_install_into）。
+    // 目标环境里已装着同版本就直接返回成功（与真后端一致），方便预览「已装不重复装」的文案。
+    plugin_install_into: (a) => {
+      const source = a && a.source;
+      const target = a && a.target;
+      const plugin = a && a.plugin;
+      seen("plugin_install_into:" + source + "->" + target + "/" + plugin);
+      if (S.session === "running") {
+        throw busyText("把插件装到别的环境", target);
+      }
+      // 版本优先取插件行上的 current，没有就退回更新清单里那份（假数据里版本号记在那边）。
+      const from = (S.plugins[source] || []).find((it) => it.name === plugin);
+      const fromUpdate = ((S.pluginUpdates && S.pluginUpdates[source]) || []).find((it) => it.name === plugin);
+      const version = (from && from.current) || (fromUpdate && fromUpdate.current);
+      if (!S.profiles.some((p) => p.name === target)) {
+        throw "找不到目标环境「" + target + "」。";
+      }
+      const to = (S.plugins[target] = S.plugins[target] || []);
+      const existing = to.find((it) => it.name === plugin);
+      const settle = () => {
+        if (existing && existing.current === version) {
+          return {
+            ok: true,
+            message: target + " 里已经装着 " + plugin + "@" + version + "，没有重复安装。",
+            backupDir: "",
+          };
+        }
+        // 目标环境里没有这一行就照源那份的形状补一条（真后端装完也会出现在清单里）。
+        if (existing) {
+          existing.current = version;
+        } else if (from) {
+          to.push({ ...from, current: version });
+        }
+        return {
+          ok: true,
+          message:
+            "已把「" + plugin + "」@" + (version || "?") + " 从环境「" + source + "」装进「" + target + "」。重启 DSH 后生效。\\n" +
+            "命令：dsh plugin --profile " + target + " add " + plugin + "@" + (version || "?"),
+          backupDir: "C:\\\\Users\\\\mock\\\\AppData\\\\Roaming\\\\DSHarbor\\\\backups\\\\backup-mock",
+        };
+      };
+      return S.pluginTransferDelay > 0
+        ? new Promise((done) => setTimeout(() => done(settle()), S.pluginTransferDelay))
+        : settle();
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
     wsl_distro_info: () => S.distros,

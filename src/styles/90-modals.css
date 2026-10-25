@@ -327,6 +327,24 @@ button.danger:hover:not(:disabled) {
   color: var(--fg-mute);
 }
 
+/* 跨环境搬运进行中：整行转淡防重复点，右端一枚转环说明「在装」，搬完自动刷新。
+   与删除中的 .dsh-version-removing 同一套做法（转淡 + 转环），三处忙态观感一致。 */
+.plugin-row.is-transferring {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.plugin-transfer-spin {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-top-color: currentColor;
+  color: var(--accent);
+  animation: spin-turn var(--spin-ms) linear infinite;
+}
+
 /* ---- 插件清单加载骨架（#32）----------------------------------------------
    清单还没回来时铺三行与真实行同高同结构的骨架（左圆点 + 长短两条灰条 + 右端开关位），
    数据到达后换成真实行并逐行错开入场。假行不会被点、也不进读屏（aria-hidden），

@@ -49,6 +49,7 @@ html[data-motion="off"] #btn-toggle.busy .launch-spin,
 html[data-motion="off"] #install-note .launch-spin,
 html[data-motion="off"] .dsh-remove-spin,
 html[data-motion="off"] .dsh-version-removing,
+html[data-motion="off"] .plugin-transfer-spin,
 html[data-motion="off"] #btn-toggle.swap:hover,
 html[data-motion="off"] #btn-toggle.swap:focus-visible {
   animation: none !important;

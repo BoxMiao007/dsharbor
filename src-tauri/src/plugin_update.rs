@@ -527,6 +527,126 @@ pub fn update(
     }
 }
 
+/// 把一份环境里装着的插件装进另一份环境（界面上的「添加到其他环境」）。
+///
+/// 两套环境都在同一个运行环境里（宿主或同一个 WSL 发行版）：壳的插件命令只认
+/// 当前 `LaunchConfig` 的 runtime，跨 runtime 搬运需要两套运行时同时在场，
+/// 界面也从不提供这种入口，所以直接拒掉而不是默默装错地方。
+///
+/// 版本取源环境里实际装着的那一份，而不是 registry 上的最新版——用户点的是
+/// 「把这个插件搬过去」，搬完两边应当同时是同一份版本。
+pub fn install_into(
+    app: &tauri::AppHandle,
+    config: &LaunchConfig,
+    source_profile: &str,
+    target_profile: &str,
+    name: &str,
+) -> Result<UpdateOutcome, String> {
+    if source_profile == target_profile {
+        return Err("源环境和目标环境是同一个，不用搬。".to_string());
+    }
+    if !plugin_update::in_update_scope(name) {
+        return Err("官方内置包与桥接插件不适用跨环境搬运".to_string());
+    }
+    plugin_update::validate_package_name(name)?;
+    let target = Target::of(config);
+    if !crate::profile_ops::profile_exists(&target, source_profile)? {
+        return Err(format!("找不到源环境「{source_profile}」。"));
+    }
+    if !crate::profile_ops::profile_exists(&target, target_profile)? {
+        return Err(format!("找不到目标环境「{target_profile}」。"));
+    }
+    let source_dir = plugin::profile_dir(&target, source_profile)?;
+    let (version, source_error) = read_installed(&target, &source_dir, name);
+    let Some(version) = version else {
+        return Err(source_error.unwrap_or_else(|| {
+            format!("环境「{source_profile}」里没有装「{name}」（读不到已装版本）")
+        }));
+    };
+
+    let target_dir = plugin::profile_dir(&target, target_profile)?;
+    // 目标环境已经有同一个版本就别重复装：pnpm 会报「已是最新」或什么都不做，
+    // 用户却会以为刚做了什么。说清楚现状比装作装过更有用。
+    let (existing, _) = read_installed(&target, &target_dir, name);
+    if existing.as_deref() == Some(version.as_str()) {
+        return Ok(UpdateOutcome {
+            ok: true,
+            message: format!(
+                "环境「{target_profile}」里已经装着「{name}」@{version}，没有重复安装。"
+            ),
+            backup_dir: String::new(),
+        });
+    }
+
+    let prefs = crate::settings::load(app).prefs;
+    let env = crate::proxy::child_env(&prefs, prefs.download_source);
+    let package = format!("{name}@{version}");
+    let op = launch::PluginOp::Install {
+        package: package.clone(),
+    };
+    let command_line =
+        plugin::plugin_command_line(config, target_profile, &op).unwrap_or_else(|_| {
+            format!(
+                "dsh plugin --profile {} add {package}",
+                plugin::cli_profile_label(target_profile)
+            )
+        });
+    let backup = plugin::backup_profile(app, &target, target_profile)?;
+    let (code, output, repaired) = run_plugin_op(config, target_profile, &op, &env)?;
+    let verify = verify_installed_version(&target, &target_dir, name, &version);
+    let ok = code == 0 && verify.is_ok();
+    let verify_text = match &verify {
+        Ok(()) => format!("版本已就位 {version} ✓"),
+        Err(err) => format!("{err} ✗"),
+    };
+    let lockfile_broken = plugin_update::lockfile_needs_repair(&output);
+    let first_line = match (&verify, code) {
+        (Err(err), _) if lockfile_broken => format!(
+            "目标环境的依赖锁文件坏了（pnpm-lock.yaml 与已装依赖对不上），装在装之前就失败：{err}（退出码 {code}）：{}",
+            cli_error_digest(&output)
+        ),
+        (Err(err), _) => format!("已执行但校验未过：{err}（退出码 {code}）"),
+        (Ok(()), code) => format!(
+            "安装命令失败（退出码 {code}）：{}",
+            cli_error_digest(&output)
+        ),
+    };
+    let repair_note = match &repaired {
+        Some(note) => format!(
+            "
+{note}"
+        ),
+        None => String::new(),
+    };
+    let detail = format!(
+        "{first_line}
+         命令：{command_line}（经 {}）
+         校验：{verify_text}{repair_note}
+         输出：
+{}
+         备份目录：{}{}",
+        target.label(),
+        plugin::tail_chars(&output, 4000),
+        backup.dir,
+        plugin::prune_note(&backup.pruned)
+    );
+    if ok {
+        Ok(UpdateOutcome {
+            ok: true,
+            message: format!(
+                "已把「{name}」@{version} 从环境「{source_profile}」装进「{target_profile}」。重启 DSH 后生效。
+{detail}"
+            ),
+            backup_dir: backup.dir,
+        })
+    } else {
+        Err(format!(
+            "把「{name}」装进环境「{target_profile}」失败：
+{detail}"
+        ))
+    }
+}
+
 /// 检查更新一次最多同时发出的 `npm view` 条数。
 ///
 /// 检查是纯只读（不写清单、不装包），每条查询是独立子进程，会话缓存与

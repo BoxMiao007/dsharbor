@@ -513,6 +513,11 @@ export function buildHtml(info: AppInfo): string {
       <button type="button" role="menuitem" data-env-act="patch">补丁层</button>
       <button type="button" role="menuitem" data-env-act="open">打开目录</button>
     </div>
+    <div id="plugin-menu" class="env-menu hidden" role="menu" aria-label="插件操作">
+      <p id="plugin-menu-title" class="plugin-menu-title"></p>
+      <p id="plugin-menu-empty" class="plugin-menu-empty hidden">没有别的环境可装（先新建或复制一个环境）</p>
+      <div id="plugin-menu-targets" class="plugin-menu-targets"></div>
+    </div>
   `;
 
   return `${titlebar}

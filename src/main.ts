@@ -2248,6 +2248,108 @@ async function main(): Promise<void> {
       });
     }
 
+    // ---- 插件行的右键菜单：把这份插件搬进另一个环境 ----------------------------
+    /** 菜单当前操作的「哪个环境的哪个插件」；null 表示菜单是收起的。 */
+    let pluginMenuTarget: { profile: string; plugin: string } | null = null;
+    /** 正在搬运的那一次：菜单收起后这一行仍要显示忙态，所以单独记一行名字。 */
+    let pluginTransferBusy: string | null = null;
+
+    function closePluginMenu(): void {
+      if (pluginMenuTarget === null) {
+        return;
+      }
+      pluginMenuTarget = null;
+      pluginMenu.classList.add("hidden");
+    }
+
+    /** 可以装进去的环境：清单里除当前这个之外的都在，逐个标出「已装着同版本」。 */
+    function pluginMenuTargetsHtml(plugin: string): string {
+      const others = profileList.filter((item) => item.name !== prefs.profile);
+      if (others.length === 0) {
+        return "";
+      }
+      return others
+        .map((item) => {
+          const note = item.depsInstalled ? "" : "缺依赖";
+          const label = escapeHtml(item.name);
+          const tip = item.depsInstalled
+            ? `把「${plugin}」也装进环境「${item.name}」`
+            : `环境「${item.name}」还没装依赖（先给环境「安装依赖」再搬）`;
+          return `<button type="button" role="menuitem" data-plugin-target="${label}" title="${escapeHtml(tip)}"${item.depsInstalled ? "" : " disabled"}>${label}${note ? `<span class="menu-note">${note}</span>` : ""}</button>`;
+        })
+        .join("");
+    }
+
+    /** 右键某个插件行：在鼠标处展开「装进哪个环境」。点了菜单以外的地方就收起来。 */
+    function openPluginMenu(event: MouseEvent, plugin: string): void {
+      closeEnvMenu();
+      closePluginMenu();
+      const profile = prefs.profile;
+      if (!profile || pluginTransferBusy !== null) {
+        return;
+      }
+      pluginMenuTarget = { profile, plugin };
+      pluginMenuTitle.textContent = `把「${plugin}」装进…`;
+      const targets = pluginMenuTargetsHtml(plugin);
+      pluginMenuTargets.innerHTML = targets;
+      pluginMenuEmpty.classList.toggle("hidden", targets !== "");
+      pluginMenuTargets.classList.toggle("hidden", targets === "");
+      pluginMenu.classList.remove("hidden");
+      for (const btn of pluginMenuTargets.querySelectorAll<HTMLButtonElement>("[data-plugin-target]")) {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.pluginTarget ?? "";
+          closePluginMenu();
+          void installIntoEnv(plugin, target);
+        });
+      }
+      // 贴着鼠标放，靠右/靠下时收回来，别被窗口裁掉。
+      const width = pluginMenu.offsetWidth;
+      const height = pluginMenu.offsetHeight;
+      const left = Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8));
+      const top =
+        event.clientY + height > window.innerHeight - 8
+          ? Math.max(8, event.clientY - height)
+          : event.clientY;
+      pluginMenu.style.left = `${Math.round(left)}px`;
+      pluginMenu.style.top = `${Math.round(top)}px`;
+    }
+
+    /** 只取报错的第一行：动作回执是一行的高度，多行会把它撑成三段。 */
+    function firstLine(text: string): string {
+      const index = text.indexOf("\n");
+      return index < 0 ? text : text.slice(0, index);
+    }
+
+    /** 把行里这一份插件装进另一个环境：版本取当前环境实际装着的那份，不走 registry。 */
+    async function installIntoEnv(plugin: string, target: string): Promise<void> {
+      const profile = prefs.profile;
+      if (!profile || pluginTransferBusy !== null) {
+        return;
+      }
+      pluginTransferBusy = plugin;
+      renderPluginList();
+      try {
+        const outcome = await invoke<UpdateOutcome>("plugin_install_into", {
+          config: collectConfig(),
+          source: profile,
+          target,
+          plugin,
+        });
+        logAction(outcome.message);
+        showToast(
+          outcome.ok ? firstLine(outcome.message) : `装进「${target}」失败：${firstLine(outcome.message)}`,
+          outcome.ok ? "ok" : "error",
+        );
+      } catch (err) {
+        const text = String(err);
+        logAction(`把「${plugin}」装进环境「${target}」失败：${text}`);
+        showToast(`装进「${target}」失败：${firstLine(text)}`, "error");
+      } finally {
+        pluginTransferBusy = null;
+        renderPluginList();
+      }
+    }
+
     // ---- 浮窗层：桥接插件 / 补丁层 / 环境名输入 --------------------------------
     const modalScrim = $<HTMLElement>("modal-scrim");
     const modalBridge = $<HTMLElement>("modal-bridge");
@@ -2421,7 +2523,10 @@ async function main(): Promise<void> {
       true,
     );
     // 点菜单与浮窗以外的地方收起菜单。
-    document.addEventListener("click", () => closeEnvMenu());
+    document.addEventListener("click", () => {
+      closeEnvMenu();
+      closePluginMenu();
+    });
 
     btnBridge.addEventListener("click", () => {
       void refreshBridgeState();
@@ -2912,6 +3017,10 @@ async function main(): Promise<void> {
     const pluginProgress = $<HTMLElement>("plugin-progress");
     const pluginProgressBar = $<HTMLElement>("plugin-progress-bar");
     const pluginProgressSum = $<HTMLParagraphElement>("plugin-progress-sum");
+    const pluginMenu = $<HTMLElement>("plugin-menu");
+    const pluginMenuTitle = $<HTMLParagraphElement>("plugin-menu-title");
+    const pluginMenuEmpty = $<HTMLParagraphElement>("plugin-menu-empty");
+    const pluginMenuTargets = $<HTMLElement>("plugin-menu-targets");
 
     /** 与 Rust 侧 `plugin_switch::PluginItem` 对应。 */
     interface PluginItem {
@@ -3257,7 +3366,10 @@ async function main(): Promise<void> {
       // 不会每次重画都重播一遍入场。
       const enterAttr =
         enterIndex >= 0 ? ` style="--i:${enterIndex}" data-enter="${enterIndex}"` : "";
-      return `<div class="plugin-row${item.enabled ? "" : " is-off"}" data-row="${escapeHtml(item.name)}"${phaseAttr}${enterAttr}${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
+      // 跨环境搬运进行中：这一行转淡并显示转环，别让人以为点了没反应（搬完自动刷新清单）。
+      const transferring = pluginTransferBusy === item.name;
+      const transferAttr = transferring ? ' data-transfer="busy"' : "";
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}${transferring ? " is-transferring" : ""}" data-row="${escapeHtml(item.name)}"${phaseAttr}${enterAttr}${transferAttr}${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${transferring ? '<span class="plugin-transfer-spin" aria-hidden="true"></span>' : ""}${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
     }
 
     /** 一行骨架：左侧一个圆点（图标位）加长短两条灰条（标题与说明），右端一枚方条（开关位）。
@@ -3299,6 +3411,13 @@ async function main(): Promise<void> {
       for (const box of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin-update]")) {
         box.addEventListener("click", () => {
           void updatePlugin(box.dataset.pluginUpdate ?? "");
+        });
+      }
+      // 右键一行：把这个插件装进别的环境。清单是整块重铺的，所以每次铺完重新绑。
+      for (const row of pluginList.querySelectorAll<HTMLElement>("[data-row]")) {
+        row.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          openPluginMenu(event, row.dataset.row ?? "");
         });
       }
       renderPluginUpdatesToolbar();
