@@ -13,7 +13,8 @@ repository = "https://github.com/BoxMiao007/dsharbor"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order：改写环境 package.json（组合包开关）时保持原有键序，不做无谓重排。
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [profile.release]
 # 默认「速度优先」，供本地测试用：fat LTO + codegen-units = 1 会把收尾

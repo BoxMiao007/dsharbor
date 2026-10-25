@@ -656,7 +656,7 @@ window.__mockUnimplemented = [];
       }
       const list = S.plugins[name] || (S.plugins[name] = []);
       const item = list.find((it) => it.name === plugin);
-      if (!item) throw "环境「" + name + "」里没有登记插件「" + plugin + "」，可能是清单刚变过，刷新后再试。";
+      if (!item) throw "环境「" + name + "」里没有装插件「" + plugin + "」，可能是清单刚变过，刷新后再试。";
       if (!item.switchable) throw "读不到「" + plugin + "」在补丁层里的挂载点，壳没法安全地开关它。";
       item.enabled = enabled;
       // 开关前自动备份：与后端一样，先备份再写文件，所以列表会跟着长一条。
@@ -668,9 +668,9 @@ window.__mockUnimplemented = [];
       return {
         message:
           (enabled
-            ? "已打开「" + plugin + "」的插件开关，重启 DSH 后生效。"
-            : "已关闭「" + plugin + "」的插件开关，重启 DSH 后生效；插件包还在磁盘上，重新打开不需要重新下载。") +
-          "已自动备份补丁层：" + path,
+            ? "已把「" + plugin + "」加回 DSH 的组合包列表，重启 DSH 后生效。"
+            : "已把「" + plugin + "」移出 DSH 的组合包列表，重启 DSH 后生效；插件包和依赖都留在磁盘上，重新打开不需要重新下载。") +
+          "已自动备份环境文件：" + path,
         backup: path,
         warning:
           plugin === "dsharbor-bridge" && !enabled

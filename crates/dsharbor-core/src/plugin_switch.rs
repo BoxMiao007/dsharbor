@@ -1,47 +1,46 @@
-//! 插件开关：把环境里登记的插件与补丁层里的禁用表达合成一份「启用 / 停用」视图，
-//! 以及切换时该往补丁层写什么。
+//! 插件开关：把环境里登记的组合包与已装的插件包合成一份「启用 / 停用」视图，
+//! 以及切换时该改哪里。
 //!
-//! 为什么开关落在补丁层而不是卸载：插件包本身装在 `node_modules` 里，关掉它只是让
-//! DSH 下次加载时不挂载这一项，包还在磁盘上，重新打开不需要重新下载，也不用碰
-//! pnpm 与 DSH 的锁定文件。补丁层（`cordis.patch.yml`）正是 DSH 自己提供的用户
-//! 覆盖层，是唯一正确的落点。
+//! 开关的落点与 DSH 自己的插件管理同口径（DSH 插件列表那排开关就是组合包开关，
+//! 见 dsh-plugin-manager 的 README）：**改环境 `package.json` 的
+//! `dsh.profile.bundles` 有序列表**。开着 = 名字在列表里，DSH 加载时挂载；
+//! 关掉 = 从列表摘除，包与依赖都留在 `node_modules` 里（DSH 也是这么关的），
+//! 重新打开不需要重新下载，也不碰 pnpm 与 DSH 的锁定文件；重新打开时把名字追加
+//! 到列表末尾，数组变换与 DSH 自己一致。
+//!
+//! 旧版壳把开关写在补丁层（`cordis.patch.yml` 里 entry 的 `disabled`），那是 DSH
+//! 详情页里「包含的组件」那一级的开关——两级开关并存时两边的界面会各说各话。现在
+//! 壳只管组合包这一级，每次开关顺手把旧版壳写进托管块的遗留记录整段清掉（托管块
+//! 全部由壳生成，头部注释写明手改会被覆盖）；用户手写的组件级禁用不动，只在界面
+//! 上用「手动」提示。
 //!
 //! 两个信息源：
-//! - 插件清单来自环境 `package.json` 的 `dsh.profile.bundles`（DSH 自己的登记表，
-//!   `dependencies` 里有包不代表会挂载）；
-//! - 每个插件在补丁层里对应哪个 entry id，来自它包内声明的 bundle 补丁文件
-//!   （`- insert:` 下第一层的 `- id:`）。读不到就无法表达禁用，按「不可开关」处理
-//!   —— 官方内置的那几个骨架包（`@deepseek-ai/dsh-base` / `dsh-web-app` /
-//!   `dsh-headless`）在 `node_modules` 里本来就不存在，正是这种情况。
-//!
-//! 改写补丁层时只动「壳自己负责的那一段」：托管块里整项增删，块外已有的裸禁用
-//! 表达按行摘除。用户手写的注释、`config`、`insert` 与别的项一律原样保留，所以
-//! 「停用 → 启用」能一字不差地回到原文（有单测盯着）。
+//! - 组合包登记来自环境 `package.json` 的 `dsh.profile.bundles`；
+//! - 已停用的组合包从 `dependencies` 里找（DSH 关闭组合包时保留依赖），每个名字
+//!   是否真的装着插件，由外壳在 `node_modules` 里核对 bundle 补丁文件
+//!   （`dsh.bundle.patch.yml` / `cordis.patch.yml`）后以挂载点形式传进来。
 
 use serde::Serialize;
 
 use crate::profiles::BRIDGE_PLUGIN;
 
-/// 托管块的起始标记行（整行匹配，缩进与行尾空白不算）。
+/// 旧版壳托管块的起始标记行（整行匹配，缩进与行尾空白不算）。
 ///
-/// 壳写的禁用表达全在这一段里：切换插件时只增删这一段的内容，用户手写的其它
-/// 补丁内容一个字都不碰；这一段空了就连标记一起删掉，于是「停用 → 启用」回到原状。
+/// 旧版壳把禁用表达全写在这一段里；开关迁到组合包列表后这段只剩遗留记录，
+/// 开关时用 [`drop_managed_block`] 整段摘掉。
 const MANAGED_OPEN: &str = "# >>> DSHarbor 插件开关（自动生成，手改会被覆盖）>>>";
-/// 托管块的结束标记行。
+/// 旧版壳托管块的结束标记行。
 const MANAGED_CLOSE: &str = "# <<< DSHarbor 插件开关 <<<";
 
 /// 插件包里的 bundle 补丁文件名，按顺序找第一个存在的。
 ///
 /// 每个包在自己的 `package.json` 里用 `dsh.bundle.patch` 声明它叫什么，实测下来
 /// 全部落在下面两个名字之一。壳在 WSL 那一侧不方便解析 JSON，两侧就统一按名字试，
-/// 认不出来只会让该插件显示成「不可停用」，不会误改任何文件。
+/// 认不出来只会让该插件显示成「不可开关」，不会误改任何文件。
 pub const BUNDLE_PATCH_CANDIDATES: &[&str] = &["dsh.bundle.patch.yml", "cordis.patch.yml"];
 
 /// bundle 补丁文件清单里每条记录的分隔前缀（后面跟包名）。
 pub const BUNDLE_MARKER: &str = "@@bundle@@ ";
-
-/// 默认缩进（补丁层里各项的子键都是 2 个空格）。
-const DEFAULT_INDENT: usize = 2;
 
 /// 一项 `disabled:` 的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,25 +49,15 @@ enum Disabled {
     Off,
     /// `disabled: true`：插件不加载。
     On,
-    /// `disabled:` 后面是表达式（`!!js "..."`）——用户自己写的守卫，壳不代改。
+    /// `disabled:` 后面是表达式（`!!js "..."`）——用户自己写的守卫，只做提示。
     Expression,
 }
 
-/// 补丁层里的一个顶层项。
+/// 补丁层里的一个顶层项（只保留开关视图需要的两个字段）。
 #[derive(Debug, Clone)]
 struct EntryRef {
     id: String,
-    /// `- id:` 那一行。
-    head: usize,
-    /// 该项最后一行的行号（等于 head 表示没有子行）。
-    tail: usize,
-    /// 子键的缩进（该项第一行缩进行的缩进；没有子行时是 0）。
-    body_indent: usize,
-    /// 该项里 `disabled:` 那一行。
-    disabled_line: Option<usize>,
     disabled: Disabled,
-    /// 是否位于壳的托管块内。
-    managed: bool,
 }
 
 /// 一次扫描的结果。
@@ -85,11 +74,12 @@ pub struct PluginItem {
     pub name: String,
     /// 它在补丁层里对应的 entry id（空＝读不到挂载点，不可开关）。
     pub entries: Vec<String>,
-    /// 现在会不会被加载。
+    /// 现在会不会被加载：名字在组合包列表里就是开，与 DSH 插件列表同口径。
     pub enabled: bool,
     /// 是不是桥接插件。
     pub bridge: bool,
-    /// 禁用表达在托管块之外（用户自己写的），界面上要能区分。
+    /// 补丁层里有组件级禁用记录（用户手写的，或旧版壳托管块的遗留），界面上
+    /// 提示去 DSH 插件详情页看「包含的组件」。
     pub manual: bool,
     /// 能不能开关（读不到挂载点的内置骨架包不能）。
     pub switchable: bool,
@@ -154,22 +144,12 @@ fn clean_scalar(raw: &str) -> String {
 fn scan(patch: &str) -> Result<Scan, String> {
     let lines: Vec<&str> = patch.split('\n').collect();
     let mut entries: Vec<EntryRef> = Vec::new();
-    let mut managed = false;
-    let mut current: Option<usize> = None;
+    // 当前项在 entries 里的下标 + 它子键的缩进（遇到第一个缩进行时确定）。
+    let mut current: Option<(usize, usize)> = None;
 
     for (idx, raw) in lines.iter().enumerate() {
         let line = raw.trim_end_matches('\r');
         let trimmed = line.trim();
-        if trimmed == MANAGED_OPEN {
-            managed = true;
-            current = None;
-            continue;
-        }
-        if trimmed == MANAGED_CLOSE {
-            managed = false;
-            current = None;
-            continue;
-        }
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
@@ -188,29 +168,23 @@ fn scan(patch: &str) -> Result<Scan, String> {
                 }
                 entries.push(EntryRef {
                     id,
-                    head: idx,
-                    tail: idx,
-                    body_indent: 0,
-                    disabled_line: None,
                     disabled: Disabled::Off,
-                    managed,
                 });
-                current = Some(entries.len() - 1);
+                current = Some((entries.len() - 1, 0));
             }
             continue;
         }
 
-        let Some(index) = current else { continue };
+        let Some((index, body_indent)) = current.as_mut() else {
+            continue;
+        };
         let indent = indent_of(line);
-        let entry = &mut entries[index];
-        if entry.body_indent == 0 {
-            entry.body_indent = indent;
+        if *body_indent == 0 {
+            *body_indent = indent;
         }
-        entry.tail = idx;
-        if indent == entry.body_indent {
+        if indent == *body_indent {
             if let Some(value) = value_of(line, "disabled") {
-                entry.disabled_line = Some(idx);
-                entry.disabled = if value == "true" {
+                entries[*index].disabled = if value == "true" {
                     Disabled::On
                 } else if value.starts_with("!!") {
                     Disabled::Expression
@@ -244,6 +218,102 @@ pub fn bundle_names(package_json: &str) -> Result<Vec<String>, String> {
         names.push(name.to_string());
     }
     Ok(names)
+}
+
+/// 从 `package.json` 文本读 `dependencies` 的包名（保持书写顺序）。
+///
+/// DSH 关闭组合包时把名字从 bundles 摘除但保留依赖，停用的组合包只能在这里找到。
+pub fn dependency_names(package_json: &str) -> Result<Vec<String>, String> {
+    let value: serde_json::Value = serde_json::from_str(package_json)
+        .map_err(|err| format!("环境的 package.json 不是合法 JSON：{err}"))?;
+    let mut names: Vec<String> = Vec::new();
+    if let Some(deps) = value.get("dependencies").and_then(|deps| deps.as_object()) {
+        for name in deps.keys() {
+            if !name.is_empty() {
+                names.push(name.clone());
+            }
+        }
+    }
+    Ok(names)
+}
+
+/// 组合包列表的目标状态：启用时把名字追加到末尾（已在列表里就不动，不换位置），
+/// 停用时把名字摘掉（不在列表里就不动）。与 DSH 自己的组合包开关同一套数组变换。
+pub fn set_bundle_enabled(mut bundles: Vec<String>, name: &str, enabled: bool) -> Vec<String> {
+    if enabled {
+        if !bundles.iter().any(|bundle| bundle == name) {
+            bundles.push(name.to_string());
+        }
+    } else {
+        bundles.retain(|bundle| bundle != name);
+    }
+    bundles
+}
+
+/// 把新的组合包列表写回 `package.json` 文本。
+///
+/// 其余内容原样保留：serde_json 开了 `preserve_order`，键不会被重排；输出用
+/// 2 空格缩进（pnpm 写出的格式）。原文以换行结尾时输出也保持。
+pub fn with_bundles(package_json: &str, bundles: &[String]) -> Result<String, String> {
+    let mut value: serde_json::Value = serde_json::from_str(package_json)
+        .map_err(|err| format!("环境的 package.json 不是合法 JSON：{err}"))?;
+    let list: Vec<serde_json::Value> = bundles
+        .iter()
+        .map(|name| serde_json::Value::String(name.clone()))
+        .collect();
+    let dsh = value
+        .get_mut("dsh")
+        .ok_or_else(|| "环境的 package.json 里没有 dsh 字段".to_string())?;
+    let profile = dsh
+        .get_mut("profile")
+        .ok_or_else(|| "环境的 package.json 里没有 dsh.profile 字段".to_string())?;
+    let profile = profile
+        .as_object_mut()
+        .ok_or_else(|| "环境的 package.json 里 dsh.profile 不是对象".to_string())?;
+    profile.insert("bundles".to_string(), serde_json::Value::Array(list));
+    let mut out = serde_json::to_string_pretty(&value)
+        .map_err(|err| format!("环境的 package.json 写不回去：{err}"))?;
+    if package_json.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// 把旧版壳的托管块（两行标记 + 块内所有内容）整段从补丁层文本里摘掉。
+///
+/// 找不到配对的标记就原样返回，宁可留着力气也不误删；块外的用户内容一个字不动，
+/// 结尾多出来的空行收敛掉、按原文件的换行形状补尾。
+pub fn drop_managed_block(patch: &str) -> String {
+    let lines: Vec<&str> = patch.split('\n').collect();
+    let Some(open) = lines
+        .iter()
+        .position(|line| line.trim_end_matches('\r').trim() == MANAGED_OPEN)
+    else {
+        return patch.to_string();
+    };
+    let Some(close) = lines[open + 1..]
+        .iter()
+        .position(|line| line.trim_end_matches('\r').trim() == MANAGED_CLOSE)
+        .map(|offset| open + 1 + offset)
+    else {
+        return patch.to_string();
+    };
+
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
+    out.extend_from_slice(&lines[..open]);
+    out.extend_from_slice(&lines[close + 1..]);
+    while out
+        .last()
+        .map(|line| line.trim().is_empty())
+        .unwrap_or(false)
+    {
+        out.pop();
+    }
+    let mut text = out.join("\n");
+    if patch.ends_with('\n') && !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text
 }
 
 /// 从一个包的 bundle 补丁文件里取它插入的 entry id：`- insert:` 下第一层的 `- id:`。
@@ -324,14 +394,24 @@ pub fn mount_points(listing: &str) -> Vec<(String, Vec<String>)> {
 
 /// 合成界面上那份插件清单。
 ///
-/// `mounts` 是 [`mount_points`] 的结果，`patch` 是补丁层原文（文件不存在就传空串）。
+/// `mounts` 是 [`mount_points`] 的结果（外壳按「组合包 ∪ 依赖」扫出来的），
+/// `patch` 是补丁层原文（文件不存在就传空串）。
+///
+/// 名字清单 = 组合包登记 ∪ 已装补丁文件的包；`enabled` 只看组合包登记（与 DSH
+/// 插件列表同口径），补丁层里残留的组件级禁用不影响它，只用 `manual` 提示。
 pub fn items(
     package_json: &str,
     mounts: &[(String, Vec<String>)],
     patch: &str,
 ) -> Result<Vec<PluginItem>, String> {
-    let names = bundle_names(package_json)?;
+    let registered = bundle_names(package_json)?;
     let scan = scan(patch)?;
+    let mut names = registered.clone();
+    for (bundle, _) in mounts {
+        if !names.iter().any(|name| name == bundle) {
+            names.push(bundle.clone());
+        }
+    }
 
     Ok(names
         .into_iter()
@@ -341,22 +421,15 @@ pub fn items(
                 .find(|(bundle, _)| *bundle == name)
                 .map(|(_, ids)| ids.clone())
                 .unwrap_or_default();
-            let mut disabled = false;
-            let mut manual = false;
-            for id in &entries {
-                for entry in scan.entries.iter().filter(|entry| entry.id == *id) {
-                    if entry.disabled != Disabled::Off {
-                        disabled = true;
-                        if !entry.managed {
-                            manual = true;
-                        }
-                    }
-                }
-            }
+            let manual = entries.iter().any(|id| {
+                scan.entries
+                    .iter()
+                    .any(|entry| &entry.id == id && entry.disabled != Disabled::Off)
+            });
             PluginItem {
                 bridge: name == BRIDGE_PLUGIN,
                 switchable: !entries.is_empty(),
-                enabled: !disabled,
+                enabled: registered.contains(&name),
                 manual,
                 name,
                 entries,
@@ -364,184 +437,6 @@ pub fn items(
             }
         })
         .collect())
-}
-
-/// 切换一组 entry 的启用状态，返回改写后的补丁层文本。
-///
-/// 幂等：已经处于目标状态时原样返回（连同字节）。多条目按顺序逐个处理，每一步都
-/// 重新扫描，所以同一次调用里前面的改动不会被后面的判断看漏。
-pub fn set_disabled(
-    patch: &str,
-    entries: &[String],
-    want_disabled: bool,
-) -> Result<String, String> {
-    let mut text = patch.to_string();
-    for id in entries {
-        text = if want_disabled {
-            disable_one(&text, id)?
-        } else {
-            enable_one(&text, id)?
-        };
-    }
-    Ok(text)
-}
-
-/// 自定义表达式控制的项：壳不代改，给可读错误。
-fn expression_error(id: &str) -> String {
-    format!(
-        "「{id}」的禁用状态由补丁层里的自定义表达式控制，壳不会替你改它；要动请自己编辑 {patch} 里的这一项。",
-        patch = crate::patch_layer::PATCH_FILE
-    )
-}
-
-/// 停用一个 entry。
-fn disable_one(patch: &str, id: &str) -> Result<String, String> {
-    let scan = scan(patch)?;
-    let matches: Vec<&EntryRef> = scan.entries.iter().filter(|entry| entry.id == id).collect();
-    if matches
-        .iter()
-        .any(|entry| entry.disabled == Disabled::Expression)
-    {
-        return Err(expression_error(id));
-    }
-    if matches.iter().any(|entry| entry.disabled == Disabled::On) {
-        return Ok(patch.to_string());
-    }
-
-    let cr = if patch.contains("\r\n") { "\r" } else { "" };
-    let mut lines: Vec<String> = patch.split('\n').map(str::to_string).collect();
-
-    // 已经有这一项（只是显式 `disabled: false`）：就地改值，不另加一项。
-    if let Some(entry) = matches.iter().find(|entry| entry.disabled_line.is_some()) {
-        let at = entry.disabled_line.unwrap_or(entry.head);
-        let indent = indent_of(lines[at].as_str());
-        lines[at] = format!("{}disabled: true{cr}", " ".repeat(indent));
-        return Ok(lines.join("\n"));
-    }
-    // 已有这一项但没有禁用表达：就在它下面补一行，避免同 id 两项的合并语义不确定。
-    if let Some(entry) = matches.first() {
-        let indent = if entry.body_indent > 0 {
-            entry.body_indent
-        } else {
-            DEFAULT_INDENT
-        };
-        lines.insert(
-            entry.head + 1,
-            format!("{}disabled: true{cr}", " ".repeat(indent)),
-        );
-        return Ok(lines.join("\n"));
-    }
-    // 补丁层里根本没这一项：写进托管块（这样重新启用时能整段摘干净）。
-    Ok(append_to_managed(patch, id))
-}
-
-/// 启用一个 entry：把禁用表达摘掉。
-fn enable_one(patch: &str, id: &str) -> Result<String, String> {
-    let scan = scan(patch)?;
-    let matches: Vec<&EntryRef> = scan.entries.iter().filter(|entry| entry.id == id).collect();
-    if matches.is_empty() {
-        return Ok(patch.to_string());
-    }
-    if matches
-        .iter()
-        .any(|entry| entry.disabled == Disabled::Expression)
-    {
-        return Err(expression_error(id));
-    }
-
-    let mut lines: Vec<String> = patch.split('\n').map(str::to_string).collect();
-    let mut drop: Vec<usize> = Vec::new();
-    for entry in &matches {
-        let Some(at) = entry.disabled_line else {
-            continue;
-        };
-        drop.push(at);
-        if entry.managed {
-            // 托管块里的项只有「- id」+「disabled」两行，整项摘掉。
-            drop.push(entry.head);
-            continue;
-        }
-        // 块外的项：摘掉 disabled 行后如果只剩 `- id:` 一行，整项一起摘。
-        let leftovers: Vec<usize> = (entry.head..=entry.tail)
-            .filter(|index| *index != entry.head && !drop.contains(index))
-            .collect();
-        if leftovers
-            .iter()
-            .all(|index| lines[*index].trim().is_empty())
-        {
-            drop.push(entry.head);
-        }
-    }
-    if drop.is_empty() {
-        return Ok(patch.to_string());
-    }
-    drop.sort_unstable();
-    drop.dedup();
-    for index in drop.iter().rev() {
-        lines.remove(*index);
-    }
-    Ok(drop_empty_managed_block(&lines.join("\n")))
-}
-
-/// 把一项禁用表达追加到托管块里（没有块就在文件末尾新建一个）。
-fn append_to_managed(patch: &str, id: &str) -> String {
-    let cr = if patch.contains("\r\n") { "\r" } else { "" };
-    let mut lines: Vec<String> = patch.split('\n').map(str::to_string).collect();
-    let item = vec![
-        format!("- id: {id}{cr}"),
-        format!("{}disabled: true{cr}", " ".repeat(DEFAULT_INDENT)),
-    ];
-
-    if let Some(at) = lines
-        .iter()
-        .position(|line| line.trim_end_matches('\r').trim() == MANAGED_CLOSE)
-    {
-        for (offset, text) in item.into_iter().enumerate() {
-            lines.insert(at + offset, text);
-        }
-        return lines.join("\n");
-    }
-
-    let mut block = vec![format!("{MANAGED_OPEN}{cr}")];
-    block.extend(item);
-    block.push(format!("{MANAGED_CLOSE}{cr}"));
-    // 文件以换行结尾时 `split('\n')` 的最后一项是空串：插在它前面，别在末尾多留空行。
-    let at = if lines.last().map(|line| line.is_empty()).unwrap_or(false) {
-        lines.len() - 1
-    } else {
-        lines.len()
-    };
-    for (offset, text) in block.into_iter().enumerate() {
-        lines.insert(at + offset, text);
-    }
-    lines.join("\n")
-}
-
-/// 托管块空了（没有任何 item）就连标记一起删掉，让「停用 → 启用」回到原状。
-fn drop_empty_managed_block(patch: &str) -> String {
-    let lines: Vec<&str> = patch.split('\n').collect();
-    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
-    let mut index = 0;
-    while index < lines.len() {
-        if lines[index].trim_end_matches('\r').trim() == MANAGED_OPEN {
-            let close = lines[index + 1..]
-                .iter()
-                .position(|line| line.trim_end_matches('\r').trim() == MANAGED_CLOSE);
-            if let Some(offset) = close {
-                let end = index + 1 + offset;
-                let inner_empty = lines[index + 1..end]
-                    .iter()
-                    .all(|line| line.trim().is_empty());
-                if inner_empty {
-                    index = end + 1;
-                    continue;
-                }
-            }
-        }
-        out.push(lines[index]);
-        index += 1;
-    }
-    out.join("\n")
 }
 
 /// 零插件时的空状态提示（界面照抄，免得两处口径不一样）。
@@ -557,9 +452,9 @@ pub fn bridge_off_warning() -> &'static str {
 /// 切换成功后的说明（必须提醒重启才生效）。
 pub fn toggle_message(name: &str, enabled: bool) -> String {
     if enabled {
-        format!("已打开「{name}」的插件开关，重启 DSH 后生效。")
+        format!("已把「{name}」加回 DSH 的组合包列表，重启 DSH 后生效。")
     } else {
-        format!("已关闭「{name}」的插件开关，重启 DSH 后生效；插件包还在磁盘上，重新打开不需要重新下载。")
+        format!("已把「{name}」移出 DSH 的组合包列表，重启 DSH 后生效；插件包和依赖都留在磁盘上，重新打开不需要重新下载。")
     }
 }
 
@@ -607,6 +502,87 @@ mod tests {
     }
 
     #[test]
+    fn dependency_names_keep_writing_order() {
+        let names = dependency_names("{\"dependencies\":{\"zebra\":1,\"alpaca\":2}}").unwrap();
+        assert_eq!(names, vec!["zebra", "alpaca"]);
+    }
+
+    #[test]
+    fn missing_dependencies_read_as_empty() {
+        assert!(dependency_names("{\"name\":\"x\"}").unwrap().is_empty());
+    }
+
+    #[test]
+    fn enabling_appends_to_the_end_and_is_idempotent() {
+        let bundles = set_bundle_enabled(vec!["a".to_string()], "b", true);
+        assert_eq!(bundles, vec!["a", "b"]);
+        // 已在列表里：保持原位（不挪到末尾）。
+        let bundles = set_bundle_enabled(vec!["b".to_string(), "a".to_string()], "b", true);
+        assert_eq!(bundles, vec!["b", "a"]);
+    }
+
+    #[test]
+    fn disabling_removes_every_occurrence() {
+        let bundles = set_bundle_enabled(vec!["a".to_string(), "b".to_string()], "b", false);
+        assert_eq!(bundles, vec!["a"]);
+        assert_eq!(set_bundle_enabled(vec![], "b", false), Vec::<String>::new());
+    }
+
+    #[test]
+    fn with_bundles_rewrites_the_list_and_keeps_key_order() {
+        let source = format!("{}\n", manifest(&["a", "b"]));
+        let out = with_bundles(&source, &["a".to_string(), "c".to_string()]).unwrap();
+        // 键序保持 name → private → dsh，bundles 换成新列表。
+        assert!(out.contains("\"name\""), "{out}");
+        assert!(out.starts_with("{\n  \"name\""), "{out}");
+        let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let bundles: Vec<&str> = value["dsh"]["profile"]["bundles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item.as_str().unwrap())
+            .collect();
+        assert_eq!(bundles, vec!["a", "c"]);
+        // 原文以换行结尾，输出也要。
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn with_bundles_needs_the_dsh_profile_section() {
+        let err = with_bundles("{\"name\":\"x\"}", &["a".to_string()]).unwrap_err();
+        assert!(err.contains("没有 dsh 字段"), "{err}");
+    }
+
+    #[test]
+    fn drop_managed_block_removes_the_whole_block_and_keeps_user_content() {
+        let patch = "\
+- id: keep
+  name: x
+# >>> DSHarbor 插件开关（自动生成，手改会被覆盖）>>>
+- id: row
+  disabled: true
+# <<< DSHarbor 插件开关 <<<
+
+";
+        let out = drop_managed_block(patch);
+        assert_eq!(out, "- id: keep\n  name: x\n");
+    }
+
+    #[test]
+    fn drop_managed_block_keeps_crlf_shape() {
+        let patch = "- id: keep\r\n# >>> DSHarbor 插件开关（自动生成，手改会被覆盖）>>>\r\n- id: row\r\n  disabled: true\r\n# <<< DSHarbor 插件开关 <<<\r\n";
+        assert_eq!(drop_managed_block(patch), "- id: keep\r\n");
+    }
+
+    #[test]
+    fn drop_managed_block_without_paired_markers_is_a_no_op() {
+        let user_only = "- id: keep\n  name: x\n";
+        assert_eq!(drop_managed_block(user_only), user_only);
+        let missing_close = "- id: keep\n# >>> DSHarbor 插件开关（自动生成，手改会被覆盖）>>>\n";
+        assert_eq!(drop_managed_block(missing_close), missing_close);
+    }
+
+    #[test]
     fn insert_entry_ids_take_only_the_first_level_of_insert() {
         let patch = "\
 # 注释行不该影响解析
@@ -643,36 +619,52 @@ mod tests {
     }
 
     #[test]
-    fn items_merge_bundles_with_patch_layer_state() {
+    fn items_treat_bundle_membership_as_the_switch() {
         let mounts = vec![
             ("fourth".to_string(), vec!["fourth-row".to_string()]),
-            ("bridge".to_string(), vec!["bridge-row".to_string()]),
+            ("whale".to_string(), vec!["whale-row".to_string()]),
         ];
+        // fourth 在组合包列表里但被用户在补丁层手写了组件级禁用；whale 是停用后
+        // 留在 dependencies 里的组合包（登记摘了、依赖还在）。
         let patch = "- id: fourth-row\n  disabled: true\n";
-        let list = items(&manifest(&["builtin", "fourth", "bridge"]), &mounts, patch).unwrap();
+        let list = items(&manifest(&["builtin", "fourth"]), &mounts, patch).unwrap();
         // 内置骨架包读不到挂载点 → 不可开关，但仍列出来。
         assert_eq!(list[0].name, "builtin");
         assert!(!list[0].switchable);
         assert!(list[0].enabled);
         assert_eq!(list[1].name, "fourth");
         assert!(list[1].switchable);
-        assert!(!list[1].enabled);
-        // 这份禁用表达是手写在托管块外的，要能区分出来。
-        assert!(list[1].manual);
-        assert!(!list[2].bridge, "名字不是桥接插件");
+        assert!(list[1].enabled, "开关只看组合包登记");
+        assert!(list[1].manual, "补丁层里的组件级禁用要用 manual 提示");
+        assert_eq!(list[2].name, "whale");
+        assert!(!list[2].enabled, "不在组合包登记里就是关");
+        assert!(!list[2].manual);
     }
 
     #[test]
-    fn items_flag_the_bridge_plugin_and_manual_disable_expressions() {
+    fn items_flag_the_bridge_plugin() {
         let mounts = vec![(
             BRIDGE_PLUGIN.to_string(),
             vec!["dsharbor-bridge".to_string()],
         )];
-        let patch = "- id: dsharbor-bridge\n  disabled: true\n";
-        let list = items(&manifest(&[BRIDGE_PLUGIN]), &mounts, patch).unwrap();
+        let list = items(&manifest(&[BRIDGE_PLUGIN]), &mounts, "").unwrap();
         assert!(list[0].bridge);
-        assert!(!list[0].enabled);
-        assert!(list[0].manual, "禁用表达在托管块外，标成手动");
+        assert!(list[0].enabled);
+        assert!(!list[0].manual);
+    }
+
+    #[test]
+    fn leftover_managed_disables_count_as_manual() {
+        let mounts = vec![("p".to_string(), vec!["p-row".to_string()])];
+        let patch = "\
+# >>> DSHarbor 插件开关（自动生成，手改会被覆盖）>>>
+- id: p-row
+  disabled: true
+# <<< DSHarbor 插件开关 <<<
+";
+        let list = items(&manifest(&["p"]), &mounts, patch).unwrap();
+        assert!(list[0].enabled, "旧版壳写的遗留禁用不该再压住组合包开关");
+        assert!(list[0].manual, "不管是谁写的，组件级禁用都要提示出来");
     }
 
     #[test]
@@ -681,135 +673,17 @@ mod tests {
         let list = items(&manifest(&["p"]), &mounts, USER_PATCH).unwrap();
         // USER_PATCH 里 `disabled: true` 缩进 4，属于 config 的子键，不算停用。
         assert!(list[0].enabled);
-    }
-
-    #[test]
-    fn disable_then_enable_returns_to_the_original_bytes() {
-        let original = USER_PATCH.to_string();
-        let mounts = [("fresh".to_string(), vec!["fresh-row".to_string()])];
-
-        let disabled = set_disabled(&original, &mounts[0].1, true).unwrap();
-        assert!(disabled.contains("- id: fresh-row"));
-        assert!(disabled.contains(MANAGED_OPEN));
-        let view = items(&manifest(&["fresh"]), &mounts, &disabled).unwrap();
-        assert!(!view[0].enabled);
-
-        // 再停用一次：一字不动（幂等）。
-        assert_eq!(
-            set_disabled(&disabled, &mounts[0].1, true).unwrap(),
-            disabled
-        );
-
-        let restored = set_disabled(&disabled, &mounts[0].1, false).unwrap();
-        assert_eq!(restored, original, "启用后必须回到原文");
-        let view = items(&manifest(&["fresh"]), &mounts, &restored).unwrap();
-        assert!(view[0].enabled);
-    }
-
-    #[test]
-    fn toggling_never_touches_the_users_own_patch_content() {
-        let mounts = [("fresh".to_string(), vec!["fresh-row".to_string()])];
-        let disabled = set_disabled(USER_PATCH, &mounts[0].1, true).unwrap();
-        assert!(disabled.starts_with(USER_PATCH), "原有内容必须原样留在前面");
-        assert!(disabled.contains("config:\n    apiKeyEnv: MAGPIE_GATEWAY_KEY"));
-        assert!(disabled.contains("# 我自己的补丁层，别整份重写"));
-    }
-
-    #[test]
-    fn disabling_an_existing_item_adds_the_expression_below_it() {
-        let patch = "- id: row\n  name: some-plugin\n";
-        let out = set_disabled(patch, &["row".to_string()], true).unwrap();
-        assert_eq!(out, "- id: row\n  disabled: true\n  name: some-plugin\n");
-        assert_eq!(
-            set_disabled(&out, &["row".to_string()], false).unwrap(),
-            patch
-        );
-    }
-
-    #[test]
-    fn explicit_disabled_false_is_flipped_in_place() {
-        let patch = "- id: row\n  disabled: false\n  name: x\n";
-        let out = set_disabled(patch, &["row".to_string()], true).unwrap();
-        assert_eq!(out, "- id: row\n  disabled: true\n  name: x\n");
-        assert_eq!(
-            set_disabled(&out, &["row".to_string()], false).unwrap(),
-            "- id: row\n  name: x\n"
-        );
-    }
-
-    #[test]
-    fn items_with_custom_expression_are_refused_in_both_directions() {
-        let patch = "- id: row\n  disabled: !!js \"[...].some((e) => !e.disabled)\"\n";
-        // 不 panic，给可读中文错误。
-        let err = set_disabled(patch, &["row".to_string()], true).unwrap_err();
-        assert!(err.contains("自定义表达式"), "{err}");
-        let err = set_disabled(patch, &["row".to_string()], false).unwrap_err();
-        assert!(err.contains("cordis.patch.yml"), "{err}");
+        assert!(!list[0].manual);
     }
 
     #[test]
     fn broken_yaml_gives_a_readable_error_instead_of_panicking() {
-        let err = set_disabled("我随便写的\n", &["row".to_string()], true).unwrap_err();
+        let err = items(&manifest(&["a"]), &[], "我随便写的\n").unwrap_err();
         assert!(err.contains("第 1 行不是列表项"), "{err}");
         assert!(err.contains("我随便写的"), "{err}");
 
         let err = items(&manifest(&["a"]), &[], "- id:\n").unwrap_err();
         assert!(err.contains("后面没有值"), "{err}");
-    }
-
-    #[test]
-    fn enabling_an_entry_that_is_not_in_the_patch_is_a_no_op() {
-        assert_eq!(
-            set_disabled(USER_PATCH, &["nope".to_string()], false).unwrap(),
-            USER_PATCH
-        );
-    }
-
-    #[test]
-    fn disabling_an_entry_absent_from_the_patch_adds_it_in_the_managed_block() {
-        // 项定义在更下层（bundle 自带）时补丁层里本来没有它，得靠新加一项表达禁用。
-        let out = set_disabled(USER_PATCH, &["nope".to_string()], true).unwrap();
-        assert!(out.starts_with(USER_PATCH));
-        assert!(out.contains("- id: nope\n  disabled: true"));
-        assert!(out.contains(MANAGED_OPEN));
-        assert_eq!(
-            set_disabled(&out, &["nope".to_string()], false).unwrap(),
-            USER_PATCH
-        );
-    }
-
-    #[test]
-    fn disables_written_by_the_shell_are_not_marked_manual() {
-        let mounts = vec![("p".to_string(), vec!["p-row".to_string()])];
-        let patch = set_disabled("", &mounts[0].1, true).unwrap();
-        let list = items(&manifest(&["p"]), &mounts, &patch).unwrap();
-        assert!(!list[0].enabled);
-        assert!(!list[0].manual, "托管块里的禁用表达不算用户手写");
-    }
-
-    #[test]
-    fn crlf_files_stay_crlf() {
-        let patch = "- id: keep\r\n  name: x\r\n";
-        let disabled = set_disabled(patch, &["row".to_string()], true).unwrap();
-        assert!(
-            disabled.contains("- id: row\r\n  disabled: true\r\n"),
-            "新增的项也要用 CRLF：{disabled:?}"
-        );
-        assert_eq!(
-            set_disabled(&disabled, &["row".to_string()], false).unwrap(),
-            patch
-        );
-    }
-
-    #[test]
-    fn a_file_without_trailing_newline_keeps_that_shape() {
-        let patch = "- id: keep\n  name: x";
-        let disabled = set_disabled(patch, &["row".to_string()], true).unwrap();
-        assert!(disabled.starts_with("- id: keep\n  name: x\n"));
-        assert_eq!(
-            set_disabled(&disabled, &["row".to_string()], false).unwrap(),
-            patch
-        );
     }
 
     #[test]

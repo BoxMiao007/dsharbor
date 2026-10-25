@@ -3051,20 +3051,20 @@ async function main(): Promise<void> {
     /**
      * 插件清单：一行一个插件，右端一枚**总开关**（开/关整个插件）。
      *
-     * 只列壳管得了的插件：官方内置的骨架包没有挂载点、写不进补丁层，桥接插件归
-     * 「桥接插件」浮窗管——这两类列在这里也点不动，所以干脆不列（维护者要求）。
+     * 只列壳管得了的插件：官方内置的骨架包没有挂载点、列在这里也点不动，桥接插件
+     * 归「桥接插件」浮窗管——这两类干脆不列（维护者要求）。
      */
     function manageablePlugins(): PluginItem[] {
       return pluginItems.filter((item) => item.switchable && !item.bridge);
     }
 
-    /** 行提示：说清这枚开关管的是整个插件，并列出它写进补丁层的那些挂载点。 */
+    /** 行提示：说清这枚开关就是 DSH 插件列表里那枚组合包开关，并列出挂载点。 */
     function pluginRowTitle(item: PluginItem): string {
       const points = item.entries.length > 0 ? item.entries.join("、") : "（读不到挂载点）";
       const manual = item.manual
-        ? "补丁层里这一项的禁用表达是手写的，拨开关会把它改成壳写的形式；"
+        ? "补丁层里它有组件级的禁用记录，壳不会代改；要看细节去 DSH 插件详情页的「包含的组件」。"
         : "";
-      return ` title="${escapeHtml(`总开关：停用整个「${item.name}」。它挂在 ${points}。${manual}改完要重启 DSH 才生效。`)}"`;
+      return ` title="${escapeHtml(`总开关：把「${item.name}」加进或移出 DSH 的组合包列表。它挂在 ${points}。${manual}改完要重启 DSH 才生效。`)}"`;
     }
 
     /** 该插件最近的检查结果（没查过、或不在更新范围——官方骨架包/桥接插件——就没有行）。 */
@@ -3606,16 +3606,16 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 开关一个插件的**总开关**（不是它内部的某个子项：后端会把该插件挂在补丁层里的
-     * 全部挂载点一起翻过来）。
+     * 开关一个插件的**总开关**（与 DSH 插件列表那枚组合包开关同口径：后端把插件
+     * 名字加进或移出环境 `package.json` 的组合包列表，不碰补丁层）。
      *
-     * 后端在写文件前会自己先备份一次补丁层，成功时把备份路径与刷新后的清单一起带回来；
-     * 关掉桥接插件时还会带一句「登录链接只能靠日志兜底」的提醒。
+     * 后端在写文件前会自己先备份一次环境文件，成功时把备份路径与刷新后的清单一起
+     * 带回来；关掉桥接插件时还会带一句「登录链接只能靠日志兜底」的提醒。
      */
     async function togglePlugin(name: string, enabled: boolean): Promise<void> {
       const target = prefs.profile;
-      // 检查/更新进行中不允许动开关（互斥）：更新要改 node_modules，开关要写补丁层，
-      // 两边同时落盘没有意义，还容易让「更新后保持停用」的判断踩到刚翻的状态。
+      // 检查/更新进行中不允许动开关（互斥）：更新要改 node_modules，开关要写
+      // package.json，两边同时落盘没有意义。
       if (!target || !name || pluginBusy || pluginActionBusy() || manageBusy || patchBusy) {
         return;
       }

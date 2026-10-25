@@ -1,8 +1,14 @@
-//! 插件开关（外壳侧）：读清单、调用核心库算出「启用 / 停用」、改写补丁层。
+//! 插件开关（外壳侧）：读清单、调用核心库算出「启用 / 停用」、改写环境的
+//! 组合包列表。
 //!
-//! 分工：判断「每个插件现在是什么状态」「该往补丁层写什么」全在
-//! `dsharbor_core::plugin_switch` 里（有单测）；这里只做三件与系统相关的事——
-//! 找到环境目录、把每个插件的 bundle 补丁文件读出来拼成文本、改写前后读写文件。
+//! 分工：判断「每个插件现在是什么状态」「开关该把 `package.json` 改成什么样」
+//! 全在 `dsharbor_core::plugin_switch` 里（有单测）；这里只做三件与系统相关的
+//! 事——找到环境目录、把每个插件的 bundle 补丁文件读出来拼成文本、改写前后读写
+//! 文件。
+//!
+//! 开关与 DSH 自己的插件管理同口径：改 `dsh.profile.bundles` 有序列表，不碰补丁
+//! 层。每次开关顺手把旧版壳写进补丁层托管块的遗留记录整段清掉；用户手写的组件级
+//! 禁用不动。
 //!
 //! 宿主与 WSL 两侧读的都是同一套文件名：`dsh.bundle.patch.yml` 与
 //! `cordis.patch.yml`。为什么不去解析包 `package.json` 里声明的
@@ -32,7 +38,7 @@ const NODE_MODULES: &str = "node_modules";
 pub struct ToggleOutcome {
     /// 给用户看的中文说明（含「重启后生效」的提醒）。
     pub message: String,
-    /// 本次开关前自动产生的补丁层备份，完整路径。
+    /// 本次开关前自动产生的环境备份（覆盖 package.json 与补丁层等），完整路径。
     pub backup: String,
     /// 关掉桥接插件时的额外提醒（其它情况没有）。
     pub warning: Option<String>,
@@ -120,6 +126,18 @@ fn read_mounts(
     Ok(plugin_switch::mount_points(&text))
 }
 
+/// 清单扫描的名字集合：组合包登记在前（保持 DSH 的加载顺序），停用后留在
+/// `dependencies` 里的组合包补在后面，去重。
+fn known_names(bundles: &[String], deps: &[String]) -> Vec<String> {
+    let mut names = bundles.to_vec();
+    for dep in deps {
+        if !names.iter().any(|name| name == dep) {
+            names.push(dep.clone());
+        }
+    }
+    names
+}
+
 /// 读环境的 `package.json`。
 fn read_manifest(target: &Target, dir: &str) -> Result<String, String> {
     read_file(target, &join_path(target, dir, "package.json"))
@@ -158,7 +176,10 @@ fn with_descriptions(target: &Target, dir: &str, mut items: Vec<PluginItem>) -> 
     items
 }
 
-/// 列出某个环境当前加载的插件（带启用状态、是否桥接、是否可开关）。
+/// 列出某个环境已装的插件（带启用状态、是否桥接、是否可开关）。
+///
+/// 扫描范围 = 组合包登记 ∪ 停用后留在 `dependencies` 里的组合包；开关只看组合包
+/// 登记（与 DSH 插件列表同口径），补丁层里残留的组件级禁用只在 `manual` 里提示。
 pub fn items(
     _app: &AppHandle,
     config: &LaunchConfig,
@@ -167,8 +188,11 @@ pub fn items(
     let target = Target::of(config);
     let dir = profile_dir(&target, profile)?;
     let manifest = read_manifest(&target, &dir)?;
-    let bundles = plugin_switch::bundle_names(&manifest)?;
-    let mounts = read_mounts(&target, &dir, &bundles)?;
+    let names = known_names(
+        &plugin_switch::bundle_names(&manifest)?,
+        &plugin_switch::dependency_names(&manifest)?,
+    );
+    let mounts = read_mounts(&target, &dir, &names)?;
     let patch = read_patch_layer(&target, &dir)?;
     Ok(with_descriptions(
         &target,
@@ -177,10 +201,11 @@ pub fn items(
     ))
 }
 
-/// 开关一个插件：自动备份补丁层 → 改写补丁层 → 回报刷新后的清单。
+/// 开关一个插件：自动备份 → 改写组合包列表（顺带清掉旧版壳的托管块遗留）→
+/// 回报刷新后的清单。
 ///
-/// `name` 必须是该环境 `dsh.profile.bundles` 里登记过的名字；挂载点读不到（官方
-/// 内置骨架包）时明确拒绝，而不是往补丁层里塞一个 DSH 不认识的 id。
+/// `name` 必须是登记的组合包或已装出挂载点的包；挂载点读不到（官方内置骨架包）
+/// 时明确拒绝，而不是去改一份 DSH 不认识的清单。
 pub fn toggle(
     app: &AppHandle,
     config: &LaunchConfig,
@@ -192,13 +217,19 @@ pub fn toggle(
     let dir = profile_dir(&target, profile)?;
     let manifest = read_manifest(&target, &dir)?;
     let bundles = plugin_switch::bundle_names(&manifest)?;
-    if !bundles.iter().any(|bundle| bundle == name) {
+    let mounts = read_mounts(
+        &target,
+        &dir,
+        &known_names(&bundles, &plugin_switch::dependency_names(&manifest)?),
+    )?;
+    if !bundles.iter().any(|bundle| bundle == name)
+        && !mounts.iter().any(|(bundle, _)| bundle == name)
+    {
         return Err(format!(
-            "环境「{profile}」里没有登记插件「{name}」，可能是清单刚变过，刷新后再试。"
+            "环境「{profile}」里没有装插件「{name}」，可能是清单刚变过，刷新后再试。"
         ));
     }
 
-    let mounts = read_mounts(&target, &dir, &bundles)?;
     let entries: Vec<String> = mounts
         .iter()
         .find(|(bundle, _)| bundle == name)
@@ -210,18 +241,28 @@ pub fn toggle(
         ));
     }
 
-    let patch_path = join_path(&target, &dir, patch_layer::PATCH_FILE);
-    let current = read_file(&target, &patch_path)
-        .map_err(|err| format!("读不到补丁层，为避免改坏先停下（{patch_path}）：{err}"))?;
-    // 先算好新内容再备份：内容算不出来（坏 YAML / 自定义表达式）就不该白白留一份备份，
+    // 先算好两边的新内容再备份：内容算不出来（坏 JSON）就不该白白留一份备份，
     // 更不该动文件。
-    let updated = plugin_switch::set_disabled(&current, &entries, !enabled)?;
+    let new_bundles = plugin_switch::set_bundle_enabled(bundles, name, enabled);
+    let new_manifest = plugin_switch::with_bundles(&manifest, &new_bundles)?;
+    let patch_path = join_path(&target, &dir, patch_layer::PATCH_FILE);
+    let patch_text = read_patch_layer(&target, &dir)?;
+    let updated_patch = plugin_switch::drop_managed_block(&patch_text);
+    let patch_changed = updated_patch != patch_text;
 
-    // 备份必须在写之前（票据要求：每次开关前自动备份一份补丁层）。
+    // 备份必须在写之前（票据要求：每次开关前自动备份；package.json 与补丁层都在
+    // 备份清单里）。
     let backup = patch::backup(app, config, profile)?;
 
-    if updated != current {
-        write_file(&target, &patch_path, &updated)?;
+    if new_manifest != manifest {
+        write_file(
+            &target,
+            &join_path(&target, &dir, "package.json"),
+            &new_manifest,
+        )?;
+    }
+    if patch_changed {
+        write_file(&target, &patch_path, &updated_patch)?;
     }
 
     // 清单同样要补说明文字：开关回包里的行会整行替换界面上的行，漏了描述
@@ -229,10 +270,13 @@ pub fn toggle(
     let items = with_descriptions(
         &target,
         &dir,
-        plugin_switch::items(&manifest, &mounts, &updated)?,
+        plugin_switch::items(&new_manifest, &mounts, &updated_patch)?,
     );
     let mut message = plugin_switch::toggle_message(name, enabled);
-    message.push_str(&format!("已自动备份补丁层：{}", backup.path));
+    if patch_changed {
+        message.push_str("补丁层里旧版壳遗留的插件开关记录已一并清掉。");
+    }
+    message.push_str(&format!("已自动备份环境文件：{}", backup.path));
     Ok(ToggleOutcome {
         message,
         backup: backup.path,
@@ -248,6 +292,15 @@ pub fn toggle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_names_put_bundles_first_then_leftover_dependencies() {
+        let names = known_names(
+            &["a".to_string(), "b".to_string()],
+            &["b".to_string(), "c".to_string()],
+        );
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
 
     #[test]
     fn unsafe_bundle_names_never_reach_a_path_or_a_shell() {
