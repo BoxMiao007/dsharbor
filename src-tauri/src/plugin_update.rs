@@ -447,11 +447,60 @@ pub fn update(
     }
 }
 
+/// 检查更新一次最多同时发出的 `npm view` 条数。
+///
+/// 检查是纯只读（不写清单、不装包），每条查询是独立子进程，会话缓存与
+/// registry 版本缓存都只在短锁内读写，4 路并发对 registry 与本机 npm 缓存
+/// 都安全；批量「全部更新」不走这条路径，保持串行——并发 `pnpm add` 会争
+/// 环境的 pnpm-lock.yaml。
+const CHECK_CONCURRENCY: usize = 4;
+
+/// 把 `total` 个槽位切成不超过 [`CHECK_CONCURRENCY`] 段的连续区间
+/// （空表返回空），段与段互不重叠、按顺序恰好盖满 `0..total`。
+fn chunk_bounds(total: usize) -> Vec<(usize, usize)> {
+    if total == 0 {
+        return Vec::new();
+    }
+    let chunk = total.div_ceil(total.min(CHECK_CONCURRENCY));
+    (0..total)
+        .step_by(chunk)
+        .map(|start| (start, (start + chunk).min(total)))
+        .collect()
+}
+
+/// 检查单个插件（并发 worker 里跑的那份工作）：读已装版本 + 查目标版本
+/// （会话缓存优先）+ 装配结果行。包名不安全（正常登记不会这样）就亮错误行，
+/// 不拿它拼路径、拼命令。
+fn check_one(
+    target: &Target,
+    dir: &str,
+    runtime: &launch::Runtime,
+    source: DownloadSource,
+    env: &[(String, String)],
+    name: &str,
+    force: bool,
+) -> PluginUpdateItem {
+    if let Err(err) = plugin_update::validate_package_name(name) {
+        return PluginUpdateItem {
+            name: name.to_string(),
+            current: None,
+            target: None,
+            error: Some(err),
+            has_update: false,
+        };
+    }
+    let current = read_installed(target, dir, name);
+    let latest = query_latest(runtime, source, env, name, force);
+    assemble(name, current, latest)
+}
+
 /// 检查一个环境全部第三方插件的更新，按登记顺序返回一行一个结果。
 ///
 /// 会话级缓存优先（`force` 绕过）：同一插件本次使用会话内只在第一次进插件卡
 /// 时查一次，之后由界面「检查更新」按钮强制重查。官方内置骨架包与桥接插件
 /// 不在清单里（[`plugin_update::in_update_scope`]），整表读不到清单时直接报错。
+/// 查询最多 [`CHECK_CONCURRENCY`] 路并发跑（见该常量的安全论证），结果仍按
+/// 清单登记顺序返回。
 pub fn list(
     app: &tauri::AppHandle,
     config: &LaunchConfig,
@@ -469,27 +518,36 @@ pub fn list(
     let prefs = crate::settings::load(app).prefs;
     let env = crate::proxy::child_env(&prefs, source);
     let runtime = launch::runtime_of(config);
-    let mut items = Vec::new();
-    for name in &bundles {
-        if !plugin_update::in_update_scope(name) {
-            continue;
-        }
-        // 包名不安全（正常登记不会这样）就亮错误行：不拿它拼路径、拼命令。
-        if let Err(err) = plugin_update::validate_package_name(name) {
-            items.push(PluginUpdateItem {
-                name: name.clone(),
-                current: None,
-                target: None,
-                error: Some(err),
-                has_update: false,
+    let names: Vec<&str> = bundles
+        .iter()
+        .filter(|name| plugin_update::in_update_scope(name))
+        .map(String::as_str)
+        .collect();
+    let mut slots: Vec<Option<PluginUpdateItem>> = vec![None; names.len()];
+    // 共享引用先定形：move 闭包挪走的只是这些引用，target/dir/env 本体留在原地。
+    let target = &target;
+    let dir = &dir;
+    let env = &env;
+    std::thread::scope(|scope| {
+        let mut pending_names = &names[..];
+        let mut pending_slots = &mut slots[..];
+        for (start, end) in chunk_bounds(names.len()) {
+            let width = end - start;
+            let (name_chunk, rest_names) = pending_names.split_at(width);
+            let (slot_chunk, rest_slots) = pending_slots.split_at_mut(width);
+            pending_names = rest_names;
+            pending_slots = rest_slots;
+            scope.spawn(move || {
+                for (name, slot) in name_chunk.iter().zip(slot_chunk) {
+                    *slot = Some(check_one(target, dir, runtime, source, env, name, force));
+                }
             });
-            continue;
         }
-        let current = read_installed(&target, &dir, name);
-        let latest = query_latest(runtime, source, &env, name, force);
-        items.push(assemble(name, current, latest));
-    }
-    Ok(items)
+    });
+    Ok(slots
+        .into_iter()
+        .map(|slot| slot.expect("并发区间恰好盖满每个槽位"))
+        .collect())
 }
 
 #[cfg(test)]
@@ -677,6 +735,31 @@ mod tests {
         assert_eq!(item.target.as_deref(), Some("1.2.0"));
         assert!(item.error.unwrap().contains("读不到已装版本"));
         assert!(!item.has_update);
+    }
+
+    // ---- 检查并发切分 --------------------------------------------------------
+
+    #[test]
+    fn chunk_bounds_covers_every_slot_in_order_with_at_most_four_segments() {
+        for total in 0..=20usize {
+            let bounds = chunk_bounds(total);
+            assert!(
+                bounds.len() <= CHECK_CONCURRENCY,
+                "total={total}：{bounds:?}"
+            );
+            let mut covered = Vec::new();
+            for (start, end) in &bounds {
+                assert!(start < end, "total={total}：空区间 {bounds:?}");
+                assert!(
+                    covered.last().is_none_or(|&last| last + 1 == *start),
+                    "total={total}：区间不连续 {bounds:?}"
+                );
+                covered.extend(*start..*end);
+            }
+            assert_eq!(covered, (0..total).collect::<Vec<_>>(), "total={total}");
+        }
+        assert!(chunk_bounds(0).is_empty());
+        assert_eq!(chunk_bounds(1), vec![(0, 1)]);
     }
 
     // ---- 会话缓存键 ----------------------------------------------------------
