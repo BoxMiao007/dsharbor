@@ -78,6 +78,8 @@ const state = {
   npxCachedVersions: ["0.2.1-rc.1", "0.2.0-rc.2"],
   /** 其中钉版本写法（`dsh@<版本>`）启动能直接复用的部分：提示按它说「不会再下载」。 */
   npxPinServedVersions: ["0.2.1-rc.1"],
+  /** 裸包名（自动最新）的缓存键在不在：false 可预览启动时的「下载安装」提示（安装动画）。 */
+  npxBareCached: true,
   /** 已保存的启动配置：改它并刷新页面就能预览各种保存/回填分支（如存了已下架的版本）。 */
   savedLaunch: {
     mode: { kind: "npx", version: null },
@@ -779,12 +781,14 @@ window.__mockUnimplemented = [];
         : settle();
     },
     // 本机 npx 缓存里现有的版本：「已缓存」徽章的数据源（预览里固定给一组假版本）；
-    // pinServed 是钉版本写法能直接复用的部分（不重合的版本提示「选了还会再下载」）。
+    // pinServed 是钉版本写法能直接复用的部分（不重合的版本提示「选了还会再下载」）；
+    // bareCached 是裸包名（自动最新）那条缓存键在不在——启动前的「下载安装」提示按它判断。
     npx_cached_versions: () => {
       seen("npx_cached_versions");
       return {
         versions: S.npxCachedVersions || [],
         pinServed: S.npxPinServedVersions || [],
+        bareCached: S.npxBareCached ?? true,
       };
     },
 

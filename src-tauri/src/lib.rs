@@ -677,17 +677,20 @@ async fn query_dsh_versions(
         .map_err(|err| format!("后台查询版本列表失败：{err}"))?
 }
 
-/// `npx_cached_versions` 的返回：两个口径的「本机已缓存版本」。
+/// `npx_cached_versions` 的返回：三个口径的「本机已缓存」。
 ///
 /// - `versions`：缓存里出现过的版本（「已缓存」徽章按它挂）；
 /// - `pinServed`：其中钉版本写法（`dsh@<版本>`）启动能直接复用的那部分——npx 按命令
 ///   写法各存一份缓存，裸包名写法留下的目录服务不了钉版本的启动命令，所以两个清单
-///   不重合时，界面要如实告诉用户「选了还会再下载一份」。
+///   不重合时，界面要如实告诉用户「选了还会再下载一份」；
+/// - `bareCached`：自动最新（裸包名写法）的缓存键在不在——启动前的「下载安装」提示
+///   按它判断这次会不会现下载。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedVersions {
     versions: Vec<String>,
     pin_served: Vec<String>,
+    bare_cached: bool,
 }
 
 /// 列出 npx 缓存里已经缓存过的本包版本号（给界面「已缓存」徽章与「本机已经装过」提示用）。
@@ -700,11 +703,12 @@ struct CachedVersions {
 #[tauri::command]
 async fn npx_cached_versions(runtime: launch::Runtime) -> Result<CachedVersions, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        // 已缓存徽章与「不会再下载」判定共用一次 `_npx` 扫描（WSL 下免得起两次 wsl.exe）。
-        let (versions, pin_served) = npxcache::cached_and_pin_served(&runtime)?;
+        // 已缓存徽章、「不会再下载」判定与「下载安装」提示共用一次 `_npx` 扫描（WSL 下免得起两次 wsl.exe）。
+        let (versions, pin_served, bare_cached) = npxcache::cached_and_pin_served(&runtime)?;
         Ok(CachedVersions {
             versions,
             pin_served,
+            bare_cached,
         })
     })
     .await

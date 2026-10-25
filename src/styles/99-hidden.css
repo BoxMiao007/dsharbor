@@ -46,7 +46,15 @@ html[data-motion="off"] .square-btn.is-spinning .sq-spinner,
 html[data-motion="off"] .ico-count.ico-count-bump,
 html[data-motion="off"] .plugin-skel .sk-line,
 html[data-motion="off"] #btn-toggle.busy .launch-spin,
+html[data-motion="off"] #install-note .launch-spin,
 html[data-motion="off"] #btn-toggle.swap:hover,
 html[data-motion="off"] #btn-toggle.swap:focus-visible {
+  animation: none !important;
+}
+
+/* 「正在下载安装」提示行的省略号：关动效时不再逐拍浮现，直接静态给全量三个点——
+   按通用规则动画跑一次 0 秒会停在 0% 的空串上，提示行就丢掉了「还在进行」的语气。 */
+html[data-motion="off"] #install-note .install-dots::after {
+  content: "···";
   animation: none !important;
 }

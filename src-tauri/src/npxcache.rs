@@ -44,23 +44,27 @@ pub fn installed(runtime: &Runtime) -> Result<Vec<NpxInstall>, String> {
     }
 }
 
-/// 一次扫描算出两份清单（已缓存版本、钉版本可复用版本）。
+/// 一次扫描算出三份信息（已缓存版本、钉版本可复用版本、裸包名写法是否已缓存）。
 ///
-/// 返回 `(已缓存版本, 钉版本可复用版本)`：前者喂界面「已缓存」徽章；后者是前者的子集，
-/// 只登记钉版本写法（`@deepseek-ai/dsh@<版本>`）留下的缓存——界面用它区分「选它启动
-/// 不会再下载」与「缓存里有、但选了还会再下一份」：npx 按命令写法各存一份缓存，
-/// 裸包名写法留下的目录服务不了钉版本的启动命令。
+/// 返回 `(已缓存版本, 钉版本可复用版本, 裸包名已缓存)`：前两者喂界面「已缓存」徽章与
+/// 「选它启动会不会再下载」的提示；布尔值给启动前的「下载安装」提示——自动最新（裸包名）
+/// 写法没有可列的版本号，只能给一个「缓存里有没有这份写法」的是非答案。
 ///
-/// 两份清单共用一次 `installed()` 扫描：它要全量递归 `_npx`（WSL 下还要起 wsl.exe），
+/// npx 按命令写法各存一份缓存：裸包名写法留下的目录服务不了钉版本的启动命令，反之亦然。
+///
+/// 三份信息共用一次 `installed()` 扫描：它要全量递归 `_npx`（WSL 下还要起 wsl.exe），
 /// 分开各扫一遍只是把这个成本翻倍。
 ///
 /// 只在 Windows 宿主上扫：非 Windows 宿主上 npx 缓存盘面本来就不支持，
 /// 这里返回空列表而不是报错——「一个都没缓存」是能算出来的诚实答案。
-pub fn cached_and_pin_served(runtime: &Runtime) -> Result<(Vec<String>, Vec<String>), String> {
+pub fn cached_and_pin_served(
+    runtime: &Runtime,
+) -> Result<(Vec<String>, Vec<String>, bool), String> {
     if !cfg!(windows) {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), false));
     }
     let installs = installed(runtime)?;
+    let bare_cached = installs.iter().any(|item| has_bare_spec(&item.specs));
     Ok((
         npx_cache::cached_versions(
             installs
@@ -68,7 +72,18 @@ pub fn cached_and_pin_served(runtime: &Runtime) -> Result<(Vec<String>, Vec<Stri
                 .map(|item| (item.version.as_deref(), item.specs.as_slice())),
         ),
         npx_cache::pin_served_versions(installs.iter().map(|item| item.specs.iter())),
+        bare_cached,
     ))
+}
+
+/// 这批 spec 里有没有恰好是裸包名写法（`@deepseek-ai/dsh`）的一条。
+///
+/// 「自动最新」启动用的就是这条缓存键：`@next` 这类标签是另一条键、钉版本（带 @版本号）
+/// 又是另一条，都不能算——缓存键是整条 spec 字符串，差一个后缀就是两个目录。
+fn has_bare_spec(specs: &[String]) -> bool {
+    specs
+        .iter()
+        .any(|spec| spec.trim() == dsharbor_core::launch::NPX_PACKAGE)
 }
 
 /// 宿主 npm 缓存里每份 `_npx` 目录的安装信息。
@@ -410,6 +425,16 @@ mod tests {
         // 登录脚本先吐 MOTD 时，只用第一个 `{` 起的 JSON。
         let noisy = format!("Welcome to Ubuntu\n{json}\n");
         assert_eq!(parse_wsl_installs(&noisy).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn bare_spec_is_recognized_exactly_and_tag_or_pinned_do_not_count() {
+        // 裸包名（自动最新的缓存键）算；带 @版本（钉版本）与 @标签（另一条键）都不算。
+        assert!(has_bare_spec(&["@deepseek-ai/dsh".to_string()]));
+        assert!(has_bare_spec(&["@deepseek-ai/dsh ".to_string()]));
+        assert!(!has_bare_spec(&["@deepseek-ai/dsh@0.2.1-rc.2".to_string()]));
+        assert!(!has_bare_spec(&["@deepseek-ai/dsh@next".to_string()]));
+        assert!(!has_bare_spec(&[]));
     }
 
     #[test]

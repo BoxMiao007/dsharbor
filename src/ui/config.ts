@@ -77,6 +77,9 @@ export const TOGGLE_TEXT_HOVER = "开始运行";
 /** 启动过程中按钮上那一行字：进程起来了、登录链接还没就绪（npx 首次下载就卡在这）。 */
 export const TOGGLE_TEXT_STARTING = "启动中…";
 
+/** 缓存里没有对应写法、这次要现下载安装时的按钮文字（与「启动中…」同一种转环）。 */
+export const TOGGLE_TEXT_INSTALLING = "安装中…";
+
 /** 运行态两颗圆钮的气泡文案（也是 aria-label）：纯图标按钮没有可见文字，必须补上。 */
 export const TOOLTIP_STOP = "停止 DSH";
 export const TOOLTIP_RESTART = "重启 DSH";

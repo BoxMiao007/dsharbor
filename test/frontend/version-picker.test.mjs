@@ -10,8 +10,9 @@
  *  3. npx 缓存里已有的版本挂「已缓存」（数据来自 `npx_cached_versions`），它不占 tag 的 3 枚名额，
  *     排在 tag 徽章后面；选中的版本不额外挂「已装」
  *     （「已装」原来按「当前选中的值」判，选中未安装的版本也会误显示，已删）；
- *  4. 「本机已经装过」提示的两种口径：缓存那份是钉版本写法（`dsh@<版本>`）→「不会再下载」；
- *     只是裸包名写法留下的 →「会再下载一份」（npx 按命令写法各存一份缓存）；
+ *  4. 「选了会再下载」提示只有一种口径：缓存里已有该版本号、但那份是裸包名写法留下的 →
+ *     「会再下载一份」（npx 按命令写法各存一份缓存）；钉版本写法（`dsh@<版本>`）直接复用
+ *     缓存的那份不再提示——「已缓存」徽章已经说明，多一句是噪音（用户反馈，已删）；
  *  5. 末尾是「更多…」，每点一次再放 10 个，且点「更多」不收起弹层。
  *
  * 跑在普通浏览器里（假后端预览台 scripts/mock-preview.mjs），不起 Tauri 窗口。
@@ -436,7 +437,7 @@ test("末尾「更多…」每次只放 10 个，且点了不收起弹层", { sk
   }
 });
 
-test("缓存提示分两种口径：钉版本写法不重下，裸包名写法会重下", { skip: skipReason }, async () => {
+test("缓存提示只说会重下的口径：裸包名写法提示，钉版本直接复用不再提示", { skip: skipReason }, async () => {
   // 保存的配置选了 0.2.0-rc.2：它在缓存里（默认假数据），但 pinServed 只登记 0.2.1-rc.1
   // ——即缓存里那份 0.2.0-rc.2 是裸包名写法留下的，按 npx「每种写法各存一份」会再下载。
   const state = {
@@ -462,7 +463,8 @@ test("缓存提示分两种口径：钉版本写法不重下，裸包名写法�
     assert.match(shown.text, /[^不]会再下载一份/, "裸包名写法留下的缓存要如实说会再下载");
     assert.doesNotMatch(shown.text, /不会再下载/, "此时不能反过来保证不重下");
 
-    // 换选 pinServed 命中的 0.2.1-rc.1：这份缓存就是钉版本写法留下的，如实说不重下。
+    // 换选 pinServed 命中的 0.2.1-rc.1：这份缓存就是钉版本写法留下的，启动直接复用，
+    // 「已缓存」徽章已经说明——不再额外出「不会再下载」的提示（用户反馈的噪音，已删）。
     await openList(page);
     await page.evaluate(() => {
       const items = Array.from(document.querySelectorAll("#npx-version-picker .picker-option"));
@@ -473,9 +475,7 @@ test("缓存提示分两种口径：钉版本写法不重下，裸包名写法�
       { timeout: 3000 },
     );
     shown = await hint();
-    assert.equal(shown.hidden, false, "换成钉版本命中的版本仍要有提示");
-    assert.match(shown.text, /不会再下载/, "钉版本写法命中的缓存要说明不会重下");
-    assert.doesNotMatch(shown.text, /[^不]会再下载一份/, "此时不能误报会重下");
+    assert.equal(shown.hidden, true, "钉版本写法命中的缓存不再出「已装过」提示");
   } finally {
     await page.close();
   }

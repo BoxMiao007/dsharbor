@@ -9,7 +9,7 @@ import { prepareCopyButton, flashCopy, copyIconStack, copyTextChrome } from "./u
 import { isStarting } from "./ui/types";
 import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, InstalledDsh } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
-import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOGGLE_TEXT_STARTING, TOOLTIP_STOP, TOOLTIP_STARTING } from "./ui/config";
+import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOGGLE_TEXT_STARTING, TOGGLE_TEXT_INSTALLING, TOOLTIP_STOP, TOOLTIP_STARTING } from "./ui/config";
 import { Picker } from "./ui/picker";
 import type { PickerBadge, PickerChoice } from "./ui/picker";
 import { THEME_KEY, readStoredTheme, applyMode } from "./ui/theme";
@@ -116,6 +116,7 @@ async function main(): Promise<void> {
     const loginText = $<HTMLElement>("login-text");
     const loginInfo = $<HTMLElement>("login-info");
     const loginNote = $<HTMLParagraphElement>("login-note");
+    const installNote = $<HTMLParagraphElement>("install-note");
     const btnClearLog = $<HTMLButtonElement>("btn-clear-log");
     // 打开方式：主按钮 + 右侧小三角的两段式（选完回填，再点主按钮才执行）。
     const btnOpen = $<HTMLButtonElement>("btn-open");
@@ -161,6 +162,8 @@ async function main(): Promise<void> {
     let cachedVersions: string[] = [];
     /** 其中钉版本写法（`dsh@<版本>`）启动能直接复用的部分（`npx_cached_versions.pinServed`）。 */
     let pinServedVersions: string[] = [];
+    /** 裸包名（自动最新）写法的缓存键在不在：决定这次启动要不要现下载（安装提示按它出）。 */
+    let bareCached = false;
     /** 版本下拉当前放出几个具体版本（不含首项与末尾的「更多…」）。 */
     let versionShown = VERSION_INITIAL_COUNT;
 
@@ -396,9 +399,10 @@ async function main(): Promise<void> {
 
     /**
      * 选中版本「本机已经装过」的提示。按实际版本号判等（不看 latest 标签），
-     * 只提示不禁用——用户仍可照常启动。两种口径都说实话：
-     * 缓存里那份就是钉版本写法（`dsh@<版本>`）留下的，选它启动直接复用；
-     * 否则（裸包名写法留下的）按 npx「每种写法各存一份缓存」的规则，选了还会再下一份。
+     * 只提示不禁用——用户仍可照常启动。只有一种口径：缓存里已有这一版、但那份是
+     * 裸包名写法（不带 @版本）留下的，按 npx「每种写法各存一份缓存」的规则会再下一份。
+     * 钉版本写法留下的那份启动直接复用，不再出「不会再下载」的提示——「已缓存」徽章
+     * 已经说明，多一句是噪音（用户反馈后删掉）。
      */
     function installedHint(): string {
       if (selectedVersion === null) {
@@ -408,7 +412,7 @@ async function main(): Promise<void> {
         return "";
       }
       if (pinServedVersions.includes(selectedVersion)) {
-        return `v${selectedVersion} 本机已经装过（缓存里就是 dsh@${selectedVersion} 写法的那份），选它启动不会再下载一份。`;
+        return "";
       }
       return `v${selectedVersion} 本机 npx 缓存里已有这一份，但选它启动会再下载一份——npx 按命令写法各存一份缓存，缓存里那份是裸包名写法（不带 @版本）留下的。`;
     }
@@ -447,17 +451,19 @@ async function main(): Promise<void> {
     /** 现扫一次本机 npx 缓存里已有的版本，好把「已缓存」徽章挂到正确的行上。 */
     async function refreshCachedVersions(): Promise<void> {
       try {
-        const cached = await invoke<{ versions: string[]; pinServed: string[] }>(
+        const cached = await invoke<{ versions: string[]; pinServed: string[]; bareCached: boolean }>(
           "npx_cached_versions",
           { runtime },
         );
         cachedVersions = cached.versions;
         pinServedVersions = cached.pinServed;
+        bareCached = cached.bareCached;
       } catch (err) {
         // 缓存目录读不到只影响那枚徽章，不影响选版本；不打扰用户，日志里留痕。
         console.error("读取 npx 缓存版本失败:", err);
         cachedVersions = [];
         pinServedVersions = [];
+        bareCached = false;
       }
       // 徽章是在 versionChoices() 里算的，扫回来必须重铺一遍候选；只调 relayout() 不会重算徽章。
       // 「本机已装过」的提示也依赖 cachedVersions，一并重刷。
@@ -1549,23 +1555,41 @@ async function main(): Promise<void> {
      * 初始就是 swap（buildHtml 的标记带 .swap），第一轮 render 不必重建。 */
     let toggleMode: "swap" | "busy" | "round" | null = "swap";
 
+    /** busy 形态下的文案相位：true =「安装中…」（这次要现下载），false =「启动中…」。
+     * 与 toggleMode 一起进缓存判断，否则从启动中切到安装中时按钮文字不会跟着换。 */
+    let toggleInstalling = false;
+
     /** 刚点了「启动」、start_dsh 这条命令还没返回的那一小段。
      * 这段时间后端状态仍是「已停止」，界面却已经该说「启动中」，所以本地记一笔；
      * 命令返回后交给 isStarting（进程起来了、登录链接还没就绪）接着表达。 */
     let launchPending = false;
 
     /**
+     * 这次启动会不会现下载安装（也就是要不要给「安装动画」）：只有 npx 模式且缓存里
+     * 没有对应写法时才成立——选了版本看 pinServed（钉版本写法直接复用那份缓存），
+     * 自动最新看 bareCached（裸包名写法整条缓存键在不在）。其余启动方式一律 false。
+     */
+    function launchWillInstall(): boolean {
+      if (currentMode() !== "npx") {
+        return false;
+      }
+      return selectedVersion === null ? !bareCached : !pinServedVersions.includes(selectedVersion);
+    }
+
+    /**
      * 渲染「启动 / 停止」按钮，三种形态：
      * - `swap`（未启动）：蓝底长条「启动 DSH」+ 两组文字逐字切换（60-controls.css 的
      *   `#btn-toggle.swap`）；
-     * - `busy`（启动中）：同一根蓝底长条，换成一只细环 + 「启动中…」。命令在途时这一下
-     *   按不动（后端仍是 stopped，再发一条只会被拒），气泡如实说明「在等」；
+     * - `busy`（启动中）：同一根蓝底长条，换成一只细环 + 「启动中…」/「安装中…」
+     *   （缓存里没有对应写法、这次要现下载时说后者）。命令在途时这一下按不动
+     *   （后端仍是 stopped，再发一条只会被拒），气泡如实说明「在等」；
      * - `round`（运行中）：红底**圆形图标钮**（维护者要求：与「重启 DSH」同形）。
      * 三种形态只在跨状态时重建一次，逐帧调用不会反复重排 DOM。
      */
-    function renderToggleButton(mode: "swap" | "busy" | "round"): void {
-      if (mode === toggleMode) return;
+    function renderToggleButton(mode: "swap" | "busy" | "round", installing = false): void {
+      if (mode === toggleMode && installing === toggleInstalling) return;
       toggleMode = mode;
+      toggleInstalling = installing;
       btnToggle.classList.toggle("swap", mode === "swap");
       btnToggle.classList.toggle("busy", mode === "busy");
       btnToggle.classList.toggle("round", mode === "round");
@@ -1579,12 +1603,14 @@ async function main(): Promise<void> {
         return;
       }
       if (mode === "busy") {
-        // 启动中仍是长条按钮。气泡说实话：这一下按不动（命令在途时后端还是 stopped，
-        // 再发一条只会被拒），等进程真的起来、变红圆钮之后才谈得上停止。
+        // 启动中仍是长条按钮；文案按「要不要现下载」分两相。气泡说实话：这一下按不动
+        // （命令在途时后端还是 stopped，再发一条只会被拒），等进程真的起来、变红圆钮之后
+        // 才谈得上停止。
+        const text = installing ? TOGGLE_TEXT_INSTALLING : TOGGLE_TEXT_STARTING;
         btnToggle.classList.add("has-tip");
         btnToggle.dataset.tip = TOOLTIP_STARTING;
-        btnToggle.setAttribute("aria-label", `${TOGGLE_TEXT_STARTING}正在等待 DSH 起来`);
-        btnToggle.innerHTML = `<span class="launch-spin" aria-hidden="true"></span><span class="btn-text">${TOGGLE_TEXT_STARTING}</span>`;
+        btnToggle.setAttribute("aria-label", `${text}正在等待 DSH 起来`);
+        btnToggle.innerHTML = `<span class="launch-spin" aria-hidden="true"></span><span class="btn-text">${text}</span>`;
         return;
       }
       // 停止态是带可见文字的长条按钮，气泡没有意义，一并摘掉。
@@ -1598,12 +1624,14 @@ async function main(): Promise<void> {
      * 按「在途 / 启动中 / 运行 / 未启动」重画「启动 / 停止」这一支（形态 + 主色 + aria-busy +
      * 重启钮要不要露面）。轮询渲染与点击瞬间都走这一条，免得两处各算一遍 `busy` 之后
      * 算出不同的结论（点击时先切「启动中」，靠的就是这里同一套推导）。
+     * 返回值 = busy 形态下是否处于「安装中」一相，给「正在下载安装」提示行共用同一结论。
      */
-    function paintToggle(): void {
+    function paintToggle(): boolean {
       const running = currentStatus?.state === "running";
       const starting = currentStatus ? isStarting(currentStatus) : false;
       const busy = launchPending || starting;
-      renderToggleButton(busy ? "busy" : running ? "round" : "swap");
+      const installing = busy && launchWillInstall();
+      renderToggleButton(busy ? "busy" : running ? "round" : "swap", installing);
       // 启动中仍是蓝底主按钮（不是运行态那枚红圆钮），所以主色跟着 busy / 未启动走。
       btnToggle.classList.toggle("primary", !running || busy);
       // 读屏软件靠它知道「按下去之后还在忙」，不依赖那只转圈的动画。
@@ -1611,6 +1639,15 @@ async function main(): Promise<void> {
       // 「重启 DSH」只在**真正起来之后**出现（维护者要求）：启动中整排仍只有一颗按钮，
       // 登录链接就绪、状态落定才放出「停止 / 重启」。
       btnRestart.classList.toggle("hidden", !running || busy);
+      return installing;
+    }
+
+    /**
+     * 「正在下载安装」提示行（安装动画）：只在 npx 启动且这次要现下载时出现，
+     * 从点「启动」一直留到登录链接就绪或失败——判断与按钮的「安装中…」同源（paintToggle）。
+     */
+    function syncInstallNote(show: boolean): void {
+      installNote.classList.toggle("hidden", !show);
     }
 
     function render(status: SessionStatus): void {
@@ -1633,7 +1670,8 @@ async function main(): Promise<void> {
       // 「启动中」= 命令刚发出去还没回来，或进程起来了、登录链接还没就绪（npx 首次下载、
       // DSH 冷启动都停在这一步）。这一段不能直接跳到运行态，否则点了「启动 DSH」会一下子
       // 蹦出「停止 / 重启」两颗（维护者反馈的突变）。推导与形态切换都在 paintToggle 里。
-      paintToggle();
+      // 返回值同时驱动「正在下载安装」提示行：与按钮的「安装中…」共用同一套判断。
+      syncInstallNote(paintToggle());
       // 「打开方式」：启动前后都在，只在登录链接就绪后可点（没链接时点开也没用）。
       btnOpen.disabled = !status.loginReady;
       btnOpenMore.disabled = !status.loginReady;

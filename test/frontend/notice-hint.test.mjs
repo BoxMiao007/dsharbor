@@ -79,7 +79,8 @@ after(async () => {
   preview?.kill();
 });
 
-/** 打开一页、等版本列表落定，并选中一枚带「已缓存」徽章的版本（让提示行出现）。 */
+/** 打开一页、等版本列表落定，并选中 0.2.0-rc.2（带「已缓存」徽章、但缓存那份是裸包名
+ *  写法留下的——钉版本直接复用的情况已不再出提示行，见 version-picker.test.mjs）。 */
 async function openWithCachedVersion(browser) {
   const page = await browser.newPage();
   await page.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
@@ -95,8 +96,10 @@ async function openWithCachedVersion(browser) {
     { timeout: 5000 },
   );
   await page.evaluate(() => {
-    const row = [...document.querySelectorAll("#npx-version-picker .picker-option")].find((r) =>
-      r.querySelector(".picker-badge-cached"),
+    // 0.2.0-rc.2：带「已缓存」徽章、但缓存那份是裸包名写法留下的——钉版本直接复用的情况
+    // 已不再出提示行（见 version-picker.test.mjs），要选这一版提示才会出现。
+    const row = [...document.querySelectorAll("#npx-version-picker .picker-option")].find(
+      (r) => r.querySelector(".picker-badge-cached") && r.querySelector(".text")?.textContent === "0.2.0-rc.2",
     );
     row?.click();
   });

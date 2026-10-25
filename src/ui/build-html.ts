@@ -122,6 +122,12 @@ export function buildHtml(info: AppInfo): string {
   // 两者都是「运行中才出现」的动态状态，加 aria-live 让屏幕阅读器在出现时读出来。
   const statusErrorBlock = `<p id="status-error" class="error hidden" role="alert" aria-live="assertive"></p>`;
   const loginNoteBlock = `<p id="login-note" class="hint notice login-note hidden" role="status" aria-live="polite"></p>`;
+  // 「正在下载安装」提示行（安装动画）：npx 启动且缓存里没有对应写法时出现，
+  // 一直留到登录链接就绪或失败。左侧转环与按钮 busy 形态同款，省略号逐拍浮现（60-controls.css）。
+  const installNoteBlock =
+    `<p id="install-note" class="hint notice login-note hidden" role="status" aria-live="polite">` +
+    `<span class="launch-spin" aria-hidden="true"></span>` +
+    `<span>正在下载安装 DSH，可能要一两分钟，进度看「日志」<code class="install-dots" aria-hidden="true"></code></span></p>`;
 
   // 「动效」块：全站动效的总开关，值存在 localStorage（键见 src/ui/motion.ts），
   // 关掉后 <html> 带 data-motion="off"，由 99-hidden.css 统一把动画与过渡中和。
@@ -510,6 +516,7 @@ export function buildHtml(info: AppInfo): string {
       ${toolbar}
       ${statusErrorBlock}
       ${loginNoteBlock}
+      ${installNoteBlock}
       <div class="content-main">
         <div class="page" id="page">${panels}</div>
       </div>
