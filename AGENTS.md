@@ -91,7 +91,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 
 验证：宣称发布完成须附 `git tag -l vX.Y.Z` 与 `gh release view vX.Y.Z` 实际输出，并确认版本号文件与 tag 一致。
 
-本仓库落地（DSHarbor，上面骨架以主本为准，本块只写本仓库特有约定）：
+本仓库落地（DSHarbor，本块只写本仓库特有约定）：
 
 - **只在用户明确说「发版」时才动版本号与 tag**，agent 不自行发版。
 - **提交类型是机械判定的唯一输入**：提交信息用 `type(scope): 中文描述`，type 限 `feat` / `fix` / `perf` / `docs` / `chore` / `test` / `ci` / `build` / `refactor`，scope 可选（常用 `ui` / `launcher` / `plugin` / `tray` / `wsl` / `core` / `release`），破坏性变更用 `!` 或 `BREAKING CHANGE:` footer。历史提交不追溯；判定区间是「上一版本 tag..HEAD」的全部提交，取最高优先级（`BREAKING > feat > 其余`），一个区间只出一个结论。
@@ -107,7 +107,6 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 - 全新环境的依赖安装命令(已在 Windows 本机实测):安装 VS Build Tools(含 C++ 桌面开发 + Windows SDK,即 `link.exe`)、Rust 工具链(宿主 `x86_64-pc-windows-msvc`,带 `rustfmt` / `clippy`)、Node.js + pnpm(`pnpm install`);NSIS 由 `tauri build` 首次打包时自动下载到 `%LOCALAPPDATA%\tauri\NSIS`(需能访问 GitHub,墙内要开代理)。不再需要 clang/lld/llvm/cargo-xwin。步骤变化时同步更新 README。
 - 重大技术决策(选型、数据模型、外部服务)在 `docs/decisions.md` 记一行:日期、决策、为什么、放弃了什么。技术栈选型是第一条要记的决策。发布前至少走一遍界面预览台 `node scripts/mock-preview.mjs` 确认界面能渲染、核心交互可用;`docs/manual-acceptance.md` 保留作真机复核清单,需要时再照它走。
 - README 面向用户维护:项目是什么、怎么启动、日常怎么用,保持非程序员能看懂。
-- 版本与发布的**通用骨架主本**在 `D:\AAA\Backups\Agents 配置文件\项目级 AGENTS.md`:改这类通用规则先改那份,再同步本文件 `## 版本与发布` 的骨架段;`本仓库落地(DSHarbor)` 那一块是本仓库专属,不写进主本。
 
 ## Agent skills
 
