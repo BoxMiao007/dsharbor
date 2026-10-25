@@ -2993,18 +2993,93 @@ async function main(): Promise<void> {
     let pluginUpdateItems: PluginUpdateItem[] = [];
     /** 当前环境是否已检查过（没查过时行里不显示版本号，免得像「没有版本」）。 */
     let pluginUpdatesChecked = false;
+
+    /** 一轮更新的进度态：行级状态 + 进度条三个数 + 收尾文案。
+     *  做成一个对象是为了能整份挂到「某个环境」名下——切走再切回来时，进度条与行级
+     *  动画（排队/更新中/已更新）要原样还在，不能因为换了一次环境就清空。 */
+    interface PluginProgressState {
+      /** 键＝插件名；不在表里＝这一行没参与本轮。 */
+      phases: Map<string, { phase: UpdatePhase; message: string | null }>;
+      /** 这一轮要更新几个／已完成几个（含失败）／失败几个。 */
+      total: number;
+      done: number;
+      failed: number;
+      /** 收尾汇总文案（null＝这一轮还没跑完）。 */
+      summary: string | null;
+    }
+
+    function emptyPluginProgress(): PluginProgressState {
+      return { phases: new Map(), total: 0, done: 0, failed: 0, summary: null };
+    }
+
+    /** 当前环境正在显示的那一份进度态（切环境时整份换成目标环境的那一份）。 */
+    let pluginRound: PluginProgressState = emptyPluginProgress();
+
+    /** 每个环境各自那份更新态（键＝环境名）：切走时存下、切回来取回。
+     *  `round` 存的是**那个对象本身**而不是当时的数值——用户切走后这轮还在跑，
+     *  进度事件继续往同一个对象里写，切回来看到的就是最新状态（含行级动画）。 */
+    interface PluginUpdateSnapshot {
+      items: PluginUpdateItem[];
+      checked: boolean;
+      round: PluginProgressState;
+    }
+    const pluginUpdateSnapshots = new Map<string, PluginUpdateSnapshot>();
+
+    /** 「这一轮更新属于哪个环境、写进哪一份进度态」——发起时锁定，进度事件全程带着它。 */
+    interface PluginRoundScope {
+      env: string;
+      round: PluginProgressState;
+    }
+
+    /** 取该环境名下的那一份，没有就先建一个空态（发起新一轮更新前用它拿容器）。 */
+    function ensurePluginUpdateSnapshot(env: string): PluginUpdateSnapshot {
+      let snapshot = pluginUpdateSnapshots.get(env);
+      if (!snapshot) {
+        snapshot = { items: [], checked: false, round: emptyPluginProgress() };
+        pluginUpdateSnapshots.set(env, snapshot);
+      }
+      return snapshot;
+    }
+
+    /** 把当前显示的这一份存进该环境名下（切走前调用）。 */
+    function storePluginUpdate(env: string | null): void {
+      if (!env) {
+        return;
+      }
+      pluginUpdateSnapshots.set(env, {
+        items: pluginUpdateItems,
+        checked: pluginUpdatesChecked,
+        round: pluginRound,
+      });
+    }
+
+    /** 取回该环境名下的那一份；没有（从没进过这张卡）返回 false，由调用方清空。 */
+    function restorePluginUpdate(env: string): boolean {
+      const snapshot = pluginUpdateSnapshots.get(env);
+      if (!snapshot) {
+        return false;
+      }
+      pluginUpdateItems = snapshot.items;
+      pluginUpdatesChecked = snapshot.checked;
+      pluginRound = snapshot.round;
+      return true;
+    }
     /** 每个环境最近一次检查得到的可更新插件数（键＝环境名）：环境卡微标按它显示。
      *  只在对应环境的检查/更新流程里写入；没查过或为 0 的环境没有微标。 */
     const pluginUpdateCounts = new Map<string, number>();
 
-    /** 当前环境的可更新计数增减并刷新环境卡微标（没查过的环境不动）：
-     *  更新动作成功一个就实时递减一枚，权威数字随后由重查回来的更新清单覆盖。 */
-    function bumpPluginUpdateCount(delta: number): void {
-      const current = pluginUpdateCounts.get(prefs.profile);
+    /** 某个环境的可更新计数增减并刷新环境卡微标（没查过的环境不动）：
+     *  更新动作成功一个就实时递减一枚，权威数字随后由重查回来的更新清单覆盖。
+     *  `env` 默认当前环境；批量更新跑着时用户可以切走，那时要减的是发起时那个环境。 */
+    function bumpPluginUpdateCount(delta: number, env: string | null = prefs.profile): void {
+      if (!env) {
+        return;
+      }
+      const current = pluginUpdateCounts.get(env);
       if (current === undefined || current + delta < 0) {
         return;
       }
-      pluginUpdateCounts.set(prefs.profile, current + delta);
+      pluginUpdateCounts.set(env, current + delta);
       renderEnvCards();
     }
     /** 插件更新动作是否在跑（忙时更新按钮与开关全部置灰，防重复提交）。 */
@@ -3013,33 +3088,34 @@ async function main(): Promise<void> {
     let pluginUpdateRunningAll = false;
     /** 检查更新是否在跑（「检查更新」按钮发起的强制重查；进卡自动查不锁界面）。 */
     let pluginCheckBusy = false;
-    /** 这一轮更新里每一行自己的状态（键＝插件名）。空着＝没有正在展示的更新轮次。 */
-    let pluginUpdatePhases = new Map<string, { phase: UpdatePhase; message: string | null }>();
-    /** 这一轮要更新几个／已完成几个（含失败）／失败几个：进度条与收尾汇总都按它们算。 */
-    let pluginProgressTotal = 0;
-    let pluginProgressDone = 0;
-    let pluginProgressFailed = 0;
-    /** 收尾汇总文案（null＝这一轮还没跑完，进度区显示进行中的已完成数）。 */
-    let pluginProgressSummary: string | null = null;
     /** 刚落定成已更新／失败的那几行：接下来几次重画给小签挂一次性强调动画，
      *  到点自动出组。列表每次整块重画，纯 CSS 动画会跟着重画重演，
-     *  所以「只演一次」由这组标记兜住，不靠样式记忆。 */
-    const pluginFreshPhase = new Set<string>();
+     *  所以「只演一次」由这组标记兜住，不靠样式记忆。
+     *  只服务于「当前看得见的那份进度」，因此按环境分：切回来时各自还得补演。 */
+    const pluginFreshPhase = new Map<string, Set<string>>();
 
-    /** 给刚出结果的小签挂一次性强调：0.9s 动画播完就出组，之后的重画不再挂。 */
-    function markFreshPhase(name: string): void {
-      pluginFreshPhase.add(name);
-      window.setTimeout(() => pluginFreshPhase.delete(name), 1000);
+    function freshPhaseSet(env: string | null): Set<string> {
+      const key = env ?? "";
+      let set = pluginFreshPhase.get(key);
+      if (!set) {
+        set = new Set();
+        pluginFreshPhase.set(key, set);
+      }
+      return set;
     }
 
-    /** 清掉上一轮的进度与行级状态（换环境、重新检查、开始新一轮时用）。 */
-    function resetPluginProgress(): void {
-      pluginUpdatePhases = new Map();
-      pluginFreshPhase.clear();
-      pluginProgressTotal = 0;
-      pluginProgressDone = 0;
-      pluginProgressFailed = 0;
-      pluginProgressSummary = null;
+    /** 给刚出结果的小签挂一次性强调：0.9s 动画播完就出组，之后的重画不再挂。 */
+    function markFreshPhase(name: string, env: string | null = prefs.profile): void {
+      const set = freshPhaseSet(env);
+      set.add(name);
+      window.setTimeout(() => set.delete(name), 1000);
+    }
+
+    /** 清掉某个环境的进度与行级状态（重新检查、开始新一轮时用）。
+     *  换环境不调它——换了要整份换成目标环境那份，见 `restorePluginUpdate`。 */
+    function resetPluginProgress(env: string): PluginProgressState {
+      freshPhaseSet(env).clear();
+      return emptyPluginProgress();
     }
 
     /** 插件卡上还有没有别的动作在跑（检查更新或任意一轮更新）：
@@ -3082,7 +3158,7 @@ async function main(): Promise<void> {
 
     /** 这一行在本轮更新里的状态；没参与本轮返回 null。 */
     function updatePhaseFor(name: string): { phase: UpdatePhase; message: string | null } | null {
-      return pluginUpdatePhases.get(name) ?? null;
+      return pluginRound.phases.get(name) ?? null;
     }
 
     /** 行标题里那枚状态胶囊：只在参与本轮更新的行上出现。 */
@@ -3091,7 +3167,7 @@ async function main(): Promise<void> {
       if (!state) {
         return "";
       }
-      return `<span class="plugin-phase plugin-phase-${state.phase}${pluginFreshPhase.has(name) ? " is-fresh" : ""}">${updatePhaseLabel[state.phase]}</span>`;
+      return `<span class="plugin-phase plugin-phase-${state.phase}${freshPhaseSet(prefs.profile).has(name) ? " is-fresh" : ""}">${updatePhaseLabel[state.phase]}</span>`;
     }
 
     /** 失败行把原因留在行里（可读、可核对），成功行不占位。 */
@@ -3251,88 +3327,94 @@ async function main(): Promise<void> {
      * `aria-live="polite"`，完成一句话会被读屏读出来。失败数一并写进去，不藏在行里。
      */
     function renderPluginProgress(): void {
-      const visible = pluginProgressTotal > 0 || pluginProgressSummary !== null;
+      const visible = pluginRound.total > 0 || pluginRound.summary !== null;
       pluginProgress.classList.toggle("hidden", !visible);
-      const percent =
-        pluginProgressTotal > 0 ? Math.round((pluginProgressDone / pluginProgressTotal) * 100) : 0;
+      const percent = pluginRound.total > 0 ? Math.round((pluginRound.done / pluginRound.total) * 100) : 0;
       pluginProgressBar.setAttribute("aria-valuenow", String(percent));
       const fill = pluginProgressBar.firstElementChild;
       if (fill instanceof HTMLElement) {
         fill.style.width = `${percent}%`;
       }
       pluginProgressSum.textContent =
-        pluginProgressSummary ??
-        (pluginProgressTotal > 0
-          ? `正在更新：已完成 ${pluginProgressDone}/${pluginProgressTotal}`
-          : "");
+        pluginRound.summary ??
+        (pluginRound.total > 0 ? `正在更新：已完成 ${pluginRound.done}/${pluginRound.total}` : "");
     }
 
     /** 兜底收尾：这一轮结束后仍有行没走到「已更新/失败」（整轮在命令级就失败、
      *  或进度通道最后一条没送到），把它们按失败补齐，进度条推到 100%，汇总照实写。
      *  只对批量生效——单插件的结果只认命令返回值。 */
-    function settleUnfinishedPluginRows(scope: string[], name: string | null): void {
-      if (name !== null || pluginProgressTotal <= 0 || pluginProgressDone >= pluginProgressTotal) {
+    function settleUnfinishedPluginRows(
+      scope: string[],
+      name: string | null,
+      round: PluginProgressState = pluginRound,
+      env: string | null = prefs.profile,
+    ): void {
+      if (name !== null || round.total <= 0 || round.done >= round.total) {
         return;
       }
-      const successes = pluginProgressDone - pluginProgressFailed;
+      const successes = round.done - round.failed;
       for (const plugin of scope) {
-        const state = pluginUpdatePhases.get(plugin);
+        const state = round.phases.get(plugin);
         if (state !== undefined && (state.phase === "done" || state.phase === "fail")) {
           continue;
         }
-        pluginUpdatePhases.set(plugin, { phase: "fail", message: "没有收到结果" });
-        markFreshPhase(plugin);
+        round.phases.set(plugin, { phase: "fail", message: "没有收到结果" });
+        markFreshPhase(plugin, env);
       }
-      pluginProgressFailed = pluginProgressTotal - successes;
-      pluginProgressDone = pluginProgressTotal;
-      pluginProgressSummary = `已更新 ${successes}/${pluginProgressTotal}，${pluginProgressFailed} 个失败`;
+      round.failed = round.total - successes;
+      round.done = round.total;
+      round.summary = `已更新 ${successes}/${round.total}，${round.failed} 个失败`;
     }
 
     /** 全部跑完时把收尾文案定下来：`已更新 N/M，K 个失败`（N 是成功的，M 是本轮总数）。
      *  已经有汇总文案（例如整轮在命令级就失败、由 settleUnfinishedPluginRows 收的尾）就不再改。 */
-    function finishPluginProgressIfComplete(): void {
-      if (
-        pluginProgressTotal > 0 &&
-        pluginProgressDone >= pluginProgressTotal &&
-        pluginProgressSummary === null
-      ) {
-        const ok = pluginProgressDone - pluginProgressFailed;
-        pluginProgressSummary = `已更新 ${ok}/${pluginProgressTotal}，${pluginProgressFailed} 个失败`;
+    function finishPluginProgressIfComplete(round: PluginProgressState = pluginRound): void {
+      if (round.total > 0 && round.done >= round.total && round.summary === null) {
+        const ok = round.done - round.failed;
+        round.summary = `已更新 ${ok}/${round.total}，${round.failed} 个失败`;
       }
     }
 
     /** 吃一条后端进度事件：start 只把这一行点亮，done 记结果并推进进度条。
      *  已完成数直接取后端给的 `index`（从 1 起），总数取 `total`——不靠前端自增，
-     *  这样漏收一条或顺序有变时进度条也不会和真实结果脱节。 */
-    function applyUpdateProgress(event: UpdateProgressEvent): void {
+     *  这样漏收一条或顺序有变时进度条也不会和真实结果脱节。
+     *
+     *  `scope` 是发起这轮更新时锁定的那份进度态与环境名：用户可以随时切到别的环境，
+     *  事件必须写回它自己那份（Map 里存着的同一个对象），否则会画进别人家的列表里。
+     *  只有「这份恰好是当前显示的」时才重画。 */
+    function applyUpdateProgress(event: UpdateProgressEvent, scope: PluginRoundScope): void {
+      const round = scope.round;
       if (event.total > 0) {
-        pluginProgressTotal = event.total;
+        round.total = event.total;
       }
       if (event.phase === "start") {
-        pluginUpdatePhases.set(event.plugin, { phase: "busy", message: null });
+        round.phases.set(event.plugin, { phase: "busy", message: null });
       } else {
-        const previous = pluginUpdatePhases.get(event.plugin);
+        const previous = round.phases.get(event.plugin);
         const counted = previous !== undefined && previous.phase !== "done" && previous.phase !== "fail";
         if (counted && event.ok !== true) {
-          pluginProgressFailed += 1;
+          round.failed += 1;
         }
-        if (event.index > pluginProgressDone) {
-          pluginProgressDone = event.index;
+        if (event.index > round.done) {
+          round.done = event.index;
         }
         const ok = event.ok === true;
-        pluginUpdatePhases.set(event.plugin, {
+        round.phases.set(event.plugin, {
           phase: ok ? "done" : "fail",
           message: ok ? (event.message ?? null) : (event.message ?? "原因未知"),
         });
-        markFreshPhase(event.plugin);
+        markFreshPhase(event.plugin, scope.env);
+        finishPluginProgressIfComplete(round);
         // 更新成功一个，环境卡微标就实时递减一枚（失败的仍是可更新，不递减）。
+        // 微标按环境分别计数，所以即便用户已经切走，也要减发起时那个环境的。
         if (ok) {
-          bumpPluginUpdateCount(-1);
+          bumpPluginUpdateCount(-1, scope.env);
         }
-        finishPluginProgressIfComplete();
       }
-      renderPluginList();
-      renderPluginProgress();
+      if (pluginRound === round) {
+        renderPluginList();
+        renderPluginProgress();
+      }
     }
 
     /**
@@ -3357,6 +3439,8 @@ async function main(): Promise<void> {
       const target = profileOf(prefs.profile);
       profilePluginPanel.classList.toggle("hidden", target === null);
       if (target === null) {
+        // 没有可管理的环境：当前显示的那份先存好（等环境回来还能取回），再清空面板。
+        storePluginUpdate(pluginLoadedFor);
         pluginItems = [];
         pluginLoaded = false;
         pluginLoadedFor = null;
@@ -3364,7 +3448,7 @@ async function main(): Promise<void> {
         pluginEnterPending = false;
         pluginUpdateItems = [];
         pluginUpdatesChecked = false;
-        resetPluginProgress();
+        pluginRound = emptyPluginProgress();
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
@@ -3372,6 +3456,10 @@ async function main(): Promise<void> {
         return;
       }
       if (pluginLoadedFor !== target.name) {
+        // 换环境：把上一份（含正在跑的那一轮进度与行级动画）存进它名下，再把目标环境
+        // 那份取回来。取回后进度条、排队/更新中/已更新的行级状态原样还在——
+        // 用户切走再切回来不该看不到自己刚点的动作。
+        storePluginUpdate(pluginLoadedFor);
         pluginLoadedFor = target.name;
         pluginItems = [];
         pluginLoaded = false;
@@ -3379,17 +3467,22 @@ async function main(): Promise<void> {
         pluginSkeleton = true;
         pluginSkeletonUntil = performance.now() + PLUGIN_SKELETON_MIN_MS;
         pluginEnterPending = false;
-        // 更新清单跟着环境走，一并重置；第一次进这张卡自动查一次
-        // （后端有会话级缓存，重进/重查不打网络）。
-        pluginUpdateItems = [];
-        pluginUpdatesChecked = false;
-        resetPluginProgress();
+        if (!restorePluginUpdate(target.name)) {
+          // 这个环境从没进过：确实是空的，清一下免得上一家的数字残留。
+          pluginUpdateItems = [];
+          pluginUpdatesChecked = false;
+          pluginRound = emptyPluginProgress();
+        }
         setPluginNote(null);
         setPluginWarning(null);
         renderPluginList();
         renderPluginProgress();
         void refreshPluginList(target.name);
-        void refreshPluginUpdates(target.name, false);
+        // 更新清单跟环境走：已经查过（快照里有 checked）就只是重画，不重复查——
+        // 后端有会话级缓存但重查仍要一次 IPC；第一进这张卡才自动查一次。
+        if (!pluginUpdatesChecked) {
+          void refreshPluginUpdates(target.name, false);
+        }
         return;
       }
       renderPluginList();
@@ -3408,9 +3501,14 @@ async function main(): Promise<void> {
       if (force) {
         pluginCheckBusy = true;
         // 重新检查＝新一轮：上一轮的行级状态与收尾文案都作废，免得旧结果冒充新结果。
-        resetPluginProgress();
-        renderPluginList();
-        renderPluginProgress();
+        // 只作废这个环境自己那份——别的环境正在跑的更新不能被牵连。
+        const snapshot = ensurePluginUpdateSnapshot(name);
+        snapshot.round = resetPluginProgress(name);
+        if (prefs.profile === name) {
+          pluginRound = snapshot.round;
+          renderPluginList();
+          renderPluginProgress();
+        }
       }
       let ok = false;
       try {
@@ -3420,14 +3518,21 @@ async function main(): Promise<void> {
           source: prefs.downloadSource,
           force,
         });
-        if (prefs.profile !== name) {
-          return false; // 期间换了环境，丢弃这批结果
-        }
-        pluginUpdateItems = items;
-        pluginUpdatesChecked = true;
+        // 结果先写进「这个环境」自己那份清单：期间换了环境也不能丢，
+        // 切回来时（`restorePluginUpdate`）就能直接看到这次查到的版本号。
+        const snapshot = ensurePluginUpdateSnapshot(name);
+        snapshot.items = items;
+        snapshot.checked = true;
         // 环境卡微标跟着这份清单走：按环境分别计数，不是全局总数。
         pluginUpdateCounts.set(name, items.filter((item) => item.hasUpdate).length);
         renderEnvCards();
+        if (prefs.profile !== name) {
+          return false; // 期间换了环境：数字已记好，但不在当前界面上刷
+        }
+        pluginUpdateItems = items;
+        pluginUpdatesChecked = true;
+        // 这一轮的行级状态以新查到的清单为准，旧轮次的残留不再挂着。
+        pluginRound = snapshot.round;
         ok = true;
         renderPluginList();
         renderPluginSummary();
@@ -3488,23 +3593,31 @@ async function main(): Promise<void> {
         ? [name]
         : pluginUpdateItems.filter((item) => item.hasUpdate).map((item) => item.name);
       let ok = false;
-      // 开端就把整轮状态摆出来：批量全部进「排队」，单行直接「更新中」——不画假进度。
-      resetPluginProgress();
+      // 本轮进度写进「发起时这个环境」自己那份：用户中途切走再切回来要能接上，
+      // 切到别的环境时事件也不会画进别人家的列表里。
+      const snapshot = ensurePluginUpdateSnapshot(target);
+      snapshot.round = resetPluginProgress(target);
+      const round = snapshot.round;
       if (name === null) {
-        pluginProgressTotal = scope.length;
+        round.total = scope.length;
         for (const plugin of scope) {
-          pluginUpdatePhases.set(plugin, { phase: "queue", message: null });
+          round.phases.set(plugin, { phase: "queue", message: null });
         }
-      } else if (name) {
-        pluginUpdatePhases.set(name, { phase: "busy", message: null });
+      } else {
+        round.phases.set(name, { phase: "busy", message: null });
+      }
+      // 只有在看的就是这个环境时才把它切成「正在显示的那份」；已经切走就只写快照。
+      if (prefs.profile === target) {
+        pluginRound = round;
       }
       renderPluginList();
       renderPluginProgress();
       // 批量走进度通道（后端逐个回放开始/结束）；单插件只认返回值——一个状态来源。
       const progress = name === null ? new Channel<UpdateProgressEvent>() : null;
       if (progress) {
+        const roundScope: PluginRoundScope = { env: target, round };
         progress.onmessage = (event: UpdateProgressEvent) => {
-          applyUpdateProgress(event);
+          applyUpdateProgress(event, roundScope);
         };
       }
       try {
@@ -3516,28 +3629,31 @@ async function main(): Promise<void> {
           progress,
         });
         ok = outcome.ok;
-        setPluginNote(outcome.message);
+        // 收尾文案只往「这个环境」自己那份写（界面提示留给还在看它的人）。
+        if (prefs.profile === target) {
+          setPluginNote(outcome.message);
+        }
         logAction(outcome.message);
         // 更新结果的回执（#34）：批量收尾的那句里带失败条数，这里只把后端的话搬出来，
         // 进度事件与行级状态归 #33，这里不碰。
         showToast(outcome.message, outcome.ok ? "ok" : "error");
         if (name !== null) {
           // 单插件：返回值的 ok 就是这一行的结果，失败原因就写在 message 里。
-          pluginUpdatePhases.set(name, {
+          round.phases.set(name, {
             phase: outcome.ok ? "done" : "fail",
             message: outcome.ok ? null : outcome.message,
           });
-          markFreshPhase(name);
+          markFreshPhase(name, target);
           // 单个更新成功同样实时递减环境卡微标（随后重查回来的清单会覆盖成权威值）。
           if (outcome.ok) {
-            bumpPluginUpdateCount(-1);
+            bumpPluginUpdateCount(-1, target);
           }
         }
         if (outcome.ok) {
           const disabled = scope.filter(
             (plugin) => pluginItems.find((item) => item.name === plugin)?.enabled === false,
           );
-          if (disabled.length > 0) {
+          if (disabled.length > 0 && prefs.profile === target) {
             setPluginWarning(
               `「${disabled.join("」「")}」目前处于停用状态，更新后保持停用；若新版本改了挂载点，停用可能失效。`,
             );
@@ -3545,19 +3661,21 @@ async function main(): Promise<void> {
         }
         await refreshPluginUpdates(target, false);
       } catch (err) {
-        setPluginNote(`更新插件失败：${String(err)}`);
+        if (prefs.profile === target) {
+          setPluginNote(`更新插件失败：${String(err)}`);
+        }
         logAction(`更新插件失败：${String(err)}`);
         showToast(`更新插件失败：${String(err)}`, "error");
         if (name) {
-          pluginUpdatePhases.set(name, { phase: "fail", message: String(err) });
-          markFreshPhase(name);
+          round.phases.set(name, { phase: "fail", message: String(err) });
+          markFreshPhase(name, target);
         }
       } finally {
         pluginUpdateBusy = false;
         pluginUpdateRunningAll = false;
         // 兜底：没走完的行按失败补齐再定汇总，不让进度条悬在「已完成 x/N」。
-        settleUnfinishedPluginRows(scope, name);
-        finishPluginProgressIfComplete();
+        settleUnfinishedPluginRows(scope, name, round, target);
+        finishPluginProgressIfComplete(round);
         renderPluginList();
         renderPluginProgress();
         renderPluginSummary();
