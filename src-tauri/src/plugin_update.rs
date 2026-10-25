@@ -21,6 +21,9 @@ use crate::registry;
 /// 已装版本与读取失败原因（二选一有值：成功时原因是 `None`，失败时版本是 `None`）。
 type InstalledVersion = (Option<String>, Option<String>);
 
+/// 修锁文件那一步的超时：只是按现存依赖重解析元数据，不需要重下整棵依赖树。
+const LOCKFILE_REPAIR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// 读一个插件已装版本：`node_modules/<name>/package.json` 的 `version` 字段。
 ///
 /// 目录缺失、坏 JSON、缺 `version` 字段都算读失败——这种情况不给更新按钮，
@@ -254,6 +257,71 @@ fn send_progress(progress: Option<&Channel<ProgressEvent>>, event: ProgressEvent
     }
 }
 
+/// 跑一次插件安装/卸载命令；输出显示环境锁文件坏了就先修锁文件再重跑一次。
+///
+/// DSH 的 plugin 命令把 pnpm 当外部命令直接 exec，`pnpm add` 在装包之前就会因为
+/// 环境自己的 `pnpm-lock.yaml` 断裂而退出（`ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY`）。
+/// 这跟「这个包装不上」是两件事，壳替它补一步 `pnpm install --fix-lockfile` 再重跑，
+/// 而不是把 pnpm 的原始报错原样丢给用户。
+///
+/// 返回（退出码，输出，修复说明）。修复动作为空表示没触发；触发了但没修好也会
+/// 留一句原因，界面回执要能让用户知道壳查过这一步。
+fn run_plugin_op(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &launch::PluginOp,
+    env: &[(String, String)],
+) -> Result<(i32, String, Option<String>), String> {
+    let command = plugin::plugin_command(config, profile, op, env)?;
+    let (code, output) = plugin::run_capture(command, plugin::PLUGIN_OP_TIMEOUT)?;
+    if code == 0 || !plugin_update::lockfile_needs_repair(&output) {
+        return Ok((code, output, None));
+    }
+    match repair_lockfile(config, profile, env) {
+        Ok((0, _repair_output)) => {
+            let retry = plugin::plugin_command(config, profile, op, env)?;
+            let (retry_code, retry_output) = plugin::run_capture(retry, plugin::PLUGIN_OP_TIMEOUT)?;
+            Ok((
+                retry_code,
+                retry_output,
+                Some("锁文件已按现存依赖重修（pnpm install --fix-lockfile）".to_string()),
+            ))
+        }
+        Ok((repair_code, repair_output)) => Ok((
+            code,
+            output,
+            Some(format!(
+                "锁文件自动修复失败（退出码 {repair_code}）：{}",
+                plugin::tail_chars(&repair_output, 600)
+            )),
+        )),
+        // 起不来 pnpm（没装 / 不在 PATH）就照原样报下去，别把真实失败原因盖掉。
+        Err(err) => Ok((code, output, Some(format!("锁文件自动修复没能执行：{err}")))),
+    }
+}
+
+/// 修环境自己的 `pnpm-lock.yaml`（`pnpm install --fix-lockfile`）。
+///
+/// 只在 [`plugin_update::lockfile_needs_repair`] 判为锁文件损坏时调用：DSH 的
+/// plugin 命令把 pnpm 当外部命令直接 exec，不会自救，壳替它补这一步。
+/// 在环境目录里跑（`current_dir` / `cd`），命令与参数全是固定字面量。
+/// 返回（退出码，输出）；失败不致命——调用方会照原样把后续更新的真实报错交给用户。
+fn repair_lockfile(
+    config: &LaunchConfig,
+    profile: &str,
+    env: &[(String, String)],
+) -> Result<(i32, String), String> {
+    let target = Target::of(config);
+    let dir = plugin::profile_dir(&target, profile)?;
+    let command = registry::pnpm_command(
+        launch::runtime_of(config),
+        &["install", "--lockfile-only", "--fix-lockfile"],
+        env,
+        Some(&dir),
+    )?;
+    plugin::run_capture(command, LOCKFILE_REPAIR_TIMEOUT)
+}
+
 /// 更新单个第三方插件到 registry 上的目标版本。成功返回（装上的版本，备份目录）。
 ///
 /// 目标版本以会话缓存（没有就现查）为准，界面传来的按钮状态不参与决策；
@@ -291,14 +359,13 @@ fn update_one(
     let op = launch::PluginOp::Install {
         package: package.clone(),
     };
-    let command = plugin::plugin_command(config, profile, &op, &env)?;
     let command_line = plugin::plugin_command_line(config, profile, &op).unwrap_or_else(|_| {
         format!(
             "dsh plugin --profile {} add {package}",
             plugin::cli_profile_label(profile)
         )
     });
-    let (code, output) = plugin::run_capture(command, plugin::PLUGIN_OP_TIMEOUT)?;
+    let (code, output, repaired) = run_plugin_op(config, profile, &op, &env)?;
     let verify = verify_installed_version(&target, &dir, name, &latest);
     let ok = code == 0 && verify.is_ok();
     if ok {
@@ -311,17 +378,30 @@ fn update_one(
     // 首行必须能直接定位问题：命令退了非零就给退出码 + CLI 报错摘要，
     // 命令退了零但校验不过就给校验原因；其余细节（完整命令、输出、备份）
     // 挪到后面——界面失败行与汇总只取首行，报错被埋在末尾等于看不见。
+    //
+    // 锁文件坏了要单独说清：报错原文是「装上的版本没变」，用户会以为是包的问题，
+    // 实际是环境里 pnpm-lock.yaml 的 importers 与 packages 两段脱节。
+    let lockfile_broken = plugin_update::lockfile_needs_repair(&output);
     let first_line = match (&verify, code) {
+        (Err(err), _) if lockfile_broken => format!(
+            "环境的依赖锁文件坏了（pnpm-lock.yaml 与已装依赖对不上），装在装之前就失败：{err}（退出码 {code}）：{}",
+            cli_error_digest(&output)
+        ),
         (Err(err), _) => format!("已执行但校验未过：{err}（退出码 {code}）"),
         (Ok(()), code) => format!(
             "更新命令失败（退出码 {code}）：{}",
             cli_error_digest(&output)
         ),
     };
+    // 自动修复这一步做了什么要写进回执：修好了用户不用管，没修好也得知道查过什么。
+    let repair_note = match &repaired {
+        Some(note) => format!("\n{}", note),
+        None => String::new(),
+    };
     let message = format!(
         "{first_line}\n\
          命令：{command_line}（经 {}）\n\
-         校验：{verify_text}\n\
+         校验：{verify_text}{repair_note}\n\
          输出：\n{}\n\
          备份目录：{}{}",
         target.label(),

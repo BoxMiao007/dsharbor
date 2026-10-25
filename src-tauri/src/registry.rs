@@ -307,18 +307,50 @@ pub(crate) fn npm_command(
     args: &[&str],
     extra_env: &[(String, String)],
 ) -> Result<Command, String> {
+    package_manager_command("npm", runtime, args, extra_env, None)
+}
+
+/// 组装一条 pnpm 命令（Windows 经 cmd.exe，WSL 经 wsl.exe 进发行版）。
+///
+/// 与 [`npm_command`] 同一套装配逻辑，只是可执行名换成 `pnpm`——修环境里损坏的
+/// `pnpm-lock.yaml`（`pnpm install --fix-lockfile`）要用它。参数全是代码里的
+/// 固定字面量，不经过用户输入。
+///
+/// `dir` 有值时在该目录里执行（环境目录要落在用户的 profile 目录下，
+/// 而不是进程的当前目录）。
+pub(crate) fn pnpm_command(
+    runtime: &Runtime,
+    args: &[&str],
+    extra_env: &[(String, String)],
+    dir: Option<&str>,
+) -> Result<Command, String> {
+    package_manager_command("pnpm", runtime, args, extra_env, dir)
+}
+
+/// [`npm_command`] 与 [`pnpm_command`] 的共同实现：Windows 上 node 系包管理器的
+/// 入口是 `.cmd`，必须经 cmd.exe 拉起；WSL 里则经 `wsl.exe ... bash -lc` 整行执行。
+fn package_manager_command(
+    program: &str,
+    runtime: &Runtime,
+    args: &[&str],
+    extra_env: &[(String, String)],
+    dir: Option<&str>,
+) -> Result<Command, String> {
     match runtime {
         Runtime::Default => {
             let mut command = if cfg!(windows) {
-                // npm 在 Windows 上是 `npm.cmd`，必须经 cmd.exe 才能拉起
+                // npm/pnpm 在 Windows 上是 `.cmd`，必须经 cmd.exe 才能拉起
                 // （直接 CreateProcess 一个 .cmd 会得到「不是有效的应用程序」）。
                 let mut command = Command::new("cmd");
-                command.args(["/C", "npm"]);
+                command.args(["/C", program]);
                 command
             } else {
-                Command::new("npm")
+                Command::new(program)
             };
             command.args(args);
+            if let Some(dir) = dir {
+                command.current_dir(dir);
+            }
             command.envs(extra_env.iter().map(|(key, value)| (key, value)));
             Ok(command)
         }
@@ -346,12 +378,21 @@ pub(crate) fn npm_command(
                 }
             }
             command.args(["bash", "-lc"]);
-            // 一整条命令作为单个 argv 传给 bash -lc：npm 与参数都是固定字面量，
-            // 不经过任何用户输入。
-            command.arg(format!("npm {}", args.join(" ")));
+            // 一整条命令作为单个 argv 传给 bash -lc：程序名与参数都是固定字面量，
+            // 不经过任何用户输入；工作目录用 cd 切换（bash 里没有 current_dir）。
+            let line = format!("{program} {}", args.join(" "));
+            match dir {
+                Some(dir) => command.arg(format!("cd '{}' && {line}", shell_single_quote(dir))),
+                None => command.arg(line),
+            };
             Ok(command)
         }
     }
+}
+
+/// 把一段路径安全地塞进 bash 的单引号里（单引号内除 `'` 外都按字面量算）。
+fn shell_single_quote(text: &str) -> String {
+    text.replace('\'', r"'\''")
 }
 
 #[cfg(test)]

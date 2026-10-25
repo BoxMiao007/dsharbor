@@ -96,6 +96,20 @@ pub fn is_newer(candidate: &str, current: &str) -> bool {
     pair[0] == candidate
 }
 
+/// 输出里是不是「环境自己的锁文件坏了」，而不是这个包装不上。
+///
+/// pnpm 在 `pnpm-lock.yaml` 的 importers 段与 packages 段对不上时（历史合并冲突、
+/// 手改、旧版本残留都会造成）会直接报 `ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY` /
+/// `ERR_PNPM_OUTDATED_LOCKFILE` / `Broken lockfile`，并在 help 里让人去跑
+/// `pnpm install --fix-lockfile`。DSH 的 `plugin` 命令把 pnpm 当外部命令直接 exec，
+/// 不会自救——所以壳必须认得出这一类失败，走一次修复重试，而不是把 pnpm 的原始
+/// 报错埋在「输出：」块里让用户自己猜。
+pub fn lockfile_needs_repair(output: &str) -> bool {
+    output.contains("ERR_PNPM_LOCKFILE_")
+        || output.contains("ERR_PNPM_OUTDATED_LOCKFILE")
+        || output.contains("Broken lockfile")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +225,26 @@ mod tests {
         assert!(!is_newer("1.2.3-rc.1", "1.2.3"), "预发布不算比正版新");
         assert!(!is_newer("banana", "1.0.0"), "怪版本不冒充更新");
         assert!(is_newer("1.0.0", "banana"), "当前版本读成了怪值时仍可更新");
+    }
+
+    // ---- 锁文件损坏识别 ------------------------------------------------------
+
+    #[test]
+    fn lockfile_breakage_is_recognized() {
+        // 实机日志原文（desktop 环境 2026-10-25 那次失败）。
+        let real = "Progress: resolved 0, reused 1, downloaded 0, added 0\n\
+                    Error: ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY\n\
+                    \u{a0} \u{d7} adding a new package\n\
+                    \u{a0} \u{2570}\u{2500}\u{25b6} Broken lockfile: no entry for 'billion-context@0.1.207' in pnpm-\n\
+                    \u{a0} \u{a0} \u{a0} \u{a0} lock.yaml\n";
+        assert!(lockfile_needs_repair(real));
+        // 只认锁文件这一类，别的 pnpm 报错不该触发自动修复。
+        assert!(lockfile_needs_repair("Error: ERR_PNPM_OUTDATED_LOCKFILE"));
+        assert!(!lockfile_needs_repair("Error: ERR_PNPM_FETCH_404"));
+        assert!(!lockfile_needs_repair(
+            "Error: ERR_PNPM_PEER_DEP_ISSUES Unmet peer dependencies"
+        ));
+        assert!(!lockfile_needs_repair(""));
+        assert!(!lockfile_needs_repair("Progress: resolved 12, reused 12"));
     }
 }
