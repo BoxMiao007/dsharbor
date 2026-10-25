@@ -2254,6 +2254,19 @@ async function main(): Promise<void> {
     /** 正在搬运的那一次：菜单收起后这一行仍要显示忙态，所以单独记一行名字。 */
     let pluginTransferBusy: string | null = null;
 
+    /** 与 Rust 侧 `plugin_update::InstallTarget` 对应：某个目标环境对这次搬运的现状。 */
+    interface InstallTarget {
+      profile: string;
+      /** 目标环境装过依赖没有（没有就没有 node_modules，装不进去）。 */
+      depsInstalled: boolean;
+      /** 目标环境已经登记了这个插件（任何版本都算，哪怕它是停用状态）。 */
+      installed: boolean;
+      /** 已装的具体版本；登记了但读不到版本时是 null（只显示「已装」）。 */
+      installedVersion: string | null;
+      /** 读这个环境出的错；有值就把那一行置灰。 */
+      error: string | null;
+    }
+
     function closePluginMenu(): void {
       if (pluginMenuTarget === null) {
         return;
@@ -2262,47 +2275,46 @@ async function main(): Promise<void> {
       pluginMenu.classList.add("hidden");
     }
 
-    /** 可以装进去的环境：清单里除当前这个之外的都在，逐个标出「已装着同版本」。 */
-    function pluginMenuTargetsHtml(plugin: string): string {
-      const others = profileList.filter((item) => item.name !== prefs.profile);
-      if (others.length === 0) {
-        return "";
+    /**
+     * 一行的现状徽章：已装 / 缺依赖 / 读不到。
+     *
+     * 三种都让这一行不可点，但说法不同——「已装」要带版本让用户知道那边是什么版本，
+     * 另外两种要说清是环境的问题而不是这次不许搬。
+     */
+    function targetNoteHtml(row: InstallTarget): string {
+      if (row.installed) {
+        const text = row.installedVersion ? `已装 v${row.installedVersion}` : "已装";
+        return `<span class="plugin-target-note" title="${escapeHtml(`环境「${row.profile}」已经有这个插件。想换版本请到这个环境自己的「更新」里做。`)}">${escapeHtml(text)}</span>`;
       }
-      return others
-        .map((item) => {
-          const note = item.depsInstalled ? "" : "缺依赖";
-          const label = escapeHtml(item.name);
-          const tip = item.depsInstalled
-            ? `把「${plugin}」也装进环境「${item.name}」`
-            : `环境「${item.name}」还没装依赖（先给环境「安装依赖」再搬）`;
-          return `<button type="button" role="menuitem" data-plugin-target="${label}" title="${escapeHtml(tip)}"${item.depsInstalled ? "" : " disabled"}>${label}${note ? `<span class="menu-note">${note}</span>` : ""}</button>`;
+      if (row.error) {
+        return `<span class="plugin-target-note" title="${escapeHtml(row.error)}">读不到</span>`;
+      }
+      if (!row.depsInstalled) {
+        return `<span class="plugin-target-note">缺依赖</span>`;
+      }
+      return "";
+    }
+
+    /** 可以装进去的环境列表：已装 / 缺依赖 / 读不到的行置灰，其余可点。 */
+    function pluginMenuTargetsHtml(plugin: string, targets: InstallTarget[]): string {
+      return targets
+        .map((row) => {
+          const label = escapeHtml(row.profile);
+          const blocked = row.installed || row.error !== null || !row.depsInstalled;
+          const tip = row.installed
+            ? `环境「${row.profile}」已经有这个插件，不重复装`
+            : row.error
+              ? `读环境「${row.profile}」出错：${row.error}`
+              : row.depsInstalled
+                ? `把「${plugin}」也装进环境「${row.profile}」`
+                : `环境「${row.profile}」还没装依赖（先给它「安装依赖」再搬）`;
+          return `<button type="button" role="menuitem" data-plugin-target="${label}" title="${escapeHtml(tip)}"${blocked ? " disabled" : ""}>${label}${targetNoteHtml(row)}</button>`;
         })
         .join("");
     }
 
-    /** 右键某个插件行：在鼠标处展开「装进哪个环境」。点了菜单以外的地方就收起来。 */
-    function openPluginMenu(event: MouseEvent, plugin: string): void {
-      closeEnvMenu();
-      closePluginMenu();
-      const profile = prefs.profile;
-      if (!profile || pluginTransferBusy !== null) {
-        return;
-      }
-      pluginMenuTarget = { profile, plugin };
-      pluginMenuTitle.textContent = `把「${plugin}」装进…`;
-      const targets = pluginMenuTargetsHtml(plugin);
-      pluginMenuTargets.innerHTML = targets;
-      pluginMenuEmpty.classList.toggle("hidden", targets !== "");
-      pluginMenuTargets.classList.toggle("hidden", targets === "");
-      pluginMenu.classList.remove("hidden");
-      for (const btn of pluginMenuTargets.querySelectorAll<HTMLButtonElement>("[data-plugin-target]")) {
-        btn.addEventListener("click", () => {
-          const target = btn.dataset.pluginTarget ?? "";
-          closePluginMenu();
-          void installIntoEnv(plugin, target);
-        });
-      }
-      // 贴着鼠标放，靠右/靠下时收回来，别被窗口裁掉。
+    /** 菜单定位：贴着鼠标放，靠右/靠下时收回来，别被窗口裁掉。 */
+    function placePluginMenu(event: MouseEvent): void {
       const width = pluginMenu.offsetWidth;
       const height = pluginMenu.offsetHeight;
       const left = Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8));
@@ -2314,10 +2326,82 @@ async function main(): Promise<void> {
       pluginMenu.style.top = `${Math.round(top)}px`;
     }
 
+    /**
+     * 右键某个插件行：在鼠标处展开「装进哪个环境」。
+     *
+     * 各环境的现状每次现问（不缓存）：插件随时可能在别的环境里被装上或卸掉，
+     * 缓存一个「能搬」的结论然后失败，比多问一次的代价大得多。菜单先带着
+     * 「正在检查各环境…」弹出来，结果回来就地换成环境列表。
+     */
+    async function openPluginMenu(event: MouseEvent, plugin: string): Promise<void> {
+      closeEnvMenu();
+      closePluginMenu();
+      const profile = prefs.profile;
+      if (!profile || pluginTransferBusy !== null) {
+        return;
+      }
+      pluginMenuTarget = { profile, plugin };
+      pluginMenuTitle.textContent = "装进另一个环境";
+      const others = profileList.filter((item) => item.name !== prefs.profile);
+      pluginMenuTargets.innerHTML = "";
+      pluginMenuHint.classList.toggle("hidden", others.length === 0);
+      pluginMenuEmpty.classList.toggle("hidden", others.length !== 0);
+      pluginMenuTargets.classList.toggle("hidden", true);
+      pluginMenu.classList.remove("hidden");
+      placePluginMenu(event);
+      if (others.length === 0) {
+        return;
+      }
+      let targets: InstallTarget[];
+      try {
+        targets = await invoke<InstallTarget[]>("plugin_install_targets", {
+          config: collectConfig(),
+          source: profile,
+          plugin,
+        });
+      } catch (err) {
+        pluginMenuHint.classList.add("hidden");
+        pluginMenuEmpty.textContent = `读不到各环境现状：${firstLine(String(err))}`;
+        pluginMenuEmpty.classList.remove("hidden");
+        placePluginMenu(event);
+        return;
+      }
+      // 等结果这段时间里用户可能已经点了别处，菜单收起了就别再往上贴内容。
+      if (pluginMenuTarget === null || pluginMenuTarget.plugin !== plugin) {
+        return;
+      }
+      pluginMenuHint.classList.add("hidden");
+      pluginMenuEmpty.textContent = "没有别的环境可装（先新建或复制一个环境）";
+      const html = pluginMenuTargetsHtml(plugin, targets);
+      pluginMenuTargets.innerHTML = html;
+      pluginMenuEmpty.classList.toggle("hidden", html !== "");
+      pluginMenuTargets.classList.toggle("hidden", html === "");
+      for (const btn of pluginMenuTargets.querySelectorAll<HTMLButtonElement>("[data-plugin-target]")) {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.pluginTarget ?? "";
+          closePluginMenu();
+          void installIntoEnv(plugin, target);
+        });
+      }
+      placePluginMenu(event);
+    }
+
     /** 只取报错的第一行：动作回执是一行的高度，多行会把它撑成三段。 */
     function firstLine(text: string): string {
       const index = text.indexOf("\n");
       return index < 0 ? text : text.slice(0, index);
+    }
+
+    /** 点插件名打开主页：交给系统默认浏览器（壳里 `open_link` 只放行 http/https）。 */
+    async function openPluginHome(url: string): Promise<void> {
+      try {
+        await invoke("open_link", { url });
+        logAction(`已在浏览器打开插件主页：${url}`);
+      } catch (err) {
+        const text = String(err);
+        logAction(`打开插件主页失败（${url}）：${text}`);
+        showToast(`打开主页失败：${firstLine(text)}`, "error");
+      }
     }
 
     /** 把行里这一份插件装进另一个环境：版本取当前环境实际装着的那份，不走 registry。 */
@@ -2518,10 +2602,21 @@ async function main(): Promise<void> {
         } else if (envMenuTarget !== null) {
           event.stopPropagation();
           closeEnvMenu();
+        } else if (pluginMenuTarget !== null) {
+          event.stopPropagation();
+          closePluginMenu();
         }
       },
       true,
     );
+    // Esc 收起两个浮出菜单（Alt+Tab 里那种「按了没反应」最容易出现在这里）。
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      closeEnvMenu();
+      closePluginMenu();
+    });
     // 点菜单与浮窗以外的地方收起菜单。
     document.addEventListener("click", () => {
       closeEnvMenu();
@@ -3019,6 +3114,7 @@ async function main(): Promise<void> {
     const pluginProgressSum = $<HTMLParagraphElement>("plugin-progress-sum");
     const pluginMenu = $<HTMLElement>("plugin-menu");
     const pluginMenuTitle = $<HTMLParagraphElement>("plugin-menu-title");
+    const pluginMenuHint = $<HTMLParagraphElement>("plugin-menu-hint");
     const pluginMenuEmpty = $<HTMLParagraphElement>("plugin-menu-empty");
     const pluginMenuTargets = $<HTMLElement>("plugin-menu-targets");
 
@@ -3032,6 +3128,8 @@ async function main(): Promise<void> {
       switchable: boolean;
       /** 插件自带的说明文字（后端从包 package.json 的 description 读的，读不到是 null）。 */
       description: string | null;
+      /** 插件主页（后端清洗成裸 http(s) 链接；两个字段都没有就是 null，名字不画成链接）。 */
+      home: string | null;
     }
 
     /** 与 Rust 侧 `plugin_switch::ToggleOutcome` 对应。 */
@@ -3359,6 +3457,11 @@ async function main(): Promise<void> {
       // 整表会让别的行在开关结束后残留在禁用态。
       const lock = pluginActionBusy() ? " disabled" : "";
       const label = item.enabled ? "停用" : "启用";
+      // 插件名有主页地址就画成按钮（点一下交给系统浏览器）：只有名字这块可点，
+      // 整行可点会和右键菜单、开关按钮的位置打架。没有主页就是纯文本。
+      const nameHtml = item.home
+        ? `<button class="plugin-name plugin-name-link" type="button" data-plugin-home="${escapeHtml(item.home)}" title="${escapeHtml(`在浏览器打开插件主页：${item.home}`)}" aria-label="${escapeHtml(`在浏览器打开「${item.name}」的主页`)}">${escapeHtml(item.name)}</button>`
+        : `<span class="plugin-name">${escapeHtml(item.name)}</span>`;
       const state = updatePhaseFor(item.name);
       const phaseAttr = state ? ` data-phase="${state.phase}"` : "";
       // 入场序号：只在「骨架 → 真实行」那一次重铺里带上（enterIndex >= 0），序号既写进
@@ -3369,7 +3472,10 @@ async function main(): Promise<void> {
       // 跨环境搬运进行中：这一行转淡并显示转环，别让人以为点了没反应（搬完自动刷新清单）。
       const transferring = pluginTransferBusy === item.name;
       const transferAttr = transferring ? ' data-transfer="busy"' : "";
-      return `<div class="plugin-row${item.enabled ? "" : " is-off"}${transferring ? " is-transferring" : ""}" data-row="${escapeHtml(item.name)}"${phaseAttr}${enterAttr}${transferAttr}${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title"><span class="plugin-name">${escapeHtml(item.name)}</span>${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${transferring ? '<span class="plugin-transfer-spin" aria-hidden="true"></span>' : ""}${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
+      // 能不能右键搬去别的环境：官方内置包（@deepseek-ai/*）与桥接插件不给入口，
+      // 与后端 `in_update_scope` 的判定保持一致。
+      const transferable = !item.bridge && !item.name.startsWith("@deepseek-ai/") ? "yes" : "no";
+      return `<div class="plugin-row${item.enabled ? "" : " is-off"}${transferring ? " is-transferring" : ""}" data-row="${escapeHtml(item.name)}"${phaseAttr}${enterAttr}${transferAttr} data-transferable="${transferable}"${pluginRowTitle(item)}><div class="plugin-main"><div class="plugin-title">${nameHtml}${marks}${pluginVerBadgeHtml(item)}${pluginPhaseChipHtml(item.name)}</div>${desc}${pluginFailHtml(item.name)}</div>${transferring ? '<span class="plugin-transfer-spin" aria-hidden="true"></span>' : ""}${pluginUpdateCellHtml(item)}<button class="switch" type="button" role="switch" aria-checked="${item.enabled ? "true" : "false"}" aria-label="${label}${escapeHtml(item.name)}" title="${label}${escapeHtml(item.name)}" data-plugin="${escapeHtml(item.name)}"${lock}><span class="switch-knob"></span></button></div>`;
     }
 
     /** 一行骨架：左侧一个圆点（图标位）加长短两条灰条（标题与说明），右端一枚方条（开关位）。
@@ -3414,10 +3520,20 @@ async function main(): Promise<void> {
         });
       }
       // 右键一行：把这个插件装进别的环境。清单是整块重铺的，所以每次铺完重新绑。
+      // 官方内置包与桥接插件不给这个入口（后端 `install_into` 也会拒），免得点了才知道不行。
       for (const row of pluginList.querySelectorAll<HTMLElement>("[data-row]")) {
+        if (row.dataset.transferable !== "yes") {
+          continue;
+        }
         row.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          openPluginMenu(event, row.dataset.row ?? "");
+          void openPluginMenu(event, row.dataset.row ?? "");
+        });
+      }
+      // 点插件名打开主页（只有带主页地址的行才有这个按钮）。
+      for (const link of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin-home]")) {
+        link.addEventListener("click", () => {
+          void openPluginHome(link.dataset.pluginHome ?? "");
         });
       }
       renderPluginUpdatesToolbar();

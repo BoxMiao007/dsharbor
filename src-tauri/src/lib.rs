@@ -1307,6 +1307,38 @@ async fn plugin_update(
     .map_err(|err| format!("后台更新插件失败：{err}"))?
 }
 
+/// 打开插件主页（插件名点一下时由界面调用）。
+///
+/// 地址来自各环境的 `node_modules/<包>/package.json`，是不可信输入：这里再收一道，
+/// 只放行 http/https 并交给系统默认浏览器。核心库的 `plugin_switch::home_url` 已经
+/// 清洗过一次（去 `git+`、去锚点、转 https），前端又是直接把它放在 `data-home` 上，
+/// 但「能打开什么」不该只靠上游两处各自守规矩。
+#[tauri::command]
+fn open_link(url: String) -> Result<(), String> {
+    let parsed = tauri::Url::parse(url.trim()).map_err(|err| format!("链接无效：{err}"))?;
+    match parsed.scheme() {
+        "http" | "https" => launch_default_browser(parsed.as_str()),
+        other => Err(format!("只支持 http/https 链接，这个是 {other}。")),
+    }
+}
+
+/// 列出「这个插件能装进哪些环境」，供插件行的右键菜单逐行显示现状。
+///
+/// 每个环境要读一次 `package.json`（WSL 目标经 wsl.exe），所以是 async 命令：
+/// 右键那一刻才问，本机也就几十毫秒，不至于让窗口发僵。
+#[tauri::command]
+async fn plugin_install_targets(
+    config: LaunchConfig,
+    source: String,
+    plugin: String,
+) -> Result<Vec<plugin_update::InstallTarget>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_update::install_targets(&config, &source, &plugin)
+    })
+    .await
+    .map_err(|err| format!("后台读各环境插件现状失败：{err}"))?
+}
+
 /// 把一份环境里装着的插件装进另一份环境（插件行的右键菜单「添加到其他环境」）。
 ///
 /// 版本取源环境实际装着的那一份，装完回读校验；两套环境必须在同一个运行环境里。
@@ -1724,7 +1756,9 @@ pub fn run() {
             plugin_updates_list,
             plugin_update,
             plugin_install_into,
+            plugin_install_targets,
             open_external,
+            open_link,
             save_ui_theme,
             check_binary_path,
             open_shell_dir,

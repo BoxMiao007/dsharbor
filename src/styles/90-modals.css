@@ -327,6 +327,30 @@ button.danger:hover:not(:disabled) {
   color: var(--fg-mute);
 }
 
+/* 插件名可点（包里带 homepage / repository）：去掉按钮默认外观，只在悬停时
+   用强调色 + 下划线示意「这里能点」，与说明文字的静默对比开。键盘聚焦要有
+   可见的描边，否则 Tab 过去看不出停在哪。
+   选择器带两个类名是为了盖过上面 `.plugin-row.is-off .plugin-name` 的停用色。 */
+.plugin-name.plugin-name-link {
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plugin-name.plugin-name-link:hover {
+  color: var(--accent-fill);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.plugin-name.plugin-name-link:focus-visible {
+  outline: 2px solid var(--accent-fill);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 /* 跨环境搬运进行中：整行转淡防重复点，右端一枚转环说明「在装」，搬完自动刷新。
    与删除中的 .dsh-version-removing 同一套做法（转淡 + 转环），三处忙态观感一致。 */
 .plugin-row.is-transferring {

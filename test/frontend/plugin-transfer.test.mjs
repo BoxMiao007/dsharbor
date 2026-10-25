@@ -2,9 +2,10 @@
  * 前端接缝测试：插件行的右键跨环境搬运 + 换环境后更新进度不丢。
  *
  * 只测两个接缝：
- *  1. 右键插件行弹出「装进哪个环境」：列出除当前环境之外的所有环境，缺依赖的环境置灰；
- *     点目标环境后该行转淡并显示转环（忙态），完成后动作回执说明装去了哪里；点菜单以外
- *     的地方收起菜单。目标环境里已装着同一版本时不重复安装，回执直说「已经装着」。
+ *  1. 右键插件行弹出「装进另一个环境」：标题是固定文案（不重复插件名），列出除当前环境
+ *     之外的所有环境；缺依赖的环境置灰标「缺依赖」，目标环境已经有同名插件的置灰标
+ *     「已装 v…」（任何版本都不许重复装）。点目标环境后该行转淡并显示转环（忙态），
+ *     完成后动作回执说明装去了哪里；点菜单以外或按 Esc 收起菜单。
  *  2. 换环境不清更新进度：一趟「全部更新」跑到一半切到别的环境再切回来，顶部进度条、
  *     汇总文案与行级状态（已更新 / 更新中 / 排队）都还在，进度继续往下走。
  *
@@ -106,10 +107,11 @@ function readMenu(page) {
       hidden: box.classList.contains("hidden"),
       title: document.getElementById("plugin-menu-title").textContent,
       emptyHidden: document.getElementById("plugin-menu-empty").classList.contains("hidden"),
+      hintHidden: document.getElementById("plugin-menu-hint").classList.contains("hidden"),
       targets: [...document.querySelectorAll("#plugin-menu-targets [data-plugin-target]")].map((btn) => ({
         label: btn.dataset.pluginTarget,
         disabled: btn.disabled,
-        note: btn.querySelector(".menu-note")?.textContent ?? null,
+        note: btn.querySelector(".plugin-target-note")?.textContent ?? null,
       })),
     };
   });
@@ -140,15 +142,20 @@ after(async () => {
   preview?.kill();
 });
 
-test("右键插件行列出其它环境；缺依赖的置灰；点别处收起菜单", { skip: skipReason }, async () => {
+test("右键插件行列出其它环境；缺依赖与已装的置灰；点别处或 Esc 收起菜单", { skip: skipReason }, async () => {
   const page = await openPluginPanel(browser);
   try {
     assert.equal((await readMenu(page)).hidden, true, "没右键之前菜单是收着的");
 
     await rightClickRow(page, "billion-context");
+    await page.waitForFunction(
+      () => document.querySelectorAll("#plugin-menu-targets [data-plugin-target]").length > 0,
+      { timeout: 3000 },
+    );
     const menu = await readMenu(page);
     assert.equal(menu.hidden, false, "右键后菜单应展开");
-    assert.match(menu.title, /billion-context/, "标题要写清搬的是哪个插件");
+    assert.equal(menu.title.trim(), "装进另一个环境", "标题只说明这是什么菜单，不重复插件名");
+    assert.equal(menu.hintHidden, true, "现状回来之后过渡文案应收起");
     assert.equal(menu.emptyHidden, true, "有别的环境时不该出「没有别的环境」");
     // 当前是 web：另外三个环境都在，当前这个不列（装给自己没意义）。
     assert.deepEqual(
@@ -159,21 +166,39 @@ test("右键插件行列出其它环境；缺依赖的置灰；点别处收起�
     const headless = menu.targets.find((item) => item.label === "headless");
     assert.equal(headless.disabled, true, "没装依赖的环境不能作为目标");
     assert.equal(headless.note, "缺依赖", "缺依赖的环境要写明原因");
+    // desktop 里预置了同一份插件：任何版本都不许重复装，徽章要写出装的是哪版。
+    const desktop = menu.targets.find((item) => item.label === "desktop");
+    assert.equal(desktop.disabled, true, "目标环境已有同名插件就不能再装");
+    assert.equal(desktop.note, "已装 v2.1.0", "重复的那一行要写清已装版本");
     assert.equal(menu.targets.find((item) => item.label === "lab").disabled, false, "装过依赖的环境可选");
 
     // 点菜单以外的地方：收起。
     await page.evaluate(() => document.body.click());
     await sleep(120);
     assert.equal((await readMenu(page)).hidden, true, "点别处应收起菜单");
+
+    // 再开一次，用 Esc 收起。
+    await rightClickRow(page, "billion-context");
+    await page.waitForFunction(
+      () => document.querySelectorAll("#plugin-menu-targets [data-plugin-target]").length > 0,
+      { timeout: 3000 },
+    );
+    await page.keyboard.press("Escape");
+    await sleep(120);
+    assert.equal((await readMenu(page)).hidden, true, "Esc 应收起菜单");
   } finally {
     await page.close();
   }
 });
 
-test("选目标环境后有行内忙态与回执；同版本不重复装", { skip: skipReason }, async () => {
+test("选定目标环境后有行内忙态与回执；装完那一行就变成不可再装", { skip: skipReason }, async () => {
   const page = await openPluginPanel(browser, { pluginTransferDelay: 500 });
   try {
-    await rightClickRow(page, "billion-context");
+    await rightClickRow(page, "dsh-context");
+    await page.waitForFunction(
+      () => document.querySelectorAll("#plugin-menu-targets [data-plugin-target]").length > 0,
+      { timeout: 3000 },
+    );
     await page.evaluate(() => {
       document.querySelector('#plugin-menu-targets [data-plugin-target="desktop"]').click();
     });
@@ -187,7 +212,7 @@ test("选目标环境后有行内忙态与回执；同版本不重复装", { ski
       row: document.querySelector("#plugin-list .plugin-row.is-transferring")?.dataset.row,
     }));
     assert.equal(busy.menuHidden, true, "点了目标环境菜单就该收起");
-    assert.equal(busy.row, "billion-context", "忙态应挂在被搬的那一行");
+    assert.equal(busy.row, "dsh-context", "忙态应挂在被搬的那一行");
     assert.equal(busy.spin, true, "忙态行右端要有转环");
 
     await page.waitForFunction(() => !document.querySelector("#plugin-list .plugin-row.is-transferring"), {
@@ -199,19 +224,15 @@ test("选目标环境后有行内忙态与回执；同版本不重复装", { ski
       `回执应说明装进了哪个环境，实际：${JSON.stringify(toasts)}`,
     );
 
-    // 再搬一次：目标里已经装着同一版本，不该重复装，回执直说。
-    await rightClickRow(page, "billion-context");
-    await page.evaluate(() => {
-      document.querySelector('#plugin-menu-targets [data-plugin-target="desktop"]').click();
-    });
-    await page.waitForFunction(() => !document.querySelector("#plugin-list .plugin-row.is-transferring"), {
-      timeout: 5000,
-    });
-    const again = await readToasts(page);
-    assert.ok(
-      again.some((text) => text.includes("已经装着")),
-      `重复搬运应回「已经装着」，实际：${JSON.stringify(again)}`,
+    // 再右键一次：desktop 现在已经有它了，那一行置灰并标出已装版本。
+    await rightClickRow(page, "dsh-context");
+    await page.waitForFunction(
+      () => document.querySelectorAll("#plugin-menu-targets [data-plugin-target]").length > 0,
+      { timeout: 3000 },
     );
+    const again = (await readMenu(page)).targets.find((item) => item.label === "desktop");
+    assert.equal(again.disabled, true, "装过之后不许再重复装");
+    assert.match(again.note ?? "", /^已装 v/, `那一行应标出已装版本，实际：${again.note}`);
   } finally {
     await page.close();
   }

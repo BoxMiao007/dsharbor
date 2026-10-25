@@ -160,22 +160,27 @@ const state = {
       一个空数组预览「零插件 + 去安装依赖」；lab 删掉就能预览「读到了但一项也没有」。 */
   plugins: {
     web: [
-      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。" },
-      { name: "@deepseek-ai/dsh-web-app", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方 Web 界面包，浏览器里那套界面本体。" },
-      { name: "billion-context", entries: ["bili-native"], enabled: true, bridge: false, manual: false, switchable: true, description: "十亿级上下文记忆检索：压缩、折叠与按需还原历史对话。" },
-      { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true, description: "上下文管理与注入策略面板。" },
-      { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true, description: "增强版侧边栏：分组、置顶与拖拽排序。" },
-      { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true, description: "免 Key 聚合网络搜索，多引擎自动回退。" },
-      { name: "dsh-local-tools", entries: ["local-tools"], enabled: true, bridge: false, manual: true, switchable: true, description: "本地打包的工具集（不上 registry，永远查不到版本）。" },
-      { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true, description: "技能与 MCP 服务的管理面板。" },
-      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。" },
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。", home: null },
+      { name: "@deepseek-ai/dsh-web-app", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方 Web 界面包，浏览器里那套界面本体。", home: "https://github.com/deepseek-ai/dsh" },
+      { name: "billion-context", entries: ["bili-native"], enabled: true, bridge: false, manual: false, switchable: true, description: "十亿级上下文记忆检索：压缩、折叠与按需还原历史对话。", home: "https://github.com/ranxianglei/billion-context" },
+      { name: "dsh-context", entries: ["dsh-context"], enabled: false, bridge: false, manual: false, switchable: true, description: "上下文管理与注入策略面板。", home: "https://github.com/omdsh-dev/dsh-context" },
+      { name: "dsh-better-sidebar", entries: ["better-sidebar"], enabled: false, bridge: false, manual: true, switchable: true, description: "增强版侧边栏：分组、置顶与拖拽排序。", home: "https://github.com/omdsh-dev/DSH-better-sidebar" },
+      { name: "dsh-free-search", entries: ["web-search-free"], enabled: true, bridge: false, manual: false, switchable: true, description: "免 Key 聚合网络搜索，多引擎自动回退。", home: null },
+      { name: "dsh-local-tools", entries: ["local-tools"], enabled: true, bridge: false, manual: true, switchable: true, description: "本地打包的工具集（不上 registry，永远查不到版本）。", home: null },
+      { name: "dsh-skill-mcp-panel", entries: ["skill-mcp-panel"], enabled: false, bridge: false, manual: false, switchable: true, description: "技能与 MCP 服务的管理面板。", home: "https://github.com/omdsh-dev/dsh-skill-mcp-panel" },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。", home: null },
     ],
     lab: [
-      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。" },
-      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。" },
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。", home: null },
+      { name: "dsharbor-bridge", entries: ["dsharbor-bridge"], enabled: true, bridge: true, manual: false, switchable: true, description: "本壳自带的桥接插件，在「桥接插件」浮窗里管理。", home: null },
     ],
     headless: [],
-    desktop: [],
+    // desktop 预置一份 billion-context：右键菜单里那一行会显示「已装 v2.1.0」并置灰，
+    // 不用先搬一次就能预览「重复的不许装」。删掉它就能预览全部可点的样子。
+    desktop: [
+      { name: "@deepseek-ai/dsh-base", entries: [], enabled: true, bridge: false, manual: false, switchable: false, description: "DSH 官方内置骨架包：会话、工具与界面的基础挂载点。", home: null },
+      { name: "billion-context", entries: ["bili-native"], current: "2.1.0", enabled: true, bridge: false, manual: false, switchable: true, description: "十亿级上下文记忆检索：压缩、折叠与按需还原历史对话。", home: "https://github.com/ranxianglei/billion-context" },
+    ],
   },
   /** 插件更新检查（`plugin_updates_list`）的假数据：按环境名分组，形状照后端
       PluginUpdateItem（camelCase）。web 里安排了「可更新、停用也可更新（两行）、已最新、
@@ -202,6 +207,8 @@ const state = {
   pluginUpdateFail: [],
   /** 跨环境搬运（plugin_install_into）的人工延时（毫秒）：给行内转环一个确定的忙态窗口。 */
   pluginTransferDelay: 0,
+  /** 右键菜单「检查各环境」的人工延时（毫秒）：预览菜单先弹「正在检查各环境…」再换列表。 */
+  pluginTargetsDelay: 0,
   /** 版本列表查询的人工延时：给方钮忙态（环形 spinner / 完成勾）测一个确定的忙态窗口。 */
   registryDelay: 0,
   /** 插件清单（`plugin_list`）的人工延时（毫秒，按「每条命令」计）：给骨架屏一个确定的
@@ -772,6 +779,31 @@ window.__mockUnimplemented = [];
       };
       return result;
     },
+    // 各目标环境的现状（命令名 plugin_install_targets）：右键那一刻现问一次。
+    // 口径与真后端一致——按目标环境清单里登记的名字判「已装」，不看 node_modules。
+    plugin_install_targets: (a) => {
+      const source = a && a.source;
+      const plugin = a && a.plugin;
+      seen("plugin_install_targets:" + source + "/" + plugin);
+      const settle = () =>
+        S.profiles
+          .filter((p) => p.name !== source)
+          .map((p) => {
+            const list = S.plugins[p.name] || [];
+            const row = list.find((it) => it.name === plugin);
+            const upd = ((S.pluginUpdates && S.pluginUpdates[p.name]) || []).find((it) => it.name === plugin);
+            return {
+              profile: p.name,
+              depsInstalled: !!p.depsInstalled,
+              installed: !!row,
+              installedVersion: row ? row.current || (upd && upd.current) || null : null,
+              error: null,
+            };
+          });
+      return S.pluginTargetsDelay > 0
+        ? new Promise((done) => setTimeout(() => done(settle()), S.pluginTargetsDelay))
+        : settle();
+    },
     // 跨环境搬运：把当前环境的某个插件装进另一个环境（命令名 plugin_install_into）。
     // 目标环境里已装着同版本就直接返回成功（与真后端一致），方便预览「已装不重复装」的文案。
     plugin_install_into: (a) => {
@@ -792,17 +824,15 @@ window.__mockUnimplemented = [];
       const to = (S.plugins[target] = S.plugins[target] || []);
       const existing = to.find((it) => it.name === plugin);
       const settle = () => {
-        if (existing && existing.current === version) {
-          return {
-            ok: true,
-            message: target + " 里已经装着 " + plugin + "@" + version + "，没有重复安装。",
-            backupDir: "",
-          };
+        // 目标环境已经有同名插件（任何版本）就拒：与真后端 install_into 同口径。
+        if (existing) {
+          throw (
+            "环境「" + target + "」已经装着" + (existing.current ? " " + existing.current : "") +
+            "这个插件，不重复装；想换版本请到这个环境自己的「更新」里做。"
+          );
         }
         // 目标环境里没有这一行就照源那份的形状补一条（真后端装完也会出现在清单里）。
-        if (existing) {
-          existing.current = version;
-        } else if (from) {
+        if (from) {
           to.push({ ...from, current: version });
         }
         return {

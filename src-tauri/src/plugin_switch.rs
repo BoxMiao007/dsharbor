@@ -158,20 +158,54 @@ fn read_patch_layer(target: &Target, dir: &str) -> Result<String, String> {
 /// 少一行说明而已，所以一切失败都静默给 `None`。名字先过 `safe_bundle_name`，
 /// 防止拼出奇怪的路径。
 fn read_description(target: &Target, dir: &str, name: &str) -> Option<String> {
+    read_plugin_field(target, dir, name, |value| {
+        let desc = value.get("description")?.as_str()?.trim().to_string();
+        (!desc.is_empty()).then_some(desc)
+    })
+}
+
+/// 读插件主页：包 `package.json` 的 `homepage`，没有就退到 `repository`。
+///
+/// 清洗成裸 http(s) 链接的规则在核心库 `plugin_switch::home_url`（有单测）；
+/// 这里只把两个字段的原文取出来交给它。读不到、两个字段都没有都给 `None`，
+/// 界面就不把名字画成链接。
+fn read_home(target: &Target, dir: &str, name: &str) -> Option<String> {
+    read_plugin_field(target, dir, name, |value| {
+        let homepage = value.get("homepage").and_then(|item| match item {
+            serde_json::Value::String(text) => Some(text.as_str()),
+            _ => None,
+        });
+        let repository = value.get("repository").and_then(|item| match item {
+            serde_json::Value::String(text) => Some(text.as_str()),
+            // npm 允许写成 { "type": "git", "url": "…" }。
+            serde_json::Value::Object(map) => map.get("url").and_then(|url| url.as_str()),
+            _ => None,
+        });
+        plugin_switch::home_url(homepage, repository)
+    })
+}
+
+/// 读插件包 `package.json` 并让调用方挑字段；任何一步失败都静默给 `None`。
+fn read_plugin_field<T>(
+    target: &Target,
+    dir: &str,
+    name: &str,
+    pick: impl Fn(&serde_json::Value) -> Option<T>,
+) -> Option<T> {
     if !safe_bundle_name(name) {
         return None;
     }
     let path = join_path(target, dir, &format!("{NODE_MODULES}/{name}/package.json"));
     let text = read_file(target, &path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let desc = value.get("description")?.as_str()?.trim().to_string();
-    (!desc.is_empty()).then_some(desc)
+    pick(&value)
 }
 
-/// 给清单逐项补上说明文字；其余字段原样保留。
+/// 给清单逐项补上说明文字与主页地址；其余字段原样保留。
 fn with_descriptions(target: &Target, dir: &str, mut items: Vec<PluginItem>) -> Vec<PluginItem> {
     for item in &mut items {
         item.description = read_description(target, dir, &item.name);
+        item.home = read_home(target, dir, &item.name);
     }
     items
 }
@@ -421,9 +455,12 @@ mod tests {
         assert_eq!(read_description(&target, &dir, "dsh-missing"), None);
         assert_eq!(read_description(&target, &dir, "dsh-no-json"), None);
         assert_eq!(read_description(&target, &dir, "dsh-no-desc"), None);
+        assert_eq!(read_home(&target, &dir, "dsh-missing"), None);
+        assert_eq!(read_home(&target, &dir, "dsh-no-desc"), None);
 
         // 不安全的包名连路径都不该拼出去。
         assert_eq!(read_description(&target, &dir, "../../etc/passwd"), None);
+        assert_eq!(read_home(&target, &dir, "../../etc/passwd"), None);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -440,7 +477,7 @@ mod tests {
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(
             pkg.join("package.json"),
-            r#"{"name":"dsh-rich","description":"带说明的插件"}"#,
+            r#"{"name":"dsh-rich","description":"带说明的插件","homepage":"https://example.com/rich#readme"}"#,
         )
         .unwrap();
         std::fs::write(
@@ -461,6 +498,7 @@ mod tests {
                     manual: false,
                     switchable: true,
                     description: None,
+                    home: None,
                 },
                 PluginItem {
                     name: "dsh-bare".to_string(),
@@ -470,11 +508,14 @@ mod tests {
                     manual: false,
                     switchable: false,
                     description: None,
+                    home: None,
                 },
             ],
         );
         assert_eq!(items[0].description.as_deref(), Some("带说明的插件"));
+        assert_eq!(items[0].home.as_deref(), Some("https://example.com/rich"));
         assert_eq!(items[1].description, None, "读不到的包留空，不编造");
+        assert_eq!(items[1].home, None, "读不到主页就不画链接");
         assert_eq!(items[0].name, "dsh-rich", "其余字段原样保留");
 
         let _ = std::fs::remove_dir_all(&root);

@@ -87,6 +87,10 @@ pub struct PluginItem {
     /// 传递：读文件是外壳的事，读不到就留 None，序列化成 null。
     #[serde(default)]
     pub description: Option<String>,
+    /// 插件主页地址（包 package.json 的 homepage，或退一步用 repository）。已在这里
+    /// 清洗成可直接交给浏览器的 http(s) 链接；两个字段都没有就留 None（界面不画链接）。
+    #[serde(default)]
+    pub home: Option<String>,
 }
 
 /// 行首缩进（空格数；制表符按一个算，补丁层里实际只用空格）。
@@ -392,6 +396,82 @@ pub fn mount_points(listing: &str) -> Vec<(String, Vec<String>)> {
     result
 }
 
+/// 从包 `package.json` 的两个字段里挑一个能交给浏览器的主页地址。
+///
+/// 优先 `homepage`，没有再退到 `repository`。npm 生态里这两个字段的写法很杂，这里
+/// 统一清洗成裸 http(s) 链接：
+/// - `homepage` 常带 `#readme` 这类锚（`https://github.com/x/y#readme`），去掉；
+/// - `repository` 常是 `git+https://github.com/x/y.git`，去掉 `git+` 前缀与 `.git` 后缀；
+/// - `git://`、`ssh://git@…`、`git@github.com:x/y.git` 这类不能直接开浏览器，转成 https；
+/// - 其它协议（`ftp:`、`file:` 等）一律不认，返回 None——界面只画 http(s) 链接。
+pub fn home_url(homepage: Option<&str>, repository: Option<&str>) -> Option<String> {
+    homepage
+        .and_then(clean_home)
+        .or_else(|| repository.and_then(clean_repository))
+}
+
+/// `homepage` 字段清洗：去锚点、去 `git+` 前缀，只留 http(s)。
+fn clean_home(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // 锚点里通常是 #readme 这类跳转说明，浏览器打开根地址更稳。
+    let text = match text.find('#') {
+        Some(pos) => &text[..pos],
+        None => text,
+    };
+    normalize_http(text)
+}
+
+/// `repository` 字段清洗：先摘出 URL（`owner/repo` 这种简写拼成 https 地址），
+/// 再去 `git+` / `.git` / `git://` 这些 git 专用写法。
+fn clean_repository(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // 简写形态 `owner/repo`：npm 文档允许，拼成 GitHub 地址。
+    if !text.contains("://") && !text.starts_with("git@") {
+        return normalize_http(&format!("https://github.com/{text}"));
+    }
+    // `git@github.com:owner/repo.git`（scp 形态）：冒号换成斜杠、去掉前缀。
+    if let Some(rest) = text.strip_prefix("git@") {
+        let rest = rest.replacen(':', "/", 1);
+        return normalize_http(&format!("https://{rest}"));
+    }
+    let text = text.strip_prefix("git+").unwrap_or(text);
+    normalize_http(text)
+}
+
+/// 把 git 系的 `ssh://` / `git://` 统一成 https，并把 `.git` 后缀去掉；
+/// 只放行 http/https，其它协议给 None。
+fn normalize_http(raw: &str) -> Option<String> {
+    let mut text = raw.trim().to_string();
+    if let Some(rest) = text.strip_prefix("ssh://") {
+        // `ssh://git@github.com/owner/repo.git` → `https://github.com/owner/repo.git`
+        let rest = rest.split_once('@').map_or(rest, |(_, host)| host);
+        text = format!("https://{rest}");
+    } else if let Some(rest) = text.strip_prefix("git://") {
+        text = format!("https://{rest}");
+    }
+    if !(text.starts_with("https://") || text.starts_with("http://")) {
+        return None;
+    }
+    if let Some(stripped) = text.strip_suffix(".git") {
+        text = stripped.to_string();
+    }
+    // 只剩协议头（`https://`）不算地址。
+    let rest = match text.split_once("://") {
+        Some((_, rest)) => rest,
+        None => return None,
+    };
+    if rest.trim_matches('/').is_empty() {
+        return None;
+    }
+    Some(text.trim_end_matches('/').to_string())
+}
+
 /// 合成界面上那份插件清单。
 ///
 /// `mounts` 是 [`mount_points`] 的结果（外壳按「组合包 ∪ 依赖」扫出来的），
@@ -434,6 +514,7 @@ pub fn items(
                 name,
                 entries,
                 description: None,
+                home: None,
             }
         })
         .collect())
@@ -701,5 +782,70 @@ mod tests {
         assert!(list[0].enabled);
         assert!(list[0].switchable);
         assert!(!list[0].manual);
+    }
+
+    #[test]
+    fn home_url_prefers_homepage_and_strips_anchor() {
+        let url = home_url(
+            Some("https://github.com/ranxianglei/billion-context#readme"),
+            Some("git+https://github.com/ranxianglei/billion-context.git"),
+        );
+        assert_eq!(
+            url.as_deref(),
+            Some("https://github.com/ranxianglei/billion-context")
+        );
+    }
+
+    #[test]
+    fn home_url_falls_back_to_repository_variants() {
+        // 只有 repository 且在 16 个实测包里以这几种形态出现。
+        let cases = [
+            (
+                "https://github.com/omdsh-dev/DSH-better-sidebar",
+                "https://github.com/omdsh-dev/DSH-better-sidebar",
+            ),
+            (
+                "git+https://github.com/lovezi0/dsh-model-extension.git",
+                "https://github.com/lovezi0/dsh-model-extension",
+            ),
+            ("git://github.com/a/b.git", "https://github.com/a/b"),
+            ("ssh://git@github.com/a/b.git", "https://github.com/a/b"),
+            ("git@github.com:a/b.git", "https://github.com/a/b"),
+            ("a/b", "https://github.com/a/b"),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(
+                home_url(None, Some(raw)).as_deref(),
+                Some(expected),
+                "raw={raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn home_url_rejects_what_a_browser_cannot_open() {
+        assert_eq!(home_url(None, None), None);
+        assert_eq!(home_url(Some("   "), Some("")), None);
+        assert_eq!(home_url(Some("ftp://example.com/x"), None), None);
+        assert_eq!(home_url(Some("file:///D:/x"), None), None);
+        assert_eq!(home_url(Some("javascript:alert(1)"), None), None);
+        assert_eq!(home_url(Some("https://"), None), None);
+        // 认不得的 homepage 不影响退到 repository。
+        assert_eq!(
+            home_url(Some("ftp://x"), Some("https://github.com/a/b")).as_deref(),
+            Some("https://github.com/a/b")
+        );
+    }
+
+    #[test]
+    fn home_url_trims_trailing_slash() {
+        assert_eq!(
+            home_url(Some("https://example.com/x/"), None).as_deref(),
+            Some("https://example.com/x")
+        );
+        assert_eq!(
+            home_url(Some("https://example.com/"), None).as_deref(),
+            Some("https://example.com")
+        );
     }
 }

@@ -272,17 +272,27 @@ html[data-motion="off"] .env-card:hover .env-more {
 }
 
 /* 插件行的右键菜单：复用 .env-menu 的浮层形状，只补标题与目标环境按钮的排布。
-   定位同样由 JS 算（按鼠标点夹在视口内），这里只定内部结构。 */
+   定位同样由 JS 算（按鼠标点夹在视口内），这里只定内部结构。
+   标题是固定文案「装进另一个环境」，不带插件名——名字在按下的那一行上，
+   菜单里再写一遍既重复又会把 148px 的菜单撑到需要截断。它是标题不是提示，
+   所以用正常字色加粗，跟下面的环境名拉开层级。 */
 .plugin-menu-title {
   margin: 0 0 2px;
   padding: 4px 10px 6px;
-  color: var(--fg-dim);
-  font-size: 11px;
+  color: var(--fg);
+  font-size: 11.5px;
+  font-weight: 600;
   letter-spacing: 0.02em;
-  /* 包名可能很长：单行截断，完整名字在下面几个按钮的气泡里。 */
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 等各环境现状回来之前的过渡文案（每次右键现问，几十毫秒到几百毫秒）。 */
+.plugin-menu-hint {
+  margin: 0;
+  padding: 4px 10px 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .plugin-menu-targets {
@@ -298,13 +308,31 @@ html[data-motion="off"] .env-card:hover .env-more {
   gap: 10px;
 }
 
-/* 目标环境那一行的右侧小字（是当前正在看的那个环境 / 已装着同版本）。
+/* 置灰的目标环境：名字淡下去说明「这个不能选」，但右端那枚现状徽章要留够对比度——
+   `.env-menu button:disabled` 的 0.42 会把「已装 v2.1.0」洗成几乎看不见，而它恰恰
+   是用户判断「为什么不能选」的唯一依据。所以整行不整体降透明，改成分开控制。 */
+.plugin-menu-targets button:disabled {
+  opacity: 1;
+  color: var(--fg-mute);
+}
+
+/* 目标环境那一行的右侧现状徽章（已装 v1.70.1 / 缺依赖 / 读不到）：带底色的紧凑
+   小圆角，和「全部更新」那类计数微标同一套强调色，一眼能认出这是状态而不是名字。
    等宽数字：里面会带版本号，换目标环境时宽度不抖。 */
-.plugin-menu-targets .menu-note {
+.plugin-target-note {
   flex: none;
-  color: var(--fg-dim);
-  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-fill) 16%, transparent);
+  color: var(--accent-fill);
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/* 置灰行上的徽章稍微收一点亮度，但仍要读得清（它就是「为什么不能选」的答案）。 */
+.plugin-menu-targets button:disabled .plugin-target-note {
   opacity: 0.85;
 }
 

@@ -527,6 +527,95 @@ pub fn update(
     }
 }
 
+/// 某个目标环境对「把这份插件装过去」这件事的现状（界面右键菜单逐行显示）。
+///
+/// 「已经装过」的判定口径与插件面板一致：目标环境的 `package.json` 里
+/// `dependencies` 或 `dsh.profile.bundles` 登记了同名包就算装过——只被别的包当
+/// 依赖拉进 `node_modules` 的传递包不算，否则像 `@modelcontextprotocol/sdk`
+/// 这种被顺带装进来的包会到处显示成「已装」。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallTarget {
+    /// 目标环境名。
+    pub profile: String,
+    /// 这个环境装过依赖没有（没有就没有 `node_modules`，装不了）。
+    pub deps_installed: bool,
+    /// 目标环境是否已经登记了这个插件（任何版本都算）。
+    pub installed: bool,
+    /// 已装的具体版本；登记了但 `node_modules` 读不到版本时是 None（界面只显示「已装」）。
+    pub installed_version: Option<String>,
+    /// 读这个目标环境时出的错（目录损坏、权限问题）；有值时界面把那一行置灰。
+    pub error: Option<String>,
+}
+
+/// 判断清单里是否登记了这个包（`dependencies` 或组合包列表任一命中）。
+///
+/// 抽出来是为了让「已装」的判定只有一份实现：跨环境安装的拒绝、右键菜单的置灰
+/// 都走它，不会出现「菜单说能装、后端说已经装过」这种自相矛盾。
+fn registered_in_manifest(manifest: &str, name: &str) -> Result<bool, String> {
+    let bundles = plugin_switch::bundle_names(manifest)?;
+    if bundles.iter().any(|bundle| bundle == name) {
+        return Ok(true);
+    }
+    let deps = plugin_switch::dependency_names(manifest)?;
+    Ok(deps.iter().any(|dep| dep == name))
+}
+
+/// 列出「这个插件能装进哪些环境」，供右键菜单逐行显示现状。
+///
+/// 一次读完所有其它环境（每个环境读一次 `package.json`，WSL 目标经 wsl.exe），
+/// 所以菜单是右键那一刻才问、不预取。源环境自己不出现在结果里。
+pub fn install_targets(
+    config: &LaunchConfig,
+    source_profile: &str,
+    name: &str,
+) -> Result<Vec<InstallTarget>, String> {
+    plugin_update::validate_package_name(name)?;
+    let target = Target::of(config);
+    let listing = plugin::list_profiles(config)?;
+    let mut out = Vec::new();
+    for profile in listing.profiles {
+        if profile.name == source_profile {
+            continue;
+        }
+        let mut row = InstallTarget {
+            profile: profile.name.clone(),
+            deps_installed: profile.deps_installed,
+            installed: false,
+            installed_version: None,
+            error: None,
+        };
+        match read_profile_manifest(&target, &profile.name) {
+            Ok(manifest) => match registered_in_manifest(&manifest, name) {
+                Ok(installed) => {
+                    row.installed = installed;
+                    if installed {
+                        let dir = match plugin::profile_dir(&target, &profile.name) {
+                            Ok(dir) => dir,
+                            Err(err) => {
+                                row.error = Some(err);
+                                out.push(row);
+                                continue;
+                            }
+                        };
+                        row.installed_version = read_installed(&target, &dir, name).0;
+                    }
+                }
+                Err(err) => row.error = Some(err),
+            },
+            Err(err) => row.error = Some(err),
+        }
+        out.push(row);
+    }
+    Ok(out)
+}
+
+/// 读某个环境的 `package.json` 原文（读不到就把原因带上去）。
+fn read_profile_manifest(target: &Target, profile: &str) -> Result<String, String> {
+    let dir = plugin::profile_dir(target, profile)?;
+    plugin::read_file(target, &plugin::join_path(target, &dir, "package.json"))
+}
+
 /// 把一份环境里装着的插件装进另一份环境（界面上的「添加到其他环境」）。
 ///
 /// 两套环境都在同一个运行环境里（宿主或同一个 WSL 发行版）：壳的插件命令只认
@@ -535,6 +624,9 @@ pub fn update(
 ///
 /// 版本取源环境里实际装着的那一份，而不是 registry 上的最新版——用户点的是
 /// 「把这个插件搬过去」，搬完两边应当同时是同一份版本。
+///
+/// 目标环境已经有同名插件（任何版本）就拒绝：覆盖安装会让「两个环境各管一份」
+/// 变得不可预测，想换版本应当去那个环境自己的「更新」里做。
 pub fn install_into(
     app: &tauri::AppHandle,
     config: &LaunchConfig,
@@ -564,18 +656,19 @@ pub fn install_into(
         }));
     };
 
+    // 目标环境已经有同名插件（任何版本）就停手：覆盖安装会让「两个环境各管一份」
+    // 变得不可预测，想换版本应当去那个环境自己的「更新」里做。
     let target_dir = plugin::profile_dir(&target, target_profile)?;
-    // 目标环境已经有同一个版本就别重复装：pnpm 会报「已是最新」或什么都不做，
-    // 用户却会以为刚做了什么。说清楚现状比装作装过更有用。
-    let (existing, _) = read_installed(&target, &target_dir, name);
-    if existing.as_deref() == Some(version.as_str()) {
-        return Ok(UpdateOutcome {
-            ok: true,
-            message: format!(
-                "环境「{target_profile}」里已经装着「{name}」@{version}，没有重复安装。"
-            ),
-            backup_dir: String::new(),
-        });
+    let target_manifest = read_profile_manifest(&target, target_profile)?;
+    if registered_in_manifest(&target_manifest, name)? {
+        let (existing, _) = read_installed(&target, &target_dir, name);
+        let current_text = match existing.as_deref() {
+            Some(current) => format!("已经装着 {current}"),
+            None => "已经装着".to_string(),
+        };
+        return Err(format!(
+            "环境「{target_profile}」{current_text}这个插件，不重复装；想换版本请到这个环境自己的「更新」里做。"
+        ));
     }
 
     let prefs = crate::settings::load(app).prefs;
@@ -992,8 +1085,30 @@ mod tests {
         );
     }
 
-    // ---- 装后校验 ------------------------------------------------------------
+    // ---- 「目标环境装过没有」的判定 ------------------------------------------
 
+    #[test]
+    fn registered_in_manifest_counts_dependencies_and_bundles_only() {
+        let manifest = r#"{
+            "name": "web",
+            "dependencies": { "dsh-context": "0.75.1" },
+            "dsh": { "profile": { "bundles": ["billion-context"] } }
+        }"#;
+        // 组合包列表登记算装过。
+        assert!(registered_in_manifest(manifest, "billion-context").unwrap());
+        // 只在 dependencies 里（被关掉了）也算装过——包还在磁盘上。
+        assert!(registered_in_manifest(manifest, "dsh-context").unwrap());
+        // 没登记就不算：传递依赖不进清单，别把它们误判成「已装」。
+        assert!(!registered_in_manifest(manifest, "@modelcontextprotocol/sdk").unwrap());
+    }
+
+    #[test]
+    fn registered_in_manifest_reports_a_broken_manifest() {
+        // 坏 JSON 要把原因带出去，让右键菜单那一行显示「读不到」而不是「能装」。
+        assert!(registered_in_manifest("{ not json", "dsh-one").is_err());
+    }
+
+    // ---- 装后校验 ------------------------------------------------------------
     #[test]
     fn verify_accepts_target_and_rejects_mismatch_or_missing() {
         let root = temp_root("verify");
