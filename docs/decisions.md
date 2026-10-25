@@ -644,6 +644,16 @@
 | 2026-10-25 | 主按钮补第五态「安装中…」：npx 模式且所选版本本机没缓存时（「自动最新」看 `npx_cached_versions` 新返回的 `bareCached`，具体版本看 `pinServedVersions`）按钮文案换成「安装中…」，工具条下方同源出现一行下载提示（细环 + 走动的省略号）；下载完接回「启动中…」。同时删掉「钉版本命中缓存」那条「不会再下载一份」提示 | 首次装 DSH 要下载几十秒，只有「启动中…」看不出是在下载还是卡死；而「已经装过、不会再下载」属于正常路径，天天弹一遍是噪音（维护者点名多余）。裸包名口径的「会再下载一份」警告仍保留——那是有代价的 | 前端估算下载进度百分比（拿不到准确总量，估错更误导）；在按钮里塞转环以外的进度条（工具条空间不够，且进度看日志更实在）；把两种缓存口径合并成一句提示（措辞必然含糊） |
 | 2026-10-25 | DSH 版本卡三项：卡头加刷新方钮（`setSquareBusy` 转环 + `flashSquareDone` 勾停 0.9 秒，重扫 npm 全局与 npx 缓存）；每行的来源徽章后跟一枚安装方式徽章（`installMethod`: `pinned`=版本号安装 / `auto`=自动最新，由 `npxcache` 的 `specs` 经 `spec_version` 推导，npm 全局份与读不出的份不挂）；删除执行期该行挂 `.dsh-version-removing` 转淡 + 动作区换成 `.dsh-remove-spin` 小转环 | 装完新版本、删掉旧缓存后列表不会自己变；删除一份 `_npx` 目录要几秒，期间按钮全部禁用但界面毫无变化，看起来像点坏了；同一版本可能有「钉版本」与「裸包名」两份缓存，删错那份会连带影响下次启动要不要重下 | 每行只显示来源不显示装法（删之前没法判断代价）；删除用 confirm 弹窗（打断流程，且与卡内其它确认交互不一致）；刷新按钮做成整卡重渲染（会闪、会丢滚动位置） |
 
+## 2026-10-25 三类插件运维：进度的环境隔离、锁文件自动重修、跨环境搬运
+
+维护者三条需求：切环境回来更新动画没了；desktop 环境更新报「校验未过」但看不出病因；想把一个环境的插件搬进另一个环境。
+
+| 日期 | 决策 | 为什么 | 放弃了什么 |
+|------|------|--------|------------|
+| 2026-10-25 | 插件更新的进度与行级状态改成**按环境各存一份**：`pluginUpdateSnapshots: Map<环境名, {items, checked, round}>`（`round` 是 `phases` / `total` / `done` / `failed` / `summary`），`storePluginUpdate` / `restorePluginUpdate` 在换环境时存取；批量进度的 Channel 回调绑定**发起时那个环境**的 `round` 对象，只有 `pluginRound === round`（即用户正看着它）才重画；`pluginFreshPhase` 也从 `Set` 改成按环境分 | 原来这些状态是七个全局变量，`syncPluginPanel` 一换环境就无条件 `resetPluginProgress()` 清空，切回来动画全丢、进度条消失；而换环境期间后端仍在跑，事件会落到「当前环境」这份状态上，把别的环境的插件名画进此刻的列表 | 全局只留一份、切回来重查一遍（后端已经跑完的轮次无法还原，动画照样丢）；把进度状态搬到 Rust 侧（界面状态属于界面，且切环境不打断后端，没必要跨进程同步） |
+| 2026-10-25 | 装插件前先认病因：`plugin_update::lockfile_needs_repair` 判 `ERR_PNPM_LOCKFILE_*` / `Broken lockfile`，命中则自动跑一次 `pnpm install --lockfile-only --fix-lockfile` 再重试一次安装，报错首行也改成「环境的依赖锁文件坏了…装在装之前就失败」并附 CLI 摘要 | 实测 desktop 环境的 `pnpm-lock.yaml` 与 manifest 脱节（importers 写 `billion-context: 0.1.207`、`packages` 段只有 `0.1.206`），pnpm 直接拒装；原代码只看退出码与校验结果，首行统一写「已执行但校验未过：装上的版本是 1.70.1，不是目标版本 1.70.2」，把真正的 `ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY` 埋在「输出：」块里，用户无法判断是壳坏了还是环境坏了。**只有显式带 `--fix-lockfile` 的 pnpm 才修得了**（不带参数的 `pnpm install --lockfile-only` 报同一个错） | 让用户自己去终端跑修复（壳已经知道病因却把活推给人）；无脑每次都 `--fix-lockfile`（正常环境白跑一次几分钟的解析）；静默删掉坏 lockfile 重装（丢掉全部锁定版本） |
+| 2026-10-25 | 跨环境搬运走**目标环境的 `dsh plugin --profile <目标> add <包>@<版本>`**（`plugin_install_into` → `plugin_update::install_into`），版本取**源环境实际装着的那份**而不是 registry 最新；两个环境必须在同一 runtime，宿主与 WSL 之间不能互搬 | 复用的是现成的「往某个环境装一个包」通路（同一个 `PluginOp::Install`），备份、校验、锁文件重修全部继承；取已装版本才能保证搬过去的是同一份而不是「顺手升个级」 | 直接复制 `node_modules` 目录（跨 runtime 不可行，且绕过 pnpm 的 lock 与 peer 解析）；按 registry 最新装（搬完版本变了，用户以为只是搬）；开一条跨 runtime 的搬运通道（宿主与 WSL 的文件系统与包管理器都是两套，收益低风险高） |
+
 ## 2026-10-26 插件主页链接：新增受白名单约束的 `open_link`
 
 维护者要求「点击插件标题可以跳转到插件链接的主页」。这一条与 2026-10-15「关于」卡片那条明确放弃过的选项（「提供一个接受任意 URL/路径的 `open` 命令（等于给界面开跳板）」）正面冲突，按 `docs/agents/domain.md` 的约定必须显式记下来。

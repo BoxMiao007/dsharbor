@@ -125,5 +125,6 @@
 - **端口被占用（EADDRINUSE）**：profile 里 webserver 端口被别的程序占用（注意 WSL 镜像网络下 Windows/WSL 共用 localhost 端口，刚停过 DSH 时等 1~2 分钟 TIME_WAIT 消散）。改「端口」字段用自定义端口，或释放占用。
 - **桥接未启用**：DSH 启动时没带 nonce（例如你自己在终端跑 `dsh web`），属预期降级；此时工具条第 1 颗徽章显示「桥接未安装」，登录链接改由日志解析取得。
 - **WSL 插件安装报 pnpm 错误**：确认壳运行时已注入清洗后的 PATH（4.0 起内置）；发行版内 pnpm 版本冲突时 `npx @deepseek-ai/dsh plugin --profile web …` 手动复核。
+- **更新插件报「环境的依赖锁文件坏了（pnpm-lock.yaml 与已装依赖对不上）」**：该环境的 `pnpm-lock.yaml` 与 `package.json` 脱节（典型是早年手改或合并冲突留下的），pnpm 连装都不肯装。壳现在会先自动跑一次 `pnpm install --lockfile-only --fix-lockfile` 再重试安装，成功后日志里会写「锁文件已按现存依赖重修（pnpm install --fix-lockfile）」；**如果它自己修不了**（报错里带「锁文件自动修复失败/没能执行」），到该环境目录手动执行同一条命令，再回来重试。注意不带 `--fix-lockfile` 的 `pnpm install` 修不了这个错，会报同一个 `ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY`。
 - **「安装桥接插件」报 `ERR_PNPM_PACKAGE_MANAGER_ADD_RESOLVE_LATEST`（v0.1.0 实机缺陷，已修）**：安装目录含空格（本机为 `D:\Program Files\DSHarbor`）时，pnpm 会把 `file:` 规格在空格处截断后当包名去 registry 查。现在壳会先把插件包暂存到无空格目录（`%APPDATA%\DSHarbor\cache`，WSL 侧为 `/tmp/dsharbor-bridge`）再安装；若仍报错，检查暂存目录与 `TEMP` 是否都含空格。
 - **看不到托盘图标**：Win11 默认折叠，拖到任务栏常显或点「隐藏的图标」。
