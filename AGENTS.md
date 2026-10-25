@@ -14,7 +14,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 |---|---|
 | `crates/dsharbor-core/` | 纯逻辑核心库:启动计划构造、输入校验、链接解析、轻量模式状态机、插件清单与更新比较;不碰界面与系统 API,`cargo test` 全自动。 |
 | `src-tauri/src/` | Tauri 壳层(Rust):`lib.rs` 是命令入口与 AppState,其余按域分文件——`launcher` 启动器、`plugin` 桥接插件安装、`plugin_switch`/`plugin_update` 插件开关与更新、`registry` 版本查询、`npxcache` npx 缓存扫描、`patch` 补丁层、`tray` 托盘、`wsl` 运行环境等。 |
-| `src/` | 前端(TypeScript,无框架):`main.ts` 主逻辑,`ui/build-html.ts` DOM 模板,`ui/icons.ts` 内联 SVG 图标,`styles/` 按编号分区的样式(`00-tokens.css` 定义全部 CSS 变量,其余 11 个文件只引用变量)。 |
+| `src/` | 前端(TypeScript,无框架):`main.ts` 主逻辑,`ui/build-html.ts` DOM 模板,`ui/icons.ts` 内联 SVG 图标,`styles/` 按编号分区的样式(共 14 个文件,`00-tokens.css` 定义全部 CSS 变量,其余 13 个文件只引用变量)。 |
 | `plugins/dsharbor-bridge/` | 随壳分发的 DSH 桥接插件(npm 包,`pnpm pack:bridge` 打成 tgz 放进 `src-tauri/resources/`)。 |
 | `scripts/` | `mock-preview.mjs` 假数据预览台等辅助脚本。 |
 | `test/` | `frontend/` 浏览器接缝测试(puppeteer-core 驱动 Edge,每文件独占端口);桥接插件测试在 `plugins/dsharbor-bridge/test/`。 |
@@ -35,7 +35,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
    - `cargo clippy --workspace --all-targets -- -D warnings`(静态检查;开发机就是 Windows msvc 宿主,不需要交叉参数)
    - `cargo test -p dsharbor-core`(纯逻辑核心库单元测试,开发机直接跑)
    - `node --test plugins/dsharbor-bridge/test/bridge.test.js`(桥接插件测试)
-   - `node --test test/frontend/*.test.mjs`(前端界面测试:用 `puppeteer-core` 驱动 Edge 在假数据预览台上跑,覆盖用量尺寸/可见性/动画这类浏览器里才说得清的接缝;依赖本机 `C:\Users\BOXMIAO\.pi\agent\npm\node_modules\puppeteer-core` 与 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,可用 `DSHARBOR_PUPPETEER` / `DSHARBOR_BROWSER` 覆盖,缺失时整组 skip)
+   - `node --test --test-concurrency=2 test/frontend/*.test.mjs`(前端界面测试:用 `puppeteer-core` 驱动 Edge 在假数据预览台上跑,覆盖用量尺寸/可见性/动画这类浏览器里才说得清的接缝;依赖本机 `C:\Users\BOXMIAO\.pi\agent\npm\node_modules\puppeteer-core` 与 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,可用 `DSHARBOR_PUPPETEER` / `DSHARBOR_BROWSER` 覆盖,缺失时整组 skip;并发参数的必要性见下文「容易踩的」)
    - `pnpm build`(前端类型检查 + 构建)
    - `pnpm pack:bridge`(打桥接插件 tgz 到 `src-tauri/resources`;`pnpm build` 会清空 `dist` 但不会生成它,缺了它 clippy/打包会报 `glob pattern resources/*.tgz path not found`)
    - `pnpm exec tauri build`(完整 Windows 安装包,本地测试默认「速度优先」构建;**只在改动涉及打包配置、发版或验安装器时跑**,日常改界面不算验证门)
@@ -52,7 +52,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 ## 容易踩的
 
 - **前端测试跑的是 `dist/mock.html`,不是源码**:改完前端必须先 `pnpm build` 再跑 `node --test test/frontend/`,否则测的是旧构建、出「假失败」;测试莫名失败先怀疑构建没刷新,再怀疑代码。
-- **前端测试每个文件独占一个端口**(log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / badge-color 8213 / danger-surface 8214 / notice-hint 8215;`node --test` 并行跑会同时起各自的预览台):新写测试文件先挑没占用的端口;调试留下的预览台进程占住端口,会让测试自己的预览台「预览台退出 (code 1)」整组秒挂,先 `netstat -ano` 找到 PID 再 `taskkill`。
+- **前端测试每个文件独占一个端口**(log-unread 8207 / plugin-switch 8208 / version-picker 8209 / toolbar-round 8210 / plugin-update 8211 / notice-hint 8212 / badge-color 8213 / danger-surface 8214 / motion-pref 8215 / motion-interactions 8216 / motion-tooltip 8217 / motion-theme 8218 / motion-panels 8219 / motion-modal 8220 / motion-spinner 8221 / motion-toast 8222 / motion-copy 8223 / motion-progress 8224 / motion-skeleton 8225;8226 起空闲):`node --test` 并行跑会同时起各自的预览台,新写测试文件先挑没占用的端口——先 `grep -h "const PORT" test/frontend/*.test.mjs` 看现状,别照抄别的文件注释里的旧号码;调试留下的预览台进程占住端口,会让测试自己的预览台「预览台退出 (code 1)」整组秒挂,先 `netstat -ano` 找到 PID 再 `taskkill`。
 - **前端测试要带 `--test-concurrency=2` 跑**(如 `node --test --test-concurrency=2 test/frontend/*.test.mjs`):默认全并行会让每个动效时序断言成片假失败(已两轮实证:全并行挂 8~9 个 motion-*/notice-hint/log-unread 用例,低并发 96/96 全过)——十几套 Edge + 预览台同时抢 CPU,动画帧时序全被拖慢;失败样例是「应已淡出,实测 opacity=1」「期望 162px 实测 165.5px」这类差一点点的断言,先怀疑并发而不是代码。
 - **mock 假命令的延时按「每条命令」计**(如「全部更新」一条命令 600ms,不是每个插件各 600ms):写等待与超时断言前,先看 mock 状态里注入的延时字段。
 
