@@ -53,6 +53,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 
 - **前端测试跑的是 `dist/mock.html`,不是源码**:改完前端必须先 `pnpm build` 再跑 `node --test test/frontend/`,否则测的是旧构建、出「假失败」;测试莫名失败先怀疑构建没刷新,再怀疑代码。
 - **前端测试每个文件独占一个端口**(log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / badge-color 8213 / danger-surface 8214 / notice-hint 8215;`node --test` 并行跑会同时起各自的预览台):新写测试文件先挑没占用的端口;调试留下的预览台进程占住端口,会让测试自己的预览台「预览台退出 (code 1)」整组秒挂,先 `netstat -ano` 找到 PID 再 `taskkill`。
+- **前端测试要带 `--test-concurrency=2` 跑**(如 `node --test --test-concurrency=2 test/frontend/*.test.mjs`):默认全并行会让每个动效时序断言成片假失败(已两轮实证:全并行挂 8~9 个 motion-*/notice-hint/log-unread 用例,低并发 96/96 全过)——十几套 Edge + 预览台同时抢 CPU,动画帧时序全被拖慢;失败样例是「应已淡出,实测 opacity=1」「期望 162px 实测 165.5px」这类差一点点的断言,先怀疑并发而不是代码。
 - **mock 假命令的延时按「每条命令」计**(如「全部更新」一条命令 600ms,不是每个插件各 600ms):写等待与超时断言前,先看 mock 状态里注入的延时字段。
 
 ## 界面设计规范(所有界面样式调整默认遵循)
