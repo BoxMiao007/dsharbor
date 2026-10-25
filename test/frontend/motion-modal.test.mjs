@@ -28,9 +28,9 @@ const require = createRequire(import.meta.url);
 
 const PUPPETEER_CORE = process.env.DSHARBOR_PUPPETEER || "C:/Users/BOXMIAO/.pi/agent/npm/node_modules/puppeteer-core";
 const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
-// 独占端口：log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / badge-color 8213 /
-// danger-surface 8214 / motion-pref 8215 / motion-interactions 8216 / motion-tooltip 8217 /
-// motion-theme 8218 / motion-panels 8219 / 本文件 8220
+// 独占端口：log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / notice-hint 8212 /
+// badge-color 8213 / danger-surface 8214 / motion-pref 8215 / motion-interactions 8216 /
+// motion-tooltip 8217 / motion-theme 8218 / motion-panels 8219 / 本文件 8220
 const PORT = 8220;
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;
 

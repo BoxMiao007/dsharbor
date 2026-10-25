@@ -32,7 +32,7 @@ const require = createRequire(import.meta.url);
 
 const PUPPETEER_CORE = process.env.DSHARBOR_PUPPETEER || "C:/Users/BOXMIAO/.pi/agent/npm/node_modules/puppeteer-core";
 const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
-const PORT = 8217; // 独占端口：log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / badge 8213 / danger 8214 / motion 8215 / 本文件 8217
+const PORT = 8217; // 独占端口：log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / notice-hint 8212 / badge 8213 / danger 8214 / motion-pref 8215 / 本文件 8217
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;
 
 const skipReason = !existsSync(PUPPETEER_CORE)

@@ -30,7 +30,7 @@ const require = createRequire(import.meta.url);
 
 const PUPPETEER_CORE = process.env.DSHARBOR_PUPPETEER || "C:/Users/BOXMIAO/.pi/agent/npm/node_modules/puppeteer-core";
 const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
-const PORT = 8223; // 独占端口：…8214 / motion-pref 8215 / 本文件 8223
+const PORT = 8223; // 独占端口：…8211 / notice-hint 8212 / …8214 / motion-pref 8215 / 本文件 8223
 const MOTION_KEY = "dsharbor.ui.motion";
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;
 
