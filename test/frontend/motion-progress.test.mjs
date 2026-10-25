@@ -34,7 +34,7 @@ const PUPPETEER_CORE = process.env.DSHARBOR_PUPPETEER || "C:/Users/BOXMIAO/.pi/a
 const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 // 独占端口：log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / badge 8213 /
 // danger 8214；node --test 并行跑会同时起各自的预览台，端口撞了整组秒挂。
-const PORT = 8224;
+const PORT = 8224; // 独占端口:见 AGENTS.md「容易踩的」里的端口表
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;
 
 const skipReason = !existsSync(PUPPETEER_CORE)

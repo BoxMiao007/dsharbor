@@ -33,7 +33,7 @@ const require = createRequire(import.meta.url);
 const PUPPETEER_CORE = process.env.DSHARBOR_PUPPETEER || "C:/Users/BOXMIAO/.pi/agent/npm/node_modules/puppeteer-core";
 const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 // 独占端口（#32）：8219 已被 motion-panels 占用，这里用 8225。
-const PORT = 8225;
+const PORT = 8225; // 独占端口:见 AGENTS.md「容易踩的」里的端口表
 const MOTION_KEY = "dsharbor.ui.motion";
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;
 

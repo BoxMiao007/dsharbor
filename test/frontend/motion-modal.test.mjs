@@ -31,7 +31,7 @@ const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsof
 // 独占端口：log 8207 / switch 8208 / picker 8209 / toolbar 8210 / update 8211 / notice-hint 8212 /
 // badge-color 8213 / danger-surface 8214 / motion-pref 8215 / motion-interactions 8216 /
 // motion-tooltip 8217 / motion-theme 8218 / motion-panels 8219 / 本文件 8220
-const PORT = 8220;
+const PORT = 8220; // 独占端口:见 AGENTS.md「容易踩的」里的端口表
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;
 
 const skipReason = !existsSync(PUPPETEER_CORE)

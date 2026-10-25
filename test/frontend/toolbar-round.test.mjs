@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url);
 
 const PUPPETEER_CORE = process.env.DSHARBOR_PUPPETEER || "C:/Users/BOXMIAO/.pi/agent/npm/node_modules/puppeteer-core";
 const BROWSER = process.env.DSHARBOR_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
-const PORT = 8210;
+const PORT = 8210; // 独占端口:见 AGENTS.md「容易踩的」里的端口表
 const PAGE_URL = `http://127.0.0.1:${PORT}/mock.html`;
 
 const skipReason = !existsSync(PUPPETEER_CORE)
