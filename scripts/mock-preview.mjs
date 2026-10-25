@@ -119,12 +119,13 @@ const state = {
   /** 设成 true 可预览「读取命令行集成状态失败」那条黄色提示。 */
   cliFails: false,
   /** 已装 DSH 的假数据（`installed_dsh_versions`）：npx 缓存里的几份 + npm 全局装的一份。
+      installMethod 只有 npx 的份有：pinned = 版本号安装，auto = 自动最新；npm 恒为 null。
       改成 [] 可预览「本机还没装过」；把某份 version 设成 null 可预览「版本读不到」；
       卸掉 npm 全局那份（`uninstall_dsh_global`）后这张列表会少一行。 */
   installedDsh: [
-    { version: "0.2.1-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\c8633a242642d858", inUse: true },
-    { version: "0.2.0-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\50d2c97abf8f4186", inUse: false },
-    { version: "0.1.9", source: "npm", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\bin\\node_modules\\@deepseek-ai\\dsh", inUse: false },
+    { version: "0.2.1-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\c8633a242642d858", inUse: true, installMethod: "pinned" },
+    { version: "0.2.0-rc.2", source: "npx", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\cache\\_npx\\50d2c97abf8f4186", inUse: false, installMethod: "auto" },
+    { version: "0.1.9", source: "npm", path: "D:\\IT\\Scoop\\User\\persist\\nodejs\\bin\\node_modules\\@deepseek-ai\\dsh", inUse: false, installMethod: null },
   ],
   /** 设成 true 可预览「读取已装 DSH 版本失败」那条黄色提示。 */
   installedDshFails: false,
@@ -468,26 +469,38 @@ window.__mockUnimplemented = [];
       return S.installedDsh || [];
     },
     // 卸载 npm 全局那一份：从假数据里拿掉 source=npm 的行，界面重扫后少一行。
+    // uninstallDelay 模拟 npm uninstall -g 的耗时窗口（真机十几秒），预览/截图删除中的
+    // 脉动与小转环用；不设或 0 就立即返回。
     uninstall_dsh_global: () => {
       seen("uninstall_dsh_global");
-      const before = (S.installedDsh || []).length;
-      S.installedDsh = (S.installedDsh || []).filter((item) => item.source !== "npm");
-      if (S.installedDsh.length === before) {
-        throw "npm 全局没有装 @deepseek-ai/dsh。";
-      }
-      return "已卸载全局安装的 DSH。";
+      const settle = () => {
+        const before = (S.installedDsh || []).length;
+        S.installedDsh = (S.installedDsh || []).filter((item) => item.source !== "npm");
+        if (S.installedDsh.length === before) {
+          throw "npm 全局没有装 @deepseek-ai/dsh。";
+        }
+        return "已卸载全局安装的 DSH。";
+      };
+      return S.uninstallDelay > 0
+        ? new Promise((done, fail) => setTimeout(() => { try { done(settle()); } catch (err) { fail(err); } }, S.uninstallDelay))
+        : settle();
     },
-    // 删掉 npx 缓存里的某一份：按 path 从假数据里拿掉那一行。
+    // 删掉 npx 缓存里的某一份：按 path 从假数据里拿掉那一行（uninstallDelay 同样生效）。
     delete_dsh_npx: (args) => {
       seen("delete_dsh_npx");
-      const before = (S.installedDsh || []).length;
-      S.installedDsh = (S.installedDsh || []).filter(
-        (item) => !(item.source === "npx" && item.path === args?.path),
-      );
-      if (S.installedDsh.length === before) {
-        throw "这一份 npx 安装已经不在缓存里了，刷新一下列表。";
-      }
-      return "已删掉 npx 缓存里的那一份。";
+      const settle = () => {
+        const before = (S.installedDsh || []).length;
+        S.installedDsh = (S.installedDsh || []).filter(
+          (item) => !(item.source === "npx" && item.path === args?.path),
+        );
+        if (S.installedDsh.length === before) {
+          throw "这一份 npx 安装已经不在缓存里了，刷新一下列表。";
+        }
+        return "已删掉 npx 缓存里的那一份。";
+      };
+      return S.uninstallDelay > 0
+        ? new Promise((done, fail) => setTimeout(() => { try { done(settle()); } catch (err) { fail(err); } }, S.uninstallDelay))
+        : settle();
     },
     profile_port_hint: () => S.portHint,
     // 环境列表：S.profiles 改成 [] 可预览「一个能起网页的环境都没有」；

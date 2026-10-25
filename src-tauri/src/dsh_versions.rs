@@ -38,6 +38,11 @@ pub struct InstalledDsh {
     pub path: String,
     /// 当前启动方式是否就用这一份——界面据此提示「卸载它之后需要换启动方式」。
     pub in_use: bool,
+    /// 安装方式（只有 npx 缓存里的份能区分）：`"pinned"` = 用选定的版本号装的，
+    /// `"auto"` = 自动最新（裸包名写法）装的。spec 读不到时 None，界面不标。
+    /// npm 全局没有这个概念，恒为 None。界面拿它防误删：删掉「自动最新」那份后，
+    /// 「自动最新」启动要重新下载。
+    pub install_method: Option<&'static str>,
 }
 
 /// 扫一遍本机：npx 缓存里的 + npm 全局装的，按版本从新到旧。
@@ -55,6 +60,7 @@ pub fn scan(config: &LaunchConfig) -> Result<Vec<InstalledDsh>, String> {
             version: item.version,
             source: "npx".to_string(),
             path: item.path,
+            install_method: install_method_of(&item.specs),
         });
     }
 
@@ -65,11 +71,30 @@ pub fn scan(config: &LaunchConfig) -> Result<Vec<InstalledDsh>, String> {
             version: read_version(&path),
             source: "npm".to_string(),
             path,
+            install_method: None,
         });
     }
 
     sort_newest_first(&mut installs);
     Ok(installs)
+}
+
+/// 从目录 manifest 记的 npx spec 推「这份是怎么装的」：
+/// 登记过钉版本写法（`@deepseek-ai/dsh@<具体版本号>`）就是「版本号安装」；
+/// 只有裸包名 / `@标签` 这类写法就是「自动最新」。spec 一条都读不到时给 None——
+/// 界面不标，宁可少说也不猜。
+fn install_method_of(specs: &[String]) -> Option<&'static str> {
+    if specs.is_empty() {
+        return None;
+    }
+    if specs
+        .iter()
+        .any(|spec| npx_cache::spec_version(spec).is_some())
+    {
+        Some("pinned")
+    } else {
+        Some("auto")
+    }
 }
 
 /// 卸载 npm 全局装的那一份，返回给用户看的结果文案。
@@ -228,7 +253,25 @@ mod tests {
             source: source.to_string(),
             path: path.to_string(),
             in_use: false,
+            install_method: None,
         }
+    }
+
+    #[test]
+    fn install_method_is_read_from_npx_specs() {
+        // 钉版本写法 → 版本号安装；只有裸包名 / @标签 → 自动最新；一条 spec 都没有 → 不标。
+        assert_eq!(
+            install_method_of(&["@deepseek-ai/dsh@0.2.1-rc.2".to_string()]),
+            Some("pinned")
+        );
+        assert_eq!(
+            install_method_of(&[
+                "@deepseek-ai/dsh".to_string(),
+                "@deepseek-ai/dsh@next".to_string()
+            ]),
+            Some("auto")
+        );
+        assert_eq!(install_method_of(&[]), None);
     }
 
     #[test]

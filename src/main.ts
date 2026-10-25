@@ -162,7 +162,7 @@ async function main(): Promise<void> {
     let cachedVersions: string[] = [];
     /** 其中钉版本写法（`dsh@<版本>`）启动能直接复用的部分（`npx_cached_versions.pinServed`）。 */
     let pinServedVersions: string[] = [];
-    /** 裸包名（自动最新）写法的缓存键在不在：决定这次启动要不要现下载（安装提示按它出）。 */
+    /** 自动最新（裸包名写法）的缓存键在不在（`npx_cached_versions.bareCached`）：决定启动提示按哪一相说。 */
     let bareCached = false;
     /** 版本下拉当前放出几个具体版本（不含首项与末尾的「更多…」）。 */
     let versionShown = VERSION_INITIAL_COUNT;
@@ -398,11 +398,11 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 选中版本「本机已经装过」的提示。按实际版本号判等（不看 latest 标签），
-     * 只提示不禁用——用户仍可照常启动。只有一种口径：缓存里已有这一版、但那份是
-     * 裸包名写法（不带 @版本）留下的，按 npx「每种写法各存一份缓存」的规则会再下一份。
-     * 钉版本写法留下的那份启动直接复用，不再出「不会再下载」的提示——「已缓存」徽章
-     * 已经说明，多一句是噪音（用户反馈后删掉）。
+     * 选中版本「选了会再下载」的提示。按实际版本号判等（不看 latest 标签），
+     * 只提示不禁用——用户仍可照常启动。只有一种情况值得说：缓存里已有这个版本号、
+     * 但那份是裸包名写法（自动最新）留下的，按 npx「每种写法各存一份缓存」的规则，
+     * 选钉版本启动还会再下一份。钉版本写法直接复用的情况不提示——「已缓存」徽章
+     * 已经说明了，再多一句「不会再下载」是噪音（用户反馈）。
      */
     function installedHint(): string {
       if (selectedVersion === null) {
@@ -844,6 +844,7 @@ async function main(): Promise<void> {
     const dshVersionsList = $<HTMLDivElement>("dsh-versions-list");
     const dshVersionsError = $<HTMLParagraphElement>("dsh-versions-error");
     const dshVersionsDup = $<HTMLSpanElement>("dsh-versions-dup");
+    const dshVersionsRefresh = $<HTMLButtonElement>("dsh-versions-refresh");
 
     // 分区导航：点左侧图标切右侧面板。选择记在 localStorage，壳重启、轻量模式重建窗口后沿用。
     // 不放 config.json：那是整份回写的设置文件，界面偏好丢了不影响功能。
@@ -3859,6 +3860,19 @@ async function main(): Promise<void> {
       npm: "npm 全局",
     };
 
+    /** 安装方式徽章（只有 npx 缓存里的份能区分，npm 全局没有这个概念）。
+     *  悬停气泡把「删了会怎样」一并说清：删掉对应写法的那份缓存后，那种启动方式要重新下载。 */
+    const DSH_METHOD_LABELS: Record<string, { label: string; tip: string }> = {
+      pinned: {
+        label: "版本号安装",
+        tip: "npx 命令里带 @版本号 装上的（选具体版本启动复用 dsh@版本号 写法的那份缓存）。删掉后，再选这个版本启动要重新下载。",
+      },
+      auto: {
+        label: "自动最新",
+        tip: "npx 裸包名写法（自动最新）装上的。删掉后，「自动最新版本」再启动要重新下载。",
+      },
+    };
+
     /** 一行的版本号：读不到版本时说清楚「读不到」，不要留空白让人以为坏了。 */
     function dshVersionText(entry: InstalledDsh): string {
       return entry.version === null ? "版本未知" : `v${entry.version}`;
@@ -3898,6 +3912,16 @@ async function main(): Promise<void> {
         source.textContent = DSH_SOURCE_LABELS[entry.source] ?? entry.source;
 
         main.append(version, source);
+
+        // 安装方式徽章（防误删的关键信息）：spec 读不到就不标，宁可少说也不猜。
+        const method = entry.installMethod === null ? undefined : DSH_METHOD_LABELS[entry.installMethod];
+        if (method) {
+          const methodBadge = document.createElement("span");
+          methodBadge.className = "badge badge-stopped dsh-version-source dsh-version-method has-tip";
+          methodBadge.textContent = method.label;
+          methodBadge.dataset.tip = method.tip;
+          main.append(methodBadge);
+        }
 
         if (entry.inUse) {
           const inUse = document.createElement("span");
@@ -4001,7 +4025,7 @@ async function main(): Promise<void> {
       yes.className = "dsh-version-uninstall danger";
       yes.textContent = entry.source === "npm" ? "确定卸载" : "确定删除";
       yes.addEventListener("click", () => {
-        void removeDshVersion(yes, entry);
+        void removeDshVersion(entry);
       });
       const no = document.createElement("button");
       no.type = "button";
@@ -4015,12 +4039,24 @@ async function main(): Promise<void> {
     }
 
     /** 删一份：npm 全局走 `npm uninstall -g`，npx 缓存直接删对应目录。 */
-    async function removeDshVersion(button: HTMLButtonElement, entry: InstalledDsh): Promise<void> {
+    async function removeDshVersion(entry: InstalledDsh): Promise<void> {
       if (dshVersionsBusy) return;
       dshVersionsBusy = true;
       dshVersionsError.classList.add("hidden");
       for (const item of dshVersionsList.querySelectorAll<HTMLButtonElement>("button")) {
         item.disabled = true;
+      }
+      // 删除中给这一行挂「正在移除」动画：npm uninstall -g 可能要十几秒，整行淡成脉动、
+      // 动作区换成小转环，让人看出在跑、不是卡死（95-integration.css）。成功后列表重画，
+      // 这行的节点整体退役；失败时在 catch 里摘掉动画、按待确认状态重画动作区。
+      const removingRow = dshVersionsList.children[dshVersionEntries.indexOf(entry)] as HTMLElement | undefined;
+      removingRow?.classList.add("dsh-version-removing");
+      const removingBox = removingRow?.querySelector<HTMLElement>(".dsh-version-actions") ?? null;
+      if (removingBox) {
+        const spin = document.createElement("span");
+        spin.className = "dsh-remove-spin";
+        spin.setAttribute("aria-hidden", "true");
+        removingBox.replaceChildren(spin);
       }
       try {
         // 成功不用弹提示条：列表重画后那一行没了，本身就是结果。
@@ -4037,10 +4073,8 @@ async function main(): Promise<void> {
       } catch (err) {
         dshVersionsError.textContent = String(err);
         dshVersionsError.classList.remove("hidden");
-        button.disabled = false;
-        for (const item of dshVersionsList.querySelectorAll<HTMLButtonElement>("button")) {
-          item.disabled = false;
-        }
+        removingRow?.classList.remove("dsh-version-removing");
+        repaintActionBoxes();
       } finally {
         dshVersionsBusy = false;
       }
@@ -4062,6 +4096,20 @@ async function main(): Promise<void> {
         renderIntegrationsSummary();
       }
     }
+
+    // 「重新扫描」方钮：手动再扫一遍本机（刚在别处装了/删了 DSH 时用）。
+    dshVersionsRefresh.addEventListener("click", () => {
+      void (async () => {
+        dshVersionsError.classList.add("hidden");
+        setSquareBusy(dshVersionsRefresh, true);
+        try {
+          await refreshDshVersions();
+          flashSquareDone(dshVersionsRefresh);
+        } finally {
+          setSquareBusy(dshVersionsRefresh, false);
+        }
+      })();
+    });
 
     /** 桥接插件：「打开备份目录」（安装/卸载的备份都落在这里）。 */
     btnBridgeBackups.addEventListener("click", () => {

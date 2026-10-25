@@ -131,3 +131,30 @@
   white-space: nowrap;
 }
 
+/* 安装方式徽章：复用 .dsh-version-source 的收紧尺寸，与来源标签并排。 */
+.dsh-version-method {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 删除中：整行淡成半透明并缓慢脉动，动作区换成一颗小转环（removeDshVersion 挂上、
+   失败回原状时摘掉）——npm uninstall -g 可能要十几秒，得让人看出在跑、不是卡死。 */
+.dsh-version-removing {
+  opacity: 0.55;
+  animation: dsh-removing-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes dsh-removing-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.dsh-remove-spin {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-top-color: currentColor;
+  animation: spin-turn var(--spin-ms) linear infinite;
+}
+

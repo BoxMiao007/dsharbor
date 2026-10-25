@@ -275,7 +275,13 @@ export function buildHtml(info: AppInfo): string {
   // 壳不再管理 npx 缓存（不统计占用、不自动清理），这里只回答「装了哪几份、装在哪、在不在用」。
   // 同一个版本装了好几份很常见（每次换 npx 参数都会新解一份），标题旁挂一枚黄色徽章点出来。
   const dshVersionsBody = `
-    ${colHead("DSH 版本", '<span id="dsh-versions-dup" class="badge badge-warn panel-badge hidden"></span>')}
+    ${colHead(
+      "DSH 版本",
+      '<span id="dsh-versions-dup" class="badge badge-warn panel-badge hidden"></span>' +
+        '<button id="dsh-versions-refresh" class="square-btn has-tip" type="button" data-tip="重新扫描本机已装的 DSH（npm 全局 + npx 缓存）" aria-label="重新扫描本机已装的 DSH">' +
+        squareBusyChrome(ICON_REFRESH) +
+        "</button>",
+    )}
     <p class="hint">本机装了哪些 dsh web：npx 缓存里的，与 <code>npm install -g</code> 装的。桌面版自带的 CLI 不算。</p>
     <div id="dsh-versions-list" class="version-list"><p class="hint">读取中…</p></div>
     <p id="dsh-versions-error" class="error hidden"></p>

@@ -227,6 +227,12 @@ export interface InstalledDsh {
   path: string;
   /** 当前启动方式是否就用这一份。 */
   inUse: boolean;
+  /**
+   * 安装方式（只有 npx 缓存里的份能区分）：`"pinned"` = 用选定的版本号装的，
+   * `"auto"` = 自动最新（裸包名写法）装的；spec 读不到时为 null，界面不标。
+   * npm 全局没有这个概念，恒为 null。
+   */
+  installMethod: "pinned" | "auto" | null;
 }
 
 /**
