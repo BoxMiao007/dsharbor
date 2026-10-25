@@ -207,8 +207,10 @@ const state = {
   pluginUpdateFail: [],
   /** 跨环境搬运（plugin_install_into）的人工延时（毫秒）：给行内转环一个确定的忙态窗口。 */
   pluginTransferDelay: 0,
-  /** 右键菜单「检查各环境」的人工延时（毫秒）：预览菜单先弹「正在检查各环境…」再换列表。 */
+  /** 右键菜单「检查目标环境」的人工延时（毫秒）：预览菜单先弹「正在检查目标环境…」再换列表。 */
   pluginTargetsDelay: 0,
+  /** 让这些目标环境在菜单里显示「读不到」（模拟读 package.json 失败），默认空。 */
+  pluginTargetsError: [],
   /** 版本列表查询的人工延时：给方钮忙态（环形 spinner / 完成勾）测一个确定的忙态窗口。 */
   registryDelay: 0,
   /** 插件清单（`plugin_list`）的人工延时（毫秒，按「每条命令」计）：给骨架屏一个确定的
@@ -797,7 +799,7 @@ window.__mockUnimplemented = [];
               depsInstalled: !!p.depsInstalled,
               installed: !!row,
               installedVersion: row ? row.current || (upd && upd.current) || null : null,
-              error: null,
+              error: (S.pluginTargetsError || []).indexOf(p.name) >= 0 ? "读不到环境里的 package.json" : null,
             };
           });
       return S.pluginTargetsDelay > 0

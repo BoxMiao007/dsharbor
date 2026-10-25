@@ -2280,35 +2280,44 @@ async function main(): Promise<void> {
      *
      * 三种都让这一行不可点，但说法不同——「已装」要带版本让用户知道那边是什么版本，
      * 另外两种要说清是环境的问题而不是这次不许搬。
+     *
+     * 顺序上「读不到」先于「已装」：读环境失败时后端可能拿不到准确的已装状态，
+     * 这时说「已装」是猜的，不如直说读不到。
      */
     function targetNoteHtml(row: InstallTarget): string {
+      if (row.error) {
+        return '<span class="plugin-target-note">读不到</span>';
+      }
       if (row.installed) {
         const text = row.installedVersion ? `已装 v${row.installedVersion}` : "已装";
-        return `<span class="plugin-target-note" title="${escapeHtml(`环境「${row.profile}」已经有这个插件。想换版本请到这个环境自己的「更新」里做。`)}">${escapeHtml(text)}</span>`;
-      }
-      if (row.error) {
-        return `<span class="plugin-target-note" title="${escapeHtml(row.error)}">读不到</span>`;
+        return `<span class="plugin-target-note">${escapeHtml(text)}</span>`;
       }
       if (!row.depsInstalled) {
-        return `<span class="plugin-target-note">缺依赖</span>`;
+        return '<span class="plugin-target-note">缺依赖</span>';
       }
       return "";
     }
 
-    /** 可以装进去的环境列表：已装 / 缺依赖 / 读不到的行置灰，其余可点。 */
+    /**
+     * 可以装进去的环境列表：已装 / 缺依赖 / 读不到的行置灰，其余可点。
+     *
+     * 提示走 `.has-tip` 自绘气泡而不是原生 `title`：置灰的按钮在 Chromium / WebView2 上
+     * 不弹原生 title，而「为什么不能选、想换版本去哪」恰恰只在这些行上才有意义。
+     * 气泡一律向下弹（`tip-down`），菜单本身已经贴在鼠标位置，向上弹会被窗口顶边裁掉。
+     */
     function pluginMenuTargetsHtml(plugin: string, targets: InstallTarget[]): string {
       return targets
         .map((row) => {
           const label = escapeHtml(row.profile);
-          const blocked = row.installed || row.error !== null || !row.depsInstalled;
-          const tip = row.installed
-            ? `环境「${row.profile}」已经有这个插件，不重复装`
-            : row.error
-              ? `读环境「${row.profile}」出错：${row.error}`
+          const blocked = row.error !== null || row.installed || !row.depsInstalled;
+          const tip = row.error
+            ? `读环境「${row.profile}」出错：${row.error}`
+            : row.installed
+              ? `环境「${row.profile}」已经有这个插件（${row.installedVersion ? `已装 v${row.installedVersion}` : "已装"}）。想换版本请到环境「${row.profile}」里更新。`
               : row.depsInstalled
                 ? `把「${plugin}」也装进环境「${row.profile}」`
                 : `环境「${row.profile}」还没装依赖（先给它「安装依赖」再搬）`;
-          return `<button type="button" role="menuitem" data-plugin-target="${label}" title="${escapeHtml(tip)}"${blocked ? " disabled" : ""}>${label}${targetNoteHtml(row)}</button>`;
+          return `<button type="button" role="menuitem" class="has-tip tip-down" data-tip="${escapeHtml(tip)}" data-plugin-target="${label}"${blocked ? " disabled" : ""}><span class="plugin-target-name">${label}</span>${targetNoteHtml(row)}</button>`;
         })
         .join("");
     }
@@ -2331,7 +2340,7 @@ async function main(): Promise<void> {
      *
      * 各环境的现状每次现问（不缓存）：插件随时可能在别的环境里被装上或卸掉，
      * 缓存一个「能搬」的结论然后失败，比多问一次的代价大得多。菜单先带着
-     * 「正在检查各环境…」弹出来，结果回来就地换成环境列表。
+     * 「正在检查目标环境…」弹出来，结果回来就地换成环境列表。
      */
     async function openPluginMenu(event: MouseEvent, plugin: string): Promise<void> {
       closeEnvMenu();
@@ -2361,7 +2370,7 @@ async function main(): Promise<void> {
         });
       } catch (err) {
         pluginMenuHint.classList.add("hidden");
-        pluginMenuEmpty.textContent = `读不到各环境现状：${firstLine(String(err))}`;
+        pluginMenuEmpty.textContent = `读不到目标环境现状：${firstLine(String(err))}`;
         pluginMenuEmpty.classList.remove("hidden");
         placePluginMenu(event);
         return;
@@ -2609,14 +2618,6 @@ async function main(): Promise<void> {
       },
       true,
     );
-    // Esc 收起两个浮出菜单（Alt+Tab 里那种「按了没反应」最容易出现在这里）。
-    document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      closeEnvMenu();
-      closePluginMenu();
-    });
     // 点菜单与浮窗以外的地方收起菜单。
     document.addEventListener("click", () => {
       closeEnvMenu();
@@ -3520,13 +3521,14 @@ async function main(): Promise<void> {
         });
       }
       // 右键一行：把这个插件装进别的环境。清单是整块重铺的，所以每次铺完重新绑。
-      // 官方内置包与桥接插件不给这个入口（后端 `install_into` 也会拒），免得点了才知道不行。
+      // 官方内置包与桥接插件不给这个入口（后端 `install_into` 也会拒），但右键**仍然要拦掉**——
+      // 不拦的话 WebView2 会弹出系统自带的网页右键菜单，那更让人困惑。
       for (const row of pluginList.querySelectorAll<HTMLElement>("[data-row]")) {
-        if (row.dataset.transferable !== "yes") {
-          continue;
-        }
         row.addEventListener("contextmenu", (event) => {
           event.preventDefault();
+          if (row.dataset.transferable !== "yes") {
+            return;
+          }
           void openPluginMenu(event, row.dataset.row ?? "");
         });
       }

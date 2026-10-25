@@ -515,7 +515,7 @@ export function buildHtml(info: AppInfo): string {
     </div>
     <div id="plugin-menu" class="env-menu hidden" role="menu" aria-label="把插件装进另一个环境">
       <p id="plugin-menu-title" class="plugin-menu-title">装进另一个环境</p>
-      <p id="plugin-menu-hint" class="plugin-menu-hint hidden">正在检查各环境…</p>
+      <p id="plugin-menu-hint" class="plugin-menu-hint hidden">正在检查目标环境…</p>
       <p id="plugin-menu-empty" class="plugin-menu-empty hidden">没有别的环境可装（先新建或复制一个环境）</p>
       <div id="plugin-menu-targets" class="plugin-menu-targets"></div>
     </div>

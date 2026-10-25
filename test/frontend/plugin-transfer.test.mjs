@@ -112,6 +112,9 @@ function readMenu(page) {
         label: btn.dataset.pluginTarget,
         disabled: btn.disabled,
         note: btn.querySelector(".plugin-target-note")?.textContent ?? null,
+        // 提示走自绘气泡（.has-tip + data-tip），不是原生 title——置灰按钮不弹原生 title。
+        tip: btn.dataset.tip ?? null,
+        hasTip: btn.classList.contains("has-tip"),
       })),
     };
   });
@@ -170,6 +173,10 @@ test("右键插件行列出其它环境；缺依赖与已装的置灰；点别�
     const desktop = menu.targets.find((item) => item.label === "desktop");
     assert.equal(desktop.disabled, true, "目标环境已有同名插件就不能再装");
     assert.equal(desktop.note, "已装 v2.1.0", "重复的那一行要写清已装版本");
+    // 置灰行用不了原生 title（Chromium / WebView2 对 disabled 元素不弹），必须走自绘气泡。
+    assert.equal(desktop.hasTip, true, "置灰行也要能弹出说明，不能靠原生 title");
+    assert.match(desktop.tip, /环境「desktop」已经有这个插件/, "提示要说清为什么不能选");
+    assert.match(desktop.tip, /想换版本请到环境「desktop」里更新/, "提示要指出该去哪个环境换版本");
     assert.equal(menu.targets.find((item) => item.label === "lab").disabled, false, "装过依赖的环境可选");
 
     // 点菜单以外的地方：收起。
@@ -273,6 +280,24 @@ test("换环境再切回来，更新进度与行级状态都还在", { skip: ski
     );
     const done = await readProgress(page);
     assert.match(done.sum, /已更新 3\/3/, `收尾汇总应写完成数，实际：${done.sum}`);
+  } finally {
+    await page.close();
+  }
+});
+
+test("读不到现状的环境只说「读不到」，不冒充「已装」", { skip: skipReason }, async () => {
+  // desktop 里预置了 billion-context，但让后端报读失败：这时「已装」是猜的，应让位给「读不到」。
+  const page = await openPluginPanel(browser, { pluginTargetsError: ["desktop"] });
+  try {
+    await rightClickRow(page, "billion-context");
+    await page.waitForFunction(
+      () => document.querySelectorAll("#plugin-menu-targets [data-plugin-target]").length > 0,
+      { timeout: 3000 },
+    );
+    const desktop = (await readMenu(page)).targets.find((item) => item.label === "desktop");
+    assert.equal(desktop.disabled, true, "读不到现状的环境不能选");
+    assert.equal(desktop.note, "读不到", `读失败时不该写「已装」，实际：${desktop.note}`);
+    assert.match(desktop.tip, /读环境「desktop」出错/, "提示要带上读失败的原因");
   } finally {
     await page.close();
   }
