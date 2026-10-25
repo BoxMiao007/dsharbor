@@ -566,7 +566,10 @@ pub(crate) fn spawn_line_reader<R: Read + Send + 'static>(
                 Ok(count) => count,
             };
             carry.push_str(&decoder.feed(&buffer[..count]));
-            while let Some(index) = carry.find('\n') {
+            // \n 与 \r 都算行边界：npm/npx 的下载进度条用 \r 在同一行上反复重画、从不换行，
+            // 只认 \n 的话进度会一直攒在 carry 里，直到命令结束才整段落日志（表现为
+            // 「日志要等跑完才出现」）。\r\n 会在 \r 处先断一次，剩下的 \n 产出空行被跳过。
+            while let Some(index) = carry.find(['\n', '\r']) {
                 let raw: String = carry.drain(..=index).collect();
                 let line = raw.trim_end_matches(['\r', '\n']).to_string();
                 if !line.is_empty() {
@@ -617,5 +620,44 @@ pub(crate) fn kill_tree(pid: u32) -> Result<(), String> {
         } else {
             Err(format!("kill 返回失败（{status}），进程可能已自行退出"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    /** 喂一段字节给 spawn_line_reader，收齐它落下的每一行。 */
+    fn lines(input: &[u8]) -> Vec<String> {
+        let (tx, rx) = mpsc::channel();
+        spawn_line_reader(std::io::Cursor::new(input.to_vec()), move |line| {
+            tx.send(line).expect("收行通道不该先断");
+        });
+        let mut out = Vec::new();
+        // 读线程在 EOF 后结束、tx 随之 drop；通道空了且已断开即收齐。
+        loop {
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(line) => out.push(line),
+                Err(mpsc::RecvTimeoutError::Timeout) => panic!("读线程两秒内没结束"),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn carriage_return_counts_as_line_boundary_so_progress_shows_up_live() {
+        // npm 下载进度条的形状：用 \r 反复重画同一行，结束时才 \n。
+        let got = lines(b"Downloading 10%\rDownloading 25%\rdone\r\nnext\n");
+        assert_eq!(
+            got,
+            vec!["Downloading 10%", "Downloading 25%", "done", "next"]
+        );
+    }
+
+    #[test]
+    fn long_line_without_newline_still_lands_at_eof() {
+        assert_eq!(lines(b"tail without newline"), vec!["tail without newline"]);
     }
 }
