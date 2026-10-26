@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 use dsharbor_core::launch::{self, LaunchConfig};
 use dsharbor_core::plugin_switch;
+use dsharbor_core::plugin_switch::PluginItem;
 use dsharbor_core::plugin_update::{self, PluginUpdateItem};
 use dsharbor_core::prefs::DownloadSource;
 use serde::Serialize;
@@ -787,6 +788,26 @@ fn check_one(
     assemble(name, current, latest)
 }
 
+/// 检查更新的扫描名单：插件卡上那几行里，属于更新范围的那些包名。
+///
+/// 名字直接从插件卡同一份清单（`plugin_switch::bare_items`）里挑，而不是自己另读
+/// 一遍 `dsh.profile.bundles`——两处口径分开写必然漂：DSH 停用一个插件只把它从
+/// 组合包列表里摘掉、包与依赖都留在磁盘上，只看组合包列表会让停用中的插件在界面
+/// 上既没有版本号也没有「更新」按钮；反过来，多查了卡上没有的行，可更新徽章的
+/// 计数又会和看得见的行对不上。
+///
+/// 保留的条件与界面一致：可开关（有挂载点，官方内置骨架包没有）、不是桥接插件
+/// （归「桥接插件」浮窗管）、且在 [`plugin_update::in_update_scope`] 范围内。
+fn update_scan_names(items: &[PluginItem]) -> Vec<String> {
+    items
+        .iter()
+        .filter(|item| {
+            item.switchable && !item.bridge && plugin_update::in_update_scope(&item.name)
+        })
+        .map(|item| item.name.clone())
+        .collect()
+}
+
 /// 检查一个环境全部第三方插件的更新，按登记顺序返回一行一个结果。
 ///
 /// 会话级缓存优先（`force` 绕过）：同一插件本次使用会话内只在第一次进插件卡
@@ -794,6 +815,8 @@ fn check_one(
 /// 不在清单里（[`plugin_update::in_update_scope`]），整表读不到清单时直接报错。
 /// 查询最多 [`CHECK_CONCURRENCY`] 路并发跑（见该常量的安全论证），结果仍按
 /// 清单登记顺序返回。
+///
+/// 扫描范围见 [`update_scan_names`]：**停用的插件也查**，断网或私有包失败按行记原因。
 pub fn list(
     app: &tauri::AppHandle,
     config: &LaunchConfig,
@@ -803,19 +826,15 @@ pub fn list(
 ) -> Result<Vec<PluginUpdateItem>, String> {
     let target = Target::of(config);
     let dir = plugin::profile_dir(&target, profile)?;
-    let manifest = plugin::read_file(&target, &plugin::join_path(&target, &dir, "package.json"))
-        .map_err(|err| format!("读不到环境「{profile}」的清单：{err}"))?;
-    let bundles = plugin_switch::bundle_names(&manifest)
-        .map_err(|err| format!("环境「{profile}」的清单读不出来：{err}"))?;
+    let scoped = update_scan_names(
+        &crate::plugin_switch::bare_items(&target, &dir)
+            .map_err(|err| format!("读不到环境「{profile}」的插件清单：{err}"))?,
+    );
     // 下载源用界面这次传的（它才是权威），代理用已保存的设置——与官方版本查询同一份口径。
     let prefs = crate::settings::load(app).prefs;
     let env = crate::proxy::child_env(&prefs, source);
     let runtime = launch::runtime_of(config);
-    let names: Vec<&str> = bundles
-        .iter()
-        .filter(|name| plugin_update::in_update_scope(name))
-        .map(String::as_str)
-        .collect();
+    let names: Vec<&str> = scoped.iter().map(String::as_str).collect();
     let mut slots: Vec<Option<PluginUpdateItem>> = vec![None; names.len()];
     // 共享引用先定形：move 闭包挪走的只是这些引用，target/dir/env 本体留在原地。
     let target = &target;
@@ -846,6 +865,7 @@ pub fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dsharbor_core::profiles::BRIDGE_PLUGIN;
 
     #[test]
     fn digest_prefers_the_error_block_over_progress_lines() {
@@ -1083,6 +1103,47 @@ mod tests {
             check_cache_key(&launch::Runtime::Default, DownloadSource::Mirror, "dsh-two"),
             "换包名要分开缓存"
         );
+    }
+
+    // ---- 检查更新的扫描名单 ------------------------------------------------
+
+    fn scan_item(name: &str, switchable: bool, bridge: bool) -> PluginItem {
+        PluginItem {
+            name: name.to_string(),
+            entries: if switchable {
+                vec![format!("{name}-row")]
+            } else {
+                Vec::new()
+            },
+            enabled: true,
+            bridge,
+            manual: false,
+            switchable,
+            description: None,
+            home: None,
+        }
+    }
+
+    #[test]
+    fn update_scan_names_keep_disabled_plugins_and_skip_unmanaged_ones() {
+        // `enabled: false` 就是停用（DSH 只把它移出组合包列表，包还在磁盘上）：
+        // 这种行照样要查更新，否则界面上那一行没有版本号也没有「更新」。
+        let items = vec![
+            scan_item("dsh-on", true, false),
+            scan_item("dsh-off", true, false),
+            scan_item("@deepseek-ai/dsh-base", false, false),
+            scan_item(BRIDGE_PLUGIN, true, true),
+        ];
+        assert_eq!(
+            update_scan_names(&items),
+            vec!["dsh-on".to_string(), "dsh-off".to_string()],
+            "停用的照查；官方骨架包（不可开关）与桥接插件跳过"
+        );
+    }
+
+    #[test]
+    fn update_scan_names_on_an_empty_list_is_empty() {
+        assert!(update_scan_names(&[]).is_empty());
     }
 
     // ---- 「目标环境装过没有」的判定 ------------------------------------------

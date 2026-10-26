@@ -221,18 +221,24 @@ pub fn items(
 ) -> Result<Vec<PluginItem>, String> {
     let target = Target::of(config);
     let dir = profile_dir(&target, profile)?;
-    let manifest = read_manifest(&target, &dir)?;
+    let items = bare_items(&target, &dir)?;
+    Ok(with_descriptions(&target, &dir, items))
+}
+
+/// [`items`] 的轻量版：同样的名字集合与开关状态，但不读每个包的说明与主页。
+///
+/// 检查更新只要「有哪些插件、能不能开关、是不是桥接」，不需要说明文字；照
+/// [`items`] 走会给每个插件多读一次 `package.json`（WSL 下是一条条 `wsl.exe`），
+/// 白白拖慢检查。两边都从同一个 [`bare_items`] 取名，口径不会漂。
+pub(crate) fn bare_items(target: &Target, dir: &str) -> Result<Vec<PluginItem>, String> {
+    let manifest = read_manifest(target, dir)?;
     let names = known_names(
         &plugin_switch::bundle_names(&manifest)?,
         &plugin_switch::dependency_names(&manifest)?,
     );
-    let mounts = read_mounts(&target, &dir, &names)?;
-    let patch = read_patch_layer(&target, &dir)?;
-    Ok(with_descriptions(
-        &target,
-        &dir,
-        plugin_switch::items(&manifest, &mounts, &patch)?,
-    ))
+    let mounts = read_mounts(target, dir, &names)?;
+    let patch = read_patch_layer(target, dir)?;
+    plugin_switch::items(&manifest, &mounts, &patch)
 }
 
 /// 开关一个插件：自动备份 → 改写组合包列表（顺带清掉旧版壳的托管块遗留）→
