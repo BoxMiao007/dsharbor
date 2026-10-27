@@ -176,6 +176,12 @@ async fn restart_dsh(app: tauri::AppHandle, config: LaunchConfig) -> Result<(), 
     .map_err(|err| format!("后台重启 DSH 失败：{err}"))?
 }
 
+/// 「已有会话在运行」的拒绝文案。
+///
+/// 单独提成常量是为了在写 `spawn_error` 时能认出它：这不是故障，而是「你的这一下
+/// 没生效，因为已经有一份在跑」。界面按原文展示，所以这句话不要再改字。
+const SESSION_BUSY: &str = "已有 DSH 会话在运行，请先停止再启动。";
+
 /// 拉起 DSH 并把新会话放进共享状态（启动命令与托盘「重启 DSH」共用）。
 fn spawn_session(
     app: &tauri::AppHandle,
@@ -195,7 +201,7 @@ fn spawn_session(
             .map_err(|_| "内部状态异常".to_string())?;
         if let Some(existing) = guard.as_mut() {
             if existing.is_alive() {
-                return Err("已有 DSH 会话在运行，请先停止再启动。".into());
+                return Err(SESSION_BUSY.into());
             }
         }
         *guard = None;
@@ -241,7 +247,13 @@ fn spawn_session(
         }
     };
     if let Ok(mut slot) = state.spawn_error.lock() {
-        *slot = result.as_ref().err().cloned();
+        // 「已有会话在运行」是拒绝，不是故障：会话好好在跑，把它当失败写进去只会
+        // 让界面长期挂一条红字（这个值平时只在下次成功启动时才清）。连点两次重启
+        // 就是这个情形——后到的那次被前一次刚拉起的会话挡住。
+        *slot = match result.as_ref().err() {
+            Some(err) if err.as_str() == SESSION_BUSY => None,
+            other => other.cloned(),
+        };
     }
     if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
