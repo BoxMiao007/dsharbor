@@ -23,6 +23,7 @@
  * 行为（拖动 / 缩放 / 贴靠）、真 DSH 进程与托盘、真实的 npx / WSL 启动。
  */
 import { createServer } from "node:http";
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 
@@ -998,7 +999,28 @@ const types = {
   ".woff2": "font/woff2",
 };
 
-createServer((req, res) => {
+/**
+ * 端口被占用时尽量报出「谁占着它」：Windows 上用 netstat 找监听该端口的 PID，
+ * 拿不到就只说原因。这只是给人看的诊断线索，查不到不算错误。
+ */
+function describePortOwner(portNumber) {
+  if (process.platform !== "win32") {
+    return "本脚本只实现了 Windows 的 netstat 查询，查不到占用进程";
+  }
+  try {
+    const out = execFileSync("netstat", ["-ano"], { encoding: "utf8", timeout: 3000, windowsHide: true });
+    const pattern = new RegExp(`:${portNumber}(?=\\s)`);
+    const row = out.split(/\r?\n/).find((line) => /LISTENING/i.test(line) && pattern.test(line));
+    const pid = row ? row.trim().split(/\s+/).pop() : "";
+    return pid
+      ? `占用进程 PID ${pid}（netstat -ano 查到的监听进程；需要的话 taskkill /PID ${pid} /F）`
+      : "netstat 里没找到监听该端口的进程";
+  } catch (err) {
+    return `查不到占用进程（netstat 执行失败：${err?.message ?? err}）`;
+  }
+}
+
+const server = createServer((req, res) => {
   const path = decodeURIComponent((req.url || "/").split("?")[0]);
   const file = join(dist, path === "/" ? "index.html" : path);
   if (!file.startsWith(dist)) {
@@ -1012,7 +1034,30 @@ createServer((req, res) => {
   } catch {
     res.writeHead(404).end("not found");
   }
-}).listen(port, "127.0.0.1", () => {
+});
+
+// 端口被占（最常见：上一次预览台没退干净，或测试占着同一端口）时，别只留一个未捕获的
+// 'error' 事件栈——打印一句能照着处理的说明。退出码必须保持 1：前端测试在子进程提前
+// 退出时拼的是「预览台退出（code 1）」，改成 0 会让它们把失败当成成功。
+// 用 process.exitCode 而不是 process.exit(1)：Windows 下 stdout/stderr 走管道时
+// 立即 exit 可能把刚写的这句说明截掉，设退出码后让事件循环自然收尾才能保证打出。
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    console.error(`端口 ${port} 已被占用：${describePortOwner(port)}。换一个 --port，或先结束那个进程。`);
+  } else {
+    console.error(`预览台启动失败：${err && err.message ? err.message : String(err)}`);
+  }
+  process.exitCode = 1;
+  // 已 listen 成功后才出的错（罕见，如 EMFILE）要主动收掉监听，否则事件循环不空、进程不退出；
+  // 没 listen 上时 close() 是空操作。
+  try {
+    server.close();
+  } catch {
+    // close 自己失败也没关系：退出码已经设好，事件循环空下来就会退。
+  }
+});
+
+server.listen(port, "127.0.0.1", () => {
   console.log(`假数据预览：http://127.0.0.1:${port}/mock.html （Ctrl-C 停）`);
   console.log("本机若有 http_proxy，用 curl 检查端口要加 --noproxy '*'，否则会拿到代理的 502");
 });
