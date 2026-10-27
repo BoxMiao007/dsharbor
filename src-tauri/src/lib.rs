@@ -124,27 +124,56 @@ fn start_session(
     Ok(())
 }
 
+/// 托盘「重启 DSH」的执行体：先停掉现有会话，再按最近一次成功启动的配置拉起。
+///
+/// 单独抽出来是为了让「停止失败就整体失败」只写一遍（见 `stop_session` 的注释），
+/// 界面侧的「重启」按钮走的是另一条路径（停止 + 用界面当前配置拉起）。
+fn restart_session(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
+    stop_session(state)?;
+    let config = state
+        .last_config
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .unwrap_or_else(|| settings::load(app).launch);
+    let profile = launch::PROFILE_NAME.to_string();
+    // 端口覆盖层造不出来只影响「用哪个端口」，不值得让重启整体失败（既有行为）。
+    let launcher_args = profile::port_overlay_args(app, &config, &profile).unwrap_or_default();
+    spawn_session(app, state, &config, &profile, &launcher_args)
+}
+
 /// 拉起 DSH。已有会话在运行时拒绝，残留的已退出会话会先清掉。
+///
+/// async + spawn_blocking：这条路径里有读 profile（WSL 下要起 `wsl.exe`）、
+/// 取系统代理（Windows 上跑 `reg.exe`）与端口探测（TCP），同步命令会把这段
+/// 全算在主线程上——点「启动」后窗口就不响应了。`State` 不能跨线程，
+/// 所以闭包里用 `AppHandle` 重新取状态。
 #[tauri::command]
-fn start_dsh(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    config: LaunchConfig,
-) -> Result<(), String> {
-    start_session(&app, &state, &config)
+async fn start_dsh(app: tauri::AppHandle, config: LaunchConfig) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        start_session(&app, &state, &config)
+    })
+    .await
+    .map_err(|err| format!("后台启动 DSH 失败：{err}"))?
 }
 
 /// 重启 DSH：先停掉现有会话再按传入配置拉起（界面「重启 DSH」按钮）。
 /// 与托盘「重启 DSH」共用停止 + 拉起路径；区别：托盘的复用最近一次成功启动的
 /// 配置（`ShellAction::RestartDsh`），界面的用当前界面配置。
+///
+/// 停止失败直接报错、不再拉起：半停状态下开新会话，端口还被旧进程占着，
+/// 新进程起不来，壳会把它认成「外部运行中」——用户看到「重启成功」，
+/// 实际旧进程还在跑，之后既停不掉也重启不掉。
 #[tauri::command]
-fn restart_dsh(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    config: LaunchConfig,
-) -> Result<(), String> {
-    stop_session(&state);
-    start_session(&app, &state, &config)
+async fn restart_dsh(app: tauri::AppHandle, config: LaunchConfig) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        stop_session(&state)?;
+        start_session(&app, &state, &config)
+    })
+    .await
+    .map_err(|err| format!("后台重启 DSH 失败：{err}"))?
 }
 
 /// 拉起 DSH 并把新会话放进共享状态（启动命令与托盘「重启 DSH」共用）。
@@ -479,11 +508,42 @@ async fn profile_port_hint(
 }
 
 /// 停掉当前会话（无会话时无事发生）。
-fn stop_session(state: &AppState) {
-    if let Ok(mut guard) = state.session.lock() {
-        if let Some(mut session) = guard.take() {
-            let _ = session.stop();
-        }
+///
+/// 失败要返回给调用方，不能吞：停止超时意味着旧 DSH 可能还活着占着端口。
+/// 吞掉之后最坏的结果是「重启报成功、旧进程还在跑」，壳从此既停不掉也重启不掉
+/// （再次启动会走壳外探测分支，把它当成别人的 DSH）。失败时句柄仍留在状态里，
+/// 用户还能再点一次停止。
+fn stop_session(state: &AppState) -> Result<(), String> {
+    let Ok(mut guard) = state.session.lock() else {
+        return Err("内部状态异常：会话状态锁已损坏，无法停止 DSH".to_string());
+    };
+    let Some(session) = guard.as_mut() else {
+        // 本来就没有会话：既然结果是「没有 DSH 在跑」，之前留下的失败红字也该收掉。
+        drop(guard);
+        clear_spawn_error(state);
+        return Ok(());
+    };
+    session.stop()?;
+    guard.take();
+    drop(guard);
+    // 停止成功：之前那条「停止失败，进程可能仍在运行」的红字必须撤掉，
+    // 否则它会一直挂在界面上（状态轮询每次都把它显示出来），用户以为问题还在。
+    clear_spawn_error(state);
+    Ok(())
+}
+
+/// 清掉 `spawn_error`（问题已经不成立了）。
+fn clear_spawn_error(state: &AppState) {
+    if let Ok(mut slot) = state.spawn_error.lock() {
+        *slot = None;
+    }
+}
+
+/// 把失败原因记进 `spawn_error`：托盘/退出这类没有回执通道的入口靠它把话说出去，
+/// 界面下一次状态轮询（1 秒一次）会把这句话显示出来。
+fn remember_spawn_error(state: &AppState, message: String) {
+    if let Ok(mut slot) = state.spawn_error.lock() {
+        *slot = Some(message);
     }
 }
 
@@ -997,37 +1057,58 @@ fn ensure_session_stopped(
 /// 安装桥接插件（备份 → 官方 plugin add → 校验 bundles 登记）。
 /// 桥接恒装在启动用的 web 环境：它是 DSH 注入头的必需项，
 /// 而其它环境只是「为了管理插件才被选中」，装不装桥接不影响任何事。
+///
+/// async + spawn_blocking：这条命令要跑 `pnpm add`（首次可能几十秒到几分钟），
+/// 同步命令会把整段等待压在主线程上，安装期间窗口消息无人处理
+/// （拖动/最小化/托盘/状态轮询全停）。
 #[tauri::command]
-fn bridge_install(
+async fn bridge_install(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
-    plugin::install(&app, &config, launch::PROFILE_NAME)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
+        plugin::install(&app, &config, launch::PROFILE_NAME)
+    })
+    .await
+    .map_err(|err| format!("后台安装桥接插件失败：{err}"))?
 }
 
 /// 卸载桥接插件（备份 → 官方 plugin remove → 校验 bundles 摘除）。
+///
+/// async + spawn_blocking，理由同 [`bridge_install`]。
 #[tauri::command]
-fn bridge_uninstall(
+async fn bridge_uninstall(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
     config: LaunchConfig,
 ) -> Result<plugin::BridgeOutcome, String> {
-    ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
-    plugin::uninstall(&app, &config, launch::PROFILE_NAME)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
+        plugin::uninstall(&app, &config, launch::PROFILE_NAME)
+    })
+    .await
+    .map_err(|err| format!("后台卸载桥接插件失败：{err}"))?
 }
 
 /// 从备份恢复 web 环境的 profile 文件（回滚）。
+///
+/// async + spawn_blocking：要读写四个 profile 文件，WSL 目标下每个文件都是一次
+/// `wsl.exe` 往返（秒级），同步命令会让窗口发僵。
 #[tauri::command]
-fn bridge_restore(
+async fn bridge_restore(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
     config: LaunchConfig,
     backup_dir: String,
 ) -> Result<String, String> {
-    ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
-    plugin::restore(&app, &config, launch::PROFILE_NAME, &backup_dir)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        ensure_session_stopped(&state, "操作桥接插件", launch::PROFILE_NAME)?;
+        plugin::restore(&app, &config, launch::PROFILE_NAME, &backup_dir)
+    })
+    .await
+    .map_err(|err| format!("后台恢复桥接插件备份失败：{err}"))?
 }
 
 /// 查询桥接插件在启动用 web 环境中的状态（顶部那颗徽章看的就它）。
@@ -1440,22 +1521,20 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                 }
             }
             ShellAction::RestartDsh => {
-                stop_session(&state);
-                let config = state
-                    .last_config
-                    .lock()
-                    .ok()
-                    .and_then(|slot| slot.clone())
-                    .unwrap_or_else(|| settings::load(app).launch);
-                let profile = launch::PROFILE_NAME.to_string();
-                let launcher_args =
-                    profile::port_overlay_args(app, &config, &profile).unwrap_or_default();
-                if let Err(err) = spawn_session(app, &state, &config, &profile, &launcher_args) {
-                    eprintln!("重启 DSH 失败：{err}");
+                // 停止失败就到此为止：旧进程可能还占着端口，这时再 spawn 只会
+                // 得到一个「外部运行中」的假状态（托盘动作没有回执，用户看不到
+                // 任何失败提示）。原因写进 spawn_error，界面状态轮询会显示出来。
+                if let Err(err) = restart_session(app, &state) {
+                    eprintln!("[dsharbor] 托盘「重启 DSH」失败：{err}");
+                    remember_spawn_error(&state, format!("托盘「重启 DSH」失败：{err}"));
                 }
             }
             ShellAction::StopDshAndExit => {
-                stop_session(&state);
+                // 退出是用户的明确意图，不能因为停止失败就卡住不退出；
+                // 但原因必须留下——杀不掉的 DSH 会变成孤儿进程占着端口。
+                if let Err(err) = stop_session(&state) {
+                    eprintln!("[dsharbor] 完全退出前停止 DSH 失败：{err}");
+                }
                 app.exit(0);
             }
         }
@@ -1546,11 +1625,16 @@ pub(crate) fn open_browser_or_launcher(app: &tauri::AppHandle) {
 
 /// 托盘「停止 DSH」：停掉当前会话（DSH 界面窗口不关，登录链接随之失效）。
 /// 与界面「停止」按钮同源；经 async 派发，避免在同步菜单回调里做进程操作。
+///
+/// 托盘动作没有回执通道：失败原因写进 `spawn_error`，界面下一次状态轮询会显示。
 pub(crate) fn tray_stop_dsh(app: &tauri::AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Some(state) = app.try_state::<AppState>() {
-            stop_session(&state);
+            if let Err(err) = stop_session(&state) {
+                eprintln!("[dsharbor] 托盘「停止 DSH」失败：{err}");
+                remember_spawn_error(&state, format!("托盘「停止 DSH」失败：{err}"));
+            }
         }
     });
 }
@@ -1805,9 +1889,12 @@ pub fn run() {
                     api.prevent_exit();
                 } else if let Some(state) = app_handle.try_state::<AppState>() {
                     // 真正的退出：撤销还挂着的延迟销毁，兜底确保 DSH 已停
-                    //（正常路径在 StopDshAndExit 里已停过）。
+                    //（正常路径在 StopDshAndExit 里已停过）。进程要退了，所以
+                    // 这里只记日志——但必须留下可读原因：没杀掉的 DSH 会变成孤儿。
                     cancel_light_destroy(app_handle);
-                    stop_session(&state);
+                    if let Err(err) = stop_session(&state) {
+                        eprintln!("[dsharbor] 退出时停止 DSH 失败：{err}");
+                    }
                 }
             }
             _ => {}
