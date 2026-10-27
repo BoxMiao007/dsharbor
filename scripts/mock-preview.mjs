@@ -183,9 +183,10 @@ const state = {
       { name: "billion-context", entries: ["bili-native"], current: "2.1.0", enabled: true, bridge: false, manual: false, switchable: true, description: "十亿级上下文记忆检索：压缩、折叠与按需还原历史对话。", home: "https://github.com/ranxianglei/billion-context" },
     ],
   },
-  /** 插件更新检查（`plugin_updates_list`）的假数据：按环境名分组，形状照后端
-      PluginUpdateItem（camelCase）。web 里安排了「可更新、停用也可更新（两行）、已最新、
-      查不到」五种行，把行内渲染的分支都预览到；没配的环境返回 []。 */
+  /** 插件更新检查的假数据：按环境名分组，形状照后端 PluginUpdateItem（camelCase）。
+      web 里安排了「可更新、停用也可更新（两行）、已最新、查不到」五种行，把行内渲染的
+      分支都预览到；lab / desktop 各留一条可更新，用来预览「检查更新按钮查所有环境」时
+      环境卡上的微标；没配的环境（headless）返回 []。 */
   pluginUpdates: {
     web: [
       { name: "billion-context", current: "2.1.0", target: "2.3.0-rc.1", error: null, hasUpdate: true },
@@ -194,6 +195,13 @@ const state = {
       { name: "dsh-free-search", current: null, target: null, error: "读取插件「dsh-free-search」的版本列表失败：E404", hasUpdate: false },
       { name: "dsh-local-tools", current: "0.9.0", target: null, error: "读取插件「dsh-local-tools」的版本列表失败：E404", hasUpdate: false },
       { name: "dsh-skill-mcp-panel", current: "1.0.0", target: "1.1.0", error: null, hasUpdate: true },
+    ],
+    lab: [
+      { name: "dsh-context", current: "0.4.1", target: "0.4.2", error: null, hasUpdate: true },
+    ],
+    desktop: [
+      { name: "dsh-skill-mcp-panel", current: "1.0.0", target: "1.1.0", error: null, hasUpdate: true },
+      { name: "dsh-local-tools", current: "0.9.0", target: null, error: "读取插件「dsh-local-tools」的版本列表失败：E404", hasUpdate: false },
     ],
   },
   /** 假命令的人工延时（毫秒，URL ?state= 可覆盖）：给「操作互斥」的接缝测试一个
@@ -693,8 +701,21 @@ window.__mockUnimplemented = [];
     },
     // ---- 插件更新 --------------------------------------------------------------
     plugin_updates_list: (a) => {
-      seen("plugin_updates_list:" + (a && a.name ? a.name : "?") + "/" + (a && a.force ? "force" : "cached"));
+      seen("plugin_updates_list:" + (a && a.name ? a.name : "?"));
       const rows = (S.pluginUpdates && S.pluginUpdates[a && a.name]) || [];
+      return S.pluginCheckDelay > 0
+        ? new Promise((done) => setTimeout(() => done(rows), S.pluginCheckDelay))
+        : rows;
+    },
+    // 「检查更新」按钮：真后端枚举所有环境、绕过会话缓存强制重查（同一包只查一次
+    // 网络的去重在 Rust 侧）。预览只按环境各回一份假清单，形状照 ProfileUpdates。
+    plugin_updates_check_all: () => {
+      seen("plugin_updates_check_all");
+      const rows = (S.profiles || []).map((profile) => ({
+        profile: profile.name,
+        items: (S.pluginUpdates && S.pluginUpdates[profile.name]) || [],
+        error: null,
+      }));
       return S.pluginCheckDelay > 0
         ? new Promise((done) => setTimeout(() => done(rows), S.pluginCheckDelay))
         : rows;

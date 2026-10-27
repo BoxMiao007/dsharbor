@@ -1,7 +1,7 @@
 /**
  * 前端接缝测试：插件更新（检查结果行内渲染 + 单个/全部更新 + 工具条互斥）。
  *
- * 只测四个接缝——插件卡里更新功能露在界面上的部分：
+ * 只测五个接缝——插件卡里更新功能露在界面上的部分：
  *  1. 检查过后行内出现版本号；有更新的行是「旧版本 → 新版本（绿徽章）」加「更新」文字按钮
  *     （目标版本在新徽章与按钮气泡里，含预发布）；registry 查不到的行按两种样子亮出错误——
  *     版本读不出的亮「版本未知」、读得出的在版本号旁亮「检查失败」，原因都收进 title；
@@ -14,6 +14,8 @@
  *     按钮置灰、徽章归零。
  *  4. 工具条是两枚图标方钮（悬停气泡写功能名）；任一动作进行中，检查/全部更新/行内
  *     更新/开关全部锁死（互斥），发起动作的那枚图标转圈，做完恢复。
+ *  5. 「检查更新」按钮查的是**所有环境**（一次批量命令），结果按环境分别落成环境卡
+ *     右上的可更新数微标；当前环境的行内清单照旧刷新。
  *
  * 跑在普通浏览器里（假后端预览台 scripts/mock-preview.mjs），不起 Tauri 窗口。
  * 前置：先 `pnpm build`（预览台读 dist/index.html）。
@@ -131,6 +133,22 @@ function readPanelState(page) {
   }));
 }
 
+/** 读每张环境卡右上角那枚「可更新数」微标（没有微标是 null）。 */
+function readEnvBadges(page) {
+  return page.evaluate(() => {
+    const badge = (env) => {
+      const el = document.querySelector(`#profile-cards [data-env="${env}"] .btn-badge`);
+      return el ? el.textContent : null;
+    };
+    return {
+      web: badge("web"),
+      lab: badge("lab"),
+      desktop: badge("desktop"),
+      headless: badge("headless"),
+    };
+  });
+}
+
 let preview = null;
 let browser = null;
 
@@ -227,7 +245,7 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
     assert.deepEqual(
       layout.icons,
       [
-        { hasSvg: true, label: "检查更新", tip: "检查更新：重新对比 registry 上的最新版本", title: null },
+        { hasSvg: true, label: "检查更新", tip: "检查更新：重新对比所有环境的插件在 registry 上的最新版本", title: null },
         { hasSvg: true, label: "全部更新", tip: "全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）", title: null },
       ],
       "工具条应是两枚图标钮：功能名走自绘气泡（data-tip，以 aria-label 开头），且无原生 title",
@@ -237,6 +255,50 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
     assert.match(state.summary, /3 个可更新/, `徽章应报 3 个可更新，实际「${state.summary}」`);
     assert.equal(state.allDisabled, false, "有可更新插件时「全部更新」应可用");
     assert.equal(state.updateButtons, 3, "行内应有 3 枚更新按钮");
+  } finally {
+    await page.close();
+  }
+});
+
+test("「检查更新」查所有环境：每张环境卡各自亮出可更新数，当前环境的清单照旧刷新", { skip: skipReason }, async () => {
+  const page = await openPluginPanel(browser);
+  try {
+    // 进卡自动查只查正在管理的 web，其余环境卡还没查过、不该有微标。
+    const before = await readEnvBadges(page);
+    assert.equal(before.web, "3", "当前环境自动查过，微标是它的可更新数");
+    assert.equal(before.lab, null, "没查过的环境不该有微标");
+    assert.equal(before.desktop, null, "没查过的环境不该有微标");
+
+    await page.click("#btn-plugin-check-updates");
+    await page.waitForFunction(
+      () => {
+        const badge = (env) => document.querySelector(`#profile-cards [data-env="${env}"] .btn-badge`);
+        return badge("lab")?.textContent === "1" && badge("desktop")?.textContent === "1";
+      },
+      { timeout: 5000 },
+    );
+
+    const after = await readEnvBadges(page);
+    assert.equal(after.web, "3", "web 的可更新数不该被这次检查改掉");
+    assert.equal(after.lab, "1", "lab 查完应亮出它自己的可更新数");
+    assert.equal(after.desktop, "1", "desktop 查完应亮出它自己的可更新数");
+    assert.equal(after.headless, null, "没有可更新插件的环境不挂微标");
+
+    const calls = await page.evaluate(() => ({
+      all: window.__MOCK_STATE__.calls["plugin_updates_check_all"] ?? 0,
+      single: Object.entries(window.__MOCK_STATE__.calls)
+        .filter(([key]) => key.startsWith("plugin_updates_list:"))
+        .reduce((sum, [, value]) => sum + value, 0),
+    }));
+    assert.equal(calls.all, 1, "按钮应只发一次批量检查命令，而不是逐环境各发一次");
+    assert.equal(calls.single, 1, "单环境命令只该有进卡那一次自动查，按钮不再逐环境调用");
+
+    // 当前环境的行内清单照旧刷新：版本号与可更新数都还在。
+    const state = await readPanelState(page);
+    assert.match(state.summary, /3 个可更新/, `web 的汇总徽章应保持不变，实际「${state.summary}」`);
+    const updatable = await readUpdateCell(page, "billion-context");
+    assert.equal(updatable.verNew, "v2.3.0-rc.1", "web 的行内版本号应照旧显示");
+    assert.equal(updatable.btnText, "更新", "web 的行内更新按钮应照旧可用");
   } finally {
     await page.close();
   }

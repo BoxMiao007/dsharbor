@@ -4,8 +4,9 @@
  *  1. 「本机已经装过」提示（#npx-installed-hint，.hint.notice）正文限一行：
  *     white-space 是 nowrap、放不下时省略号，全文挂 data-tip 走悬停气泡；
  *  2. 用户主动点的「检查更新」完成后，右下角出一条 info toast，文案与日志同句
- *     （「已重新检查插件更新：N 个可更新…」）；toast 不是 ok 也不是 error——
- *     检查本身没有成败之分，数量才是信息。
+ *     （「已重新检查 N 个环境的插件更新：共 M 个可更新…」）；查的是所有环境，
+ *     所以回执带环境数。toast 不是 ok 也不是 error——检查本身没有成败之分，
+ *     数量才是信息（个别环境读不到时才收成失败口径）。
  *
  * 跑在普通浏览器里（假后端预览台 scripts/mock-preview.mjs），不起 Tauri 窗口。
  * 前置：先 `pnpm build`（预览台读 dist/index.html）。
@@ -149,7 +150,11 @@ test("「检查更新」完成后右下角回执一条 info toast，文案带可
     const el = document.querySelector("#toasts .toast:not(.is-leaving)");
     return { text: el?.querySelector(".toast-body")?.textContent ?? "", kind: el?.dataset.kind };
   });
-  assert.match(toast.text, /已重新检查插件更新：\d+ 个可更新/, `回执文案不对：「${toast.text}」`);
+  assert.match(
+    toast.text,
+    /已重新检查 \d+ 个环境的插件更新：共 \d+ 个可更新/,
+    `回执文案不对：「${toast.text}」`,
+  );
   assert.equal(toast.kind, "info", `检查更新是数量汇报，语气应是 info，实际 ${toast.kind}`);
   await page.close();
 });

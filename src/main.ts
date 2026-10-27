@@ -3234,6 +3234,15 @@ async function main(): Promise<void> {
       hasUpdate: boolean;
     }
 
+    /** 与 Rust 侧 `plugin_update::ProfileUpdates` 对应：一次「检查更新」里某个环境的结果。 */
+    interface ProfileUpdates {
+      profile: string;
+      /** 这个环境查到的清单；读不到清单时是 null（原因在 `error`）。 */
+      items: PluginUpdateItem[] | null;
+      /** 这个环境自己的失败原因；查到清单时为 null。 */
+      error: string | null;
+    }
+
     /** 与 Rust 侧 `plugin_update::UpdateOutcome` 对应。 */
     interface UpdateOutcome {
       ok: boolean;
@@ -3782,7 +3791,7 @@ async function main(): Promise<void> {
         // 更新清单跟环境走：已经查过（快照里有 checked）就只是重画，不重复查——
         // 后端有会话级缓存但重查仍要一次 IPC；第一进这张卡才自动查一次。
         if (!pluginUpdatesChecked) {
-          void refreshPluginUpdates(target.name, false);
+          void refreshPluginUpdates(target.name);
         }
         return;
       }
@@ -3790,84 +3799,133 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 检查一次更新：进插件卡自动查（每个环境一次，后端会话缓存兜着），
-     *  「检查更新」按钮强制重查。失败只提示，不打断开关插件等其它动作。
-     *  强制重查期间锁住插件卡的全部操作（互斥），自动查不锁——它是背景动作。
-     *  返回这一轮是否成功（强制重查成功才落勾，见 #29）；换了环境丢弃结果算失败。
+     * 把查回来的清单落进这个环境自己那份快照（期间切走也不能丢，切回来时
+     * `restorePluginUpdate` 直接看到版本号），并按这份清单刷新环境卡的可更新数微标；
+     * 它还就是正在显示的那个环境时，一并刷新插件列表与汇总徽章。
      */
-    async function refreshPluginUpdates(name: string, force: boolean): Promise<boolean> {
-      if (!name || (force && pluginCheckBusy)) {
-        return false;
+    function applyPluginUpdateItems(name: string, items: PluginUpdateItem[]): void {
+      const snapshot = ensurePluginUpdateSnapshot(name);
+      snapshot.items = items;
+      snapshot.checked = true;
+      // 环境卡微标跟着这份清单走：按环境分别计数，不是全局总数。
+      pluginUpdateCounts.set(name, items.filter((item) => item.hasUpdate).length);
+      renderEnvCards();
+      if (prefs.profile !== name) {
+        return; // 期间换了环境：数字已记好，但不在当前界面上刷
       }
-      if (force) {
-        pluginCheckBusy = true;
-        // 重新检查＝新一轮：上一轮的行级状态与收尾文案都作废，免得旧结果冒充新结果。
-        // 只作废这个环境自己那份——别的环境正在跑的更新不能被牵连。
-        const snapshot = ensurePluginUpdateSnapshot(name);
-        snapshot.round = resetPluginProgress(name);
-        if (prefs.profile === name) {
-          pluginRound = snapshot.round;
-          renderPluginList();
-          renderPluginProgress();
-        }
+      pluginUpdateItems = items;
+      pluginUpdatesChecked = true;
+      // 这一轮的行级状态以新查到的清单为准，旧轮次的残留不再挂着。
+      pluginRound = snapshot.round;
+      renderPluginList();
+      renderPluginSummary();
+    }
+
+    /** 重新检查＝新一轮：作废这个环境上一轮的行级状态与收尾文案，免得旧结果冒充新结果。
+     *  只动这个环境自己那份——别的环境正在跑的更新不能被牵连；它正被显示时立刻重画。 */
+    function beginPluginUpdateCheck(name: string): void {
+      const snapshot = ensurePluginUpdateSnapshot(name);
+      snapshot.round = resetPluginProgress(name);
+      if (prefs.profile === name) {
+        pluginRound = snapshot.round;
+        renderPluginList();
+        renderPluginProgress();
       }
-      let ok = false;
+    }
+
+    /**
+     * 进插件卡自动查、更新完收尾重查：查一个环境的更新清单（走后端会话缓存，
+     * 不强制刷新网络）。结果落进这个环境自己那份快照；失败只提示，不打断开关插件
+     * 等其它动作——它是背景动作，不写日志回执的成套反馈。
+     */
+    async function refreshPluginUpdates(name: string): Promise<void> {
+      if (!name) {
+        return;
+      }
       try {
         const items = await invoke<PluginUpdateItem[]>("plugin_updates_list", {
           config: collectConfig(),
           name,
           source: prefs.downloadSource,
-          force,
         });
-        // 结果先写进「这个环境」自己那份清单：期间换了环境也不能丢，
-        // 切回来时（`restorePluginUpdate`）就能直接看到这次查到的版本号。
-        const snapshot = ensurePluginUpdateSnapshot(name);
-        snapshot.items = items;
-        snapshot.checked = true;
-        // 环境卡微标跟着这份清单走：按环境分别计数，不是全局总数。
-        pluginUpdateCounts.set(name, items.filter((item) => item.hasUpdate).length);
-        renderEnvCards();
-        if (prefs.profile !== name) {
-          return false; // 期间换了环境：数字已记好，但不在当前界面上刷
-        }
-        pluginUpdateItems = items;
-        pluginUpdatesChecked = true;
-        // 这一轮的行级状态以新查到的清单为准，旧轮次的残留不再挂着。
-        pluginRound = snapshot.round;
-        ok = true;
-        renderPluginList();
-        renderPluginSummary();
-        const pending = items.filter((item) => item.hasUpdate).length;
-        const broken = items.filter((item) => item.error).length;
-        // 只有用户主动点的「检查更新」才写日志：进卡自动查是背景动作，结果就在
-        // 行内版本号与徽章上，写日志只会让每次开卡都冒出一条没动作的未读。
-        if (force) {
-          const summary =
-            `已重新检查插件更新：${pending} 个可更新` + (broken ? `、${broken} 个查不到` : "");
-          logAction(summary);
-          // 用户主动点的「检查更新」完成后右下角也回执一条（自动查是背景动作，不打扰）。
-          showToast(summary, "info");
-        }
+        applyPluginUpdateItems(name, items);
       } catch (err) {
         if (prefs.profile === name) {
           setPluginNote(`检查插件更新失败：${String(err)}`);
         }
         logAction(`检查插件更新失败：${String(err)}`);
-        // 只有用户主动点的「检查更新」失败才弹 toast：自动查失败安静落日志。
-        if (force) {
-          showToast(`检查插件更新失败：${String(err)}`, "error");
+      }
+    }
+
+    /**
+     * 「检查更新」按钮：强制重查**所有环境**（后端枚举环境、绕过会话缓存真发网络）。
+     *
+     * 某个环境读不到清单只算它自己失败，不牵连其余环境；各环境的结果分别落进
+     * 自己的快照与环境卡微标，正在显示的那个环境同时刷新插件列表。跑完前插件卡
+     * 整体互斥，跑完落勾 0.9 秒（与其余方钮同一套反馈）。
+     */
+    async function checkAllPluginUpdates(): Promise<void> {
+      if (pluginCheckBusy) {
+        return;
+      }
+      pluginCheckBusy = true;
+      // 重新检查＝新一轮：界面上能看到的每个环境，上一轮的行级状态与收尾文案都作废。
+      for (const item of profileList) {
+        beginPluginUpdateCheck(item.name);
+      }
+      renderPluginList();
+      let ok = false;
+      try {
+        const rows = await invoke<ProfileUpdates[]>("plugin_updates_check_all", {
+          config: collectConfig(),
+          source: prefs.downloadSource,
+        });
+        if (rows.length === 0) {
+          // 一个环境都没有（例如环境清单还没读出来）：没什么可查的，别报成失败。
+          logAction("已重新检查插件更新：没有可检查的环境");
+          showToast("没有可检查的环境：先启动一次 DSH 会创建默认的 web 环境。", "info");
+          return;
         }
+        let pending = 0;
+        let broken = 0;
+        const failed: string[] = [];
+        for (const row of rows) {
+          if (!row.items) {
+            failed.push(row.profile);
+            const reason = row.error ?? "未知原因";
+            // 正在看的这个环境要当场说清原因；别的环境靠日志——切过去也看不到那条说明。
+            if (prefs.profile === row.profile) {
+              setPluginNote(`检查环境「${row.profile}」的插件更新失败：${reason}`);
+            }
+            logAction(`检查环境「${row.profile}」的插件更新失败：${reason}`);
+            continue;
+          }
+          applyPluginUpdateItems(row.profile, row.items);
+          pending += row.items.filter((item) => item.hasUpdate).length;
+          broken += row.items.filter((item) => item.error).length;
+        }
+        ok = failed.length < rows.length;
+        const counts = `共 ${pending} 个可更新` + (broken ? `、${broken} 个查不到` : "");
+        const summary = !ok
+          ? `检查插件更新失败：${rows.length} 个环境都没查到（「${failed.join("」「")}」）`
+          : failed.length === 0
+            ? `已重新检查 ${rows.length} 个环境的插件更新：${counts}`
+            : `已重新检查 ${rows.length - failed.length}/${rows.length} 个环境的插件更新：${counts}（「${failed.join("」「")}」读取失败）`;
+        logAction(summary);
+        // 用户主动点的那一下才有回执；个别环境失败也照实写进同一句，不另弹一条。
+        showToast(summary, ok ? "info" : "error");
+      } catch (err) {
+        setPluginNote(`检查插件更新失败：${String(err)}`);
+        logAction(`检查插件更新失败：${String(err)}`);
+        showToast(`检查插件更新失败：${String(err)}`, "error");
       } finally {
-        if (force) {
-          pluginCheckBusy = false;
-          renderPluginList();
-        }
+        pluginCheckBusy = false;
+        renderPluginList();
       }
       // 用户主动点的「检查更新」成功后落一个勾停 0.9s；自动查（背景动作）不闪反馈。
-      if (force && ok) {
+      if (ok) {
         flashSquareDone(btnPluginCheckUpdates);
       }
-      return ok;
     }
 
     /**
@@ -3960,7 +4018,7 @@ async function main(): Promise<void> {
             );
           }
         }
-        await refreshPluginUpdates(target, false);
+        await refreshPluginUpdates(target);
       } catch (err) {
         if (prefs.profile === target) {
           setPluginNote(`更新插件失败：${String(err)}`);
@@ -4118,12 +4176,12 @@ async function main(): Promise<void> {
       void runEnvAction(() => installDeps(prefs.profile), { output: true });
     });
 
-    // 「检查更新」：强制重查（后端绕过会话缓存真发网络）；跑完前插件卡整体互斥。
+    // 「检查更新」：强制重查所有环境（后端绕过会话缓存真发网络）；跑完前插件卡整体互斥。
     btnPluginCheckUpdates.addEventListener("click", () => {
       if (!prefs.profile || pluginBusy || pluginActionBusy()) {
         return;
       }
-      void refreshPluginUpdates(prefs.profile, true);
+      void checkAllPluginUpdates();
     });
 
     // 「全部更新」：批量走后端逐个升级（plugin=null），汇总由后端算好带回来。

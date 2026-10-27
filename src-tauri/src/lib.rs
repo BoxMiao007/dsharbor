@@ -1402,8 +1402,9 @@ async fn plugin_toggle(
 
 /// 检查某个环境里第三方插件的更新（当前版本 → registry 目标版本）。
 ///
-/// 只读 + 会话级缓存：每个（环境, 包名）本次使用会话只在第一次进插件卡时查一次，
-/// `force=true`（「检查更新」按钮）绕过缓存重查。官方内置骨架包与桥接插件不参与。
+/// 只读 + 会话级缓存：每个（环境, 包名）本次使用会话只在第一次进插件卡时查一次；
+/// 界面「检查更新」按钮要拿最新结论时走 [`plugin_updates_check_all`]。
+/// 官方内置骨架包与桥接插件不参与。
 /// 下载源随请求传（与 `query_dsh_versions` 同一个理由：界面才是权威）。
 #[tauri::command]
 async fn plugin_updates_list(
@@ -1411,15 +1412,28 @@ async fn plugin_updates_list(
     config: LaunchConfig,
     name: String,
     source: String,
-    force: Option<bool>,
 ) -> Result<Vec<dsharbor_core::plugin_update::PluginUpdateItem>, String> {
     let source = parse_source_arg(source);
-    let force = force.unwrap_or(false);
-    tauri::async_runtime::spawn_blocking(move || {
-        plugin_update::list(&app, &config, &name, source, force)
-    })
-    .await
-    .map_err(|err| format!("后台检查插件更新失败：{err}"))?
+    tauri::async_runtime::spawn_blocking(move || plugin_update::list(&app, &config, &name, source))
+        .await
+        .map_err(|err| format!("后台检查插件更新失败：{err}"))?
+}
+
+/// 强制重查**所有环境**的插件更新（「检查更新」按钮）。
+///
+/// 环境由后端自己枚举，逐个环境各回一份清单：某个环境读不到清单只算它自己失败，
+/// 不牵连其余环境。同一包在多个环境里的目标版本只查一次网络（见
+/// [`plugin_update::list_all`]）。
+#[tauri::command]
+async fn plugin_updates_check_all(
+    app: tauri::AppHandle,
+    config: LaunchConfig,
+    source: String,
+) -> Result<Vec<plugin_update::ProfileUpdates>, String> {
+    let source = parse_source_arg(source);
+    tauri::async_runtime::spawn_blocking(move || plugin_update::list_all(&app, &config, source))
+        .await
+        .map_err(|err| format!("后台检查所有环境的插件更新失败：{err}"))?
 }
 
 /// 更新某个环境里的第三方插件：`plugin` 有值更新单个，`None` 更新全部有更新的
@@ -1940,6 +1954,7 @@ pub fn run() {
             plugin_list,
             plugin_toggle,
             plugin_updates_list,
+            plugin_updates_check_all,
             plugin_update,
             plugin_install_into,
             plugin_install_targets,

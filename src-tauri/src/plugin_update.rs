@@ -102,8 +102,8 @@ fn check_cache_key(runtime: &launch::Runtime, source: DownloadSource, name: &str
 /// 检查结果的会话缓存（键见 [`check_cache_key`]，值 = 目标版本或失败原因）。
 ///
 /// 不设时间 TTL：同一插件本次使用会话内只在第一次进插件卡时查一次，之后由
-/// 「检查更新」按钮 `force` 重查；更新成功后把对应条目挪掉，让收尾重查真的
-/// 发网络、看到装好的新版本。
+/// 「检查更新」按钮走 [`list_all`] 强制重查一遍；更新成功后把对应条目挪掉，让
+/// 收尾重查真的发网络、看到装好的新版本。
 type CheckCache = HashMap<String, Result<Option<String>, String>>;
 
 fn check_cache() -> &'static Mutex<CheckCache> {
@@ -466,7 +466,7 @@ pub fn update(
             })
         }
         None => {
-            let rows = list(app, config, profile, source, false)?;
+            let rows = list(app, config, profile, source)?;
             let worklist: Vec<String> = rows
                 .iter()
                 .filter(|item| item.has_update)
@@ -762,6 +762,43 @@ fn chunk_bounds(total: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// 按 [`CHECK_CONCURRENCY`] 分块并发地对每一项跑一次 `work`，结果按输入顺序返回。
+///
+/// 块内串行、块间并发：同时活着的 worker 数有上界，不会因为插件多就起几十条
+/// `npm view`。空输入不建线程；每个槽位只被一个 worker 写过，最后按输入顺序装配。
+fn run_concurrently<T, R, F>(items: &[T], work: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> R + Sync,
+{
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let mut slots: Vec<Option<R>> = (0..items.len()).map(|_| None).collect();
+    std::thread::scope(|scope| {
+        let mut pending_items = items;
+        let mut pending_slots = &mut slots[..];
+        for (start, end) in chunk_bounds(items.len()) {
+            let width = end - start;
+            let (item_chunk, rest_items) = pending_items.split_at(width);
+            let (slot_chunk, rest_slots) = pending_slots.split_at_mut(width);
+            pending_items = rest_items;
+            pending_slots = rest_slots;
+            let work = &work;
+            scope.spawn(move || {
+                for (item, slot) in item_chunk.iter().zip(slot_chunk) {
+                    *slot = Some(work(item));
+                }
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|slot| slot.expect("并发区间恰好盖满每个槽位"))
+        .collect()
+}
+
 /// 检查单个插件（并发 worker 里跑的那份工作）：读已装版本 + 查目标版本
 /// （会话缓存优先）+ 装配结果行。包名不安全（正常登记不会这样）就亮错误行，
 /// 不拿它拼路径、拼命令。
@@ -772,7 +809,6 @@ fn check_one(
     source: DownloadSource,
     env: &[(String, String)],
     name: &str,
-    force: bool,
 ) -> PluginUpdateItem {
     if let Err(err) = plugin_update::validate_package_name(name) {
         return PluginUpdateItem {
@@ -784,7 +820,7 @@ fn check_one(
         };
     }
     let current = read_installed(target, dir, name);
-    let latest = query_latest(runtime, source, env, name, force);
+    let latest = query_latest(runtime, source, env, name, false);
     assemble(name, current, latest)
 }
 
@@ -808,11 +844,48 @@ fn update_scan_names(items: &[PluginItem]) -> Vec<String> {
         .collect()
 }
 
+/// 一个环境里要检查的包名：读清单，再按 [`update_scan_names`] 挑出更新范围里的。
+fn scan_names(target: &Target, dir: &str) -> Result<Vec<String>, String> {
+    Ok(update_scan_names(&crate::plugin_switch::bare_items(
+        target, dir,
+    )?))
+}
+
+/// 按 [`CHECK_CONCURRENCY`] 并发检查一个环境的这批包名，结果按名单顺序返回。
+fn check_names(
+    target: &Target,
+    dir: &str,
+    runtime: &launch::Runtime,
+    source: DownloadSource,
+    env: &[(String, String)],
+    names: &[String],
+) -> Vec<PluginUpdateItem> {
+    run_concurrently(names, |name| {
+        check_one(target, dir, runtime, source, env, name)
+    })
+}
+
+/// 各环境名单里出现过的包名，去重并保留首次出现的顺序。
+///
+/// 目标版本只跟运行时、下载源与 registry 有关，与环境无关（会话缓存的键也不含
+/// 环境名，见 [`check_cache_key`]）：同一批插件装在多个环境里时网络只该查一次。
+fn unique_names(scans: &[&[String]]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for names in scans {
+        for name in *names {
+            if !out.iter().any(|seen| seen == name) {
+                out.push(name.clone());
+            }
+        }
+    }
+    out
+}
+
 /// 检查一个环境全部第三方插件的更新，按登记顺序返回一行一个结果。
 ///
-/// 会话级缓存优先（`force` 绕过）：同一插件本次使用会话内只在第一次进插件卡
-/// 时查一次，之后由界面「检查更新」按钮强制重查。官方内置骨架包与桥接插件
-/// 不在清单里（[`plugin_update::in_update_scope`]），整表读不到清单时直接报错。
+/// 会话级缓存优先：同一插件本次使用会话内只在第一次进插件卡时查一次；要拿最新
+/// 结论走 [`list_all`]（界面「检查更新」按钮）。官方内置骨架包与桥接插件不在
+/// 清单里（[`plugin_update::in_update_scope`]），整表读不到清单时直接报错。
 /// 查询最多 [`CHECK_CONCURRENCY`] 路并发跑（见该常量的安全论证），结果仍按
 /// 清单登记顺序返回。
 ///
@@ -822,43 +895,97 @@ pub fn list(
     config: &LaunchConfig,
     profile: &str,
     source: DownloadSource,
-    force: bool,
 ) -> Result<Vec<PluginUpdateItem>, String> {
     let target = Target::of(config);
     let dir = plugin::profile_dir(&target, profile)?;
-    let scoped = update_scan_names(
-        &crate::plugin_switch::bare_items(&target, &dir)
-            .map_err(|err| format!("读不到环境「{profile}」的插件清单：{err}"))?,
-    );
+    let names = scan_names(&target, &dir)
+        .map_err(|err| format!("读不到环境「{profile}」的插件清单：{err}"))?;
     // 下载源用界面这次传的（它才是权威），代理用已保存的设置——与官方版本查询同一份口径。
     let prefs = crate::settings::load(app).prefs;
     let env = crate::proxy::child_env(&prefs, source);
     let runtime = launch::runtime_of(config);
-    let names: Vec<&str> = scoped.iter().map(String::as_str).collect();
-    let mut slots: Vec<Option<PluginUpdateItem>> = vec![None; names.len()];
-    // 共享引用先定形：move 闭包挪走的只是这些引用，target/dir/env 本体留在原地。
-    let target = &target;
-    let dir = &dir;
-    let env = &env;
-    std::thread::scope(|scope| {
-        let mut pending_names = &names[..];
-        let mut pending_slots = &mut slots[..];
-        for (start, end) in chunk_bounds(names.len()) {
-            let width = end - start;
-            let (name_chunk, rest_names) = pending_names.split_at(width);
-            let (slot_chunk, rest_slots) = pending_slots.split_at_mut(width);
-            pending_names = rest_names;
-            pending_slots = rest_slots;
-            scope.spawn(move || {
-                for (name, slot) in name_chunk.iter().zip(slot_chunk) {
-                    *slot = Some(check_one(target, dir, runtime, source, env, name, force));
-                }
-            });
-        }
-    });
-    Ok(slots
+    Ok(check_names(&target, &dir, runtime, source, &env, &names))
+}
+
+/// 一次「检查所有环境」里某个环境的结果（界面按环境分别落可更新数徽标）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUpdates {
+    /// 环境名；顺序与 [`plugin::list_profiles`] 枚举到的一致。
+    pub profile: String,
+    /// 这个环境查到的更新清单；读不到清单时是 `None`（原因在 `error`）。
+    pub items: Option<Vec<PluginUpdateItem>>,
+    /// 这个环境自己的失败原因；查到清单时为 `None`。
+    pub error: Option<String>,
+}
+
+/// 「检查所有环境」第一阶段（读名单）的结果：环境名 + 目录与要查的包名，或读不到的原因。
+type PreparedEnv = (String, Result<(String, Vec<String>), String>);
+
+/// 强制重查**所有环境**的插件更新（界面「检查更新」按钮发起的一次动作）。
+///
+/// 与 [`list`] 的差别有两点：
+///  1. 环境由后端自己枚举（界面看到的那份清单可能刚变过），逐个环境各出一行
+///     结果；某个环境读不到清单只算它自己失败，不牵连其余环境；
+///  2. 目标版本与环境无关，所以先对所有环境去重后的包名**各强制查一次**并写进
+///     会话缓存，再逐环境装配行。否则 N 个环境会把同一批 `npm view` 重复发 N
+///     遍——十几个插件乘几个环境，界面要空转明显更久。这也是会话缓存键不含
+///     环境名的同一前提（见 [`check_cache_key`]）。
+pub fn list_all(
+    app: &tauri::AppHandle,
+    config: &LaunchConfig,
+    source: DownloadSource,
+) -> Result<Vec<ProfileUpdates>, String> {
+    let listing = plugin::list_profiles(config)?;
+    if !listing.supported {
+        return Ok(Vec::new());
+    }
+    let target = Target::of(config);
+    // 第一阶段：读每个环境的名单（磁盘读；WSL 目标下每条是一次 wsl.exe）。
+    // 读不到的环境记下原因，不再参与后面的网络查询。
+    let prepared: Vec<PreparedEnv> = listing
+        .profiles
         .into_iter()
-        .map(|slot| slot.expect("并发区间恰好盖满每个槽位"))
+        .map(|profile| {
+            let name = profile.name;
+            let scan = plugin::profile_dir(&target, &name)
+                .map_err(|err| format!("读不到环境「{name}」的目录：{err}"))
+                .and_then(|dir| {
+                    scan_names(&target, &dir)
+                        .map(|names| (dir, names))
+                        .map_err(|err| format!("读不到环境「{name}」的插件清单：{err}"))
+                });
+            (name, scan)
+        })
+        .collect();
+    // 下载源与代理口径同 [`list`]。
+    let prefs = crate::settings::load(app).prefs;
+    let env = crate::proxy::child_env(&prefs, source);
+    let runtime = launch::runtime_of(config);
+    // 第二阶段：所有环境去重后的包名各强制查一次，结果写进会话缓存。
+    let lists: Vec<&[String]> = prepared
+        .iter()
+        .filter_map(|(_, scan)| scan.as_ref().ok().map(|(_, names)| names.as_slice()))
+        .collect();
+    let fresh = unique_names(&lists);
+    run_concurrently(&fresh, |name| {
+        let _ = query_latest(runtime, source, &env, name, true);
+    });
+    // 第三阶段：逐环境装配（读已装版本 + 命中刚写好的缓存），顺序照环境枚举顺序。
+    Ok(prepared
+        .into_iter()
+        .map(|(profile, scan)| match scan {
+            Ok((dir, names)) => ProfileUpdates {
+                profile,
+                items: Some(check_names(&target, &dir, runtime, source, &env, &names)),
+                error: None,
+            },
+            Err(error) => ProfileUpdates {
+                profile,
+                items: None,
+                error: Some(error),
+            },
+        })
         .collect())
 }
 
@@ -1073,6 +1200,41 @@ mod tests {
         }
         assert!(chunk_bounds(0).is_empty());
         assert_eq!(chunk_bounds(1), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn run_concurrently_visits_every_item_once_and_keeps_input_order() {
+        let items: Vec<usize> = (0..23).collect();
+        let seen = std::sync::Mutex::new(Vec::new());
+        let out = run_concurrently(&items, |item| {
+            seen.lock().unwrap().push(*item);
+            *item * 2
+        });
+        assert_eq!(
+            out,
+            items.iter().map(|item| item * 2).collect::<Vec<_>>(),
+            "结果要按输入顺序装配，不能随并发完成顺序抖动"
+        );
+        let mut visited = seen.into_inner().unwrap();
+        visited.sort_unstable();
+        assert_eq!(visited, items, "每项恰好跑一次");
+
+        let empty: [usize; 0] = [];
+        assert!(run_concurrently(&empty, |_| 0usize).is_empty());
+    }
+
+    #[test]
+    fn unique_names_dedupes_across_environments_and_keeps_first_order() {
+        let web = vec!["dsh-b".to_string(), "dsh-a".to_string()];
+        let lab = vec!["dsh-a".to_string(), "dsh-c".to_string()];
+        let empty: Vec<String> = Vec::new();
+        let scans: Vec<&[String]> = vec![&web, &lab, &empty];
+        assert_eq!(
+            unique_names(&scans),
+            vec!["dsh-b", "dsh-a", "dsh-c"],
+            "同一个包只查一次网络，顺序照各环境名单首次出现"
+        );
+        assert!(unique_names(&[]).is_empty());
     }
 
     // ---- 会话缓存键 ----------------------------------------------------------

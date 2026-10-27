@@ -184,7 +184,7 @@ export function buildHtml(info: AppInfo): string {
   // 开关与更新的规则说明不再整段铺在卡头（维护者要求收掉）；关键提醒都收在控件
   // 自己的气泡（data-tip）与完成后的提示行（#plugin-note / #plugin-warning）里。
   const pluginBody = `
-    ${colHead("插件", `${badgeLine("plugin-summary", "读取中…")}<span class="plugin-head-actions"><button id="btn-plugin-check-updates" class="square-btn has-tip" type="button" data-tip="检查更新：重新对比 registry 上的最新版本" aria-label="检查更新">${squareBusyChrome(ICON_REFRESH)}</button><button id="btn-plugin-update-all" class="square-btn has-tip" type="button" data-tip="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${squareBusyChrome(ICON_UPDATE_ALL)}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button></span>`)}
+    ${colHead("插件", `${badgeLine("plugin-summary", "读取中…")}<span class="plugin-head-actions"><button id="btn-plugin-check-updates" class="square-btn has-tip" type="button" data-tip="检查更新：重新对比所有环境的插件在 registry 上的最新版本" aria-label="检查更新">${squareBusyChrome(ICON_REFRESH)}</button><button id="btn-plugin-update-all" class="square-btn has-tip" type="button" data-tip="全部更新：把所有有更新的插件逐个升到目标版本（单个失败不影响其余）" aria-label="全部更新">${squareBusyChrome(ICON_UPDATE_ALL)}<span id="plugin-update-all-badge" class="btn-badge hidden" aria-hidden="true"></span></button></span>`)}
     <div id="profile-plugins" class="plugin-panel">
       <div id="plugin-progress" class="plugin-progress hidden">
         <div id="plugin-progress-bar" class="plugin-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="全部更新进度"><i aria-hidden="true"></i></div>
