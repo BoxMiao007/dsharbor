@@ -36,6 +36,23 @@ function paintCountBadge(el: HTMLElement, count: number): void {
   el.classList.toggle("is-dense", capped);
 }
 
+/**
+ * 读一个 CSS 时间令牌（毫秒）。浏览器把计算后的 <time> 序列化成秒（"0.2s"），
+ * 不是变量里写的 "200ms"，所以按单位换算，别把 0.2 当毫秒用。
+ *
+ * 全站只留这一处换算：之前 `--m-base`（分区淘汰）与 `--m-exit`（浮窗出场）各写了一份
+ * 同样的 parseFloat + 单位判断，改规则时得记得两处一起改。`trackInset` 读的是长度
+ * 令牌（px），不是时间，所以它自己保留一份。
+ */
+function readTimeToken(name: string, fallback: number): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return raw.endsWith("ms") ? value : value * 1000;
+}
+
 async function main(): Promise<void> {
   const app = document.querySelector<HTMLDivElement>("#app");
   if (!app) {
@@ -151,6 +168,8 @@ async function main(): Promise<void> {
     let registry: RegistryInfo | null = null;
     let registryError: string | null = null;
     let registryLoading = false;
+    /** 清单请求的世代号：换环境、切下载源、点刷新会连发几次，只有最后发出的那次能落地。 */
+    let registryLoadSeq = 0;
     /**
      * 当前选中的版本号；null = 首项「自动最新版本」（不写死版本号）。
      *
@@ -164,6 +183,8 @@ async function main(): Promise<void> {
     let pinServedVersions: string[] = [];
     /** 自动最新（裸包名写法）的缓存键在不在（`npx_cached_versions.bareCached`）：决定启动提示按哪一相说。 */
     let bareCached = false;
+    /** 缓存扫描的世代号：换环境要作废还在飞的那次扫描（它属于旧环境），见 resetCachedVersions。 */
+    let cachedVersionsSeq = 0;
     /** 版本下拉当前放出几个具体版本（不含首项与末尾的「更多…」）。 */
     let versionShown = VERSION_INITIAL_COUNT;
 
@@ -224,7 +245,10 @@ async function main(): Promise<void> {
       // selectedVersion 不跟着清：用户选的版本号仍然适用，新列表回来后照旧选中它。
       registry = null;
       registryError = null;
-      cachedVersions = [];
+      // 「按环境」的 npx 缓存结论一并作废：pinServed / bareCached 是 launchWillInstall()
+      // 判断「这次要不要现下载」的唯一依据，留着上一个环境的值会让按钮与「正在下载安装」
+      // 提示说反（缓存过的环境切到没缓存的发行版，启动时看不出在下载）。
+      resetCachedVersions();
       void loadRegistry();
     }
 
@@ -448,17 +472,37 @@ async function main(): Promise<void> {
       setSquareBusy(npxVersionsRefresh, registryLoading);
     }
 
+    /**
+     * 作废「按环境」的 npx 缓存结论（换运行环境时调）。
+     *
+     * 三份值都要清：`pinServedVersions` / `bareCached` 是 launchWillInstall() 判断
+     * 「这次要不要现下载」的唯一依据，只清 `cachedVersions` 会让界面沿用上一个环境的
+     * 结论（该说「安装中…」时却说「启动中…」）。同时把世代号往前推一格，让可能还在飞
+     * 的旧环境扫描落地时对不上号、自己丢弃。
+     */
+    function resetCachedVersions(): void {
+      cachedVersions = [];
+      pinServedVersions = [];
+      bareCached = false;
+      cachedVersionsSeq += 1;
+    }
+
     /** 现扫一次本机 npx 缓存里已有的版本，好把「已缓存」徽章挂到正确的行上。 */
     async function refreshCachedVersions(): Promise<void> {
+      // 世代号：打开下拉会触发一次扫描，期间用户可能又换了运行环境（resetCachedVersions
+      // 已经把世代号推进一格）。只有最后发出的那次能写值，否则旧环境的缓存结论会盖回来。
+      const seq = ++cachedVersionsSeq;
       try {
         const cached = await invoke<{ versions: string[]; pinServed: string[]; bareCached: boolean }>(
           "npx_cached_versions",
           { runtime },
         );
+        if (seq !== cachedVersionsSeq) return; // 过期：更新的那次（或换环境）已经接管
         cachedVersions = cached.versions;
         pinServedVersions = cached.pinServed;
         bareCached = cached.bareCached;
       } catch (err) {
+        if (seq !== cachedVersionsSeq) return; // 过期结果的失败也不该把新环境的值清掉
         // 缓存目录读不到只影响那枚徽章，不影响选版本；不打扰用户，日志里留痕。
         console.error("读取 npx 缓存版本失败:", err);
         cachedVersions = [];
@@ -483,25 +527,38 @@ async function main(): Promise<void> {
       syncRuntimePickers();
     }
 
-    /** 读官方版本列表；`force` 为真时让后端绕过 10 分钟缓存，真跑一次 npm view。 */
+    /** 读官方版本列表；`force` 为真时让后端绕过 10 分钟缓存，真跑一次 npm view。
+     *
+     * 换运行环境、切下载源、点「重新获取」都会连发几次请求（后端一次 npm view 可能几秒）。
+     * 加世代号：只有最后发出的那次能写 `registry` / 清 `registryLoading`，先返回的旧请求
+     * 一律丢弃——否则会出现「runtime 是 B、版本列表是 A」的错位，用户选了 A 的版本号去 B
+     * 里启动就会失败。 */
     async function loadRegistry(force = false): Promise<void> {
+      const seq = ++registryLoadSeq;
       registryLoading = true;
       registryError = null;
       renderVersionUI();
       let ok = false;
       try {
-        registry = await invoke<RegistryInfo>("query_dsh_versions", {
+        const next = await invoke<RegistryInfo>("query_dsh_versions", {
           runtime,
           source: prefs.downloadSource,
           force,
         });
+        if (seq !== registryLoadSeq) return; // 过期：更新的那次已经接管
+        registry = next;
         ok = true;
       } catch (err) {
+        if (seq !== registryLoadSeq) return; // 过期请求的失败也别写进当前环境的错误行
         registry = null;
         registryError = String(err);
         console.error("读取官方版本列表失败:", err);
       } finally {
-        registryLoading = false;
+        // 「加载中」也归最后一次请求管：先返回的那次不能替还在飞的那次解禁刷新按钮、
+        // 提前关掉转圈（否则会连点触发重复 npm view）。
+        if (seq === registryLoadSeq) {
+          registryLoading = false;
+        }
       }
       // 换了一批候选，分页从头算：上一次展开过「更多…」不该让新列表一上来就全摊开。
       versionShown = VERSION_INITIAL_COUNT;
@@ -870,17 +927,6 @@ async function main(): Promise<void> {
 
     let currentPanel: PanelKey = readStoredPanel();
 
-    /** 读一个动效时长令牌（毫秒）。浏览器把计算后的 <time> 序列化成秒（"0.2s"），
-     *  不是变量里写的 "200ms"，所以按单位换算，别把 0.2 当毫秒用。 */
-    function motionMs(name: string, fallback: number): number {
-      const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-      const value = Number.parseFloat(raw);
-      if (!Number.isFinite(value) || value <= 0) {
-        return fallback;
-      }
-      return raw.endsWith("ms") ? value : value * 1000;
-    }
-
     /** 交叉淡化里「旧分区」的退役定时器：新的淡完（--m-base）就把它彻底摘掉。 */
     let leavingTimer: number | null = null;
 
@@ -943,7 +989,7 @@ async function main(): Promise<void> {
             leaving.classList.remove("is-leaving");
             leavingTimer = null;
           },
-          motionOff() ? 0 : motionMs("--m-base", 200),
+          motionOff() ? 0 : readTimeToken("--m-base", 200),
         );
       }
 
@@ -1690,11 +1736,29 @@ async function main(): Promise<void> {
       updateScrollThumbHook();
     }
 
+    /** 状态轮询的世代号：只认最后一次发出的请求，见 refresh()。 */
+    let statusSeq = 0;
+
+    /**
+     * 查一次会话状态并重画。
+     *
+     * 入口不止每秒那次轮询：启动/停止之后、转动状态机的补收定时器都会再发一次，
+     * 单次 `dsh_status` 慢于 1 秒时就会叠请求，而返回顺序不保证。旧响应晚到会把
+     * 徽章/PID 退回旧值；更糟的是 render() 里的 syncLogFromTail 假定日志尾部单调
+     * 前进——尾巴一退，它就把那段旧日志当成「接不上的新一批」再追加一遍。
+     * 世代号保证只有最后发出的那次能 render，旧响应直接丢弃。
+     */
     async function refresh(): Promise<void> {
+      const seq = ++statusSeq;
       try {
-        render(await invoke<SessionStatus>("dsh_status"));
+        const status = await invoke<SessionStatus>("dsh_status");
+        if (seq !== statusSeq) return; // 过期：更新的那次已经在跑/已经画过
+        render(status);
       } catch (err) {
-        console.error("查询状态失败:", err);
+        // 过期请求的失败同样不吭声：它代表的不是当前状态，别刷一条误导性的错误。
+        if (seq === statusSeq) {
+          console.error("查询状态失败:", err);
+        }
       }
     }
     setStatusRefresher(refresh);
@@ -2197,21 +2261,29 @@ async function main(): Promise<void> {
       const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 6) : below;
       envMenu.style.left = `${Math.round(left)}px`;
       envMenu.style.top = `${Math.round(top)}px`;
-      // 不能管理的项置灰：web 是启动用的环境，当前正管理的那个也不能删。
+      // 不能管理的项置灰：web 是启动用的环境（改名/删除都不许），当前正管理的那个也不能删。
+      // 与后端 guard_rename / guard_delete 同口径：能点的按钮都要能成功，失败理由只留给
+      // 真正没预见过的情况（两边任何一处改了守卫，这里必须跟着改）。
+      // 保留名 `desktop` 不在这里特判：它照样列在环境卡列表里，点了由后端以「不改它的名字」
+      // 拒绝（既有行为，改它要连带调整 test/frontend/motion-modal.test.mjs 的用例夹具）。
       const target = profileOf(name);
       const isWeb = name === START_PROFILE;
+      const isCurrent = name === prefs.profile;
       for (const item of envMenu.querySelectorAll<HTMLButtonElement>("[data-env-act]")) {
         const act = item.dataset.envAct;
         const disabled =
-          (act === "delete" && (isWeb || name === prefs.profile)) ||
+          (isWeb && (act === "rename" || act === "delete")) ||
+          (act === "delete" && isCurrent) ||
           (act === "deps" && target === null);
         item.disabled = disabled;
         item.title = disabled
-          ? act === "delete"
-            ? isWeb
+          ? isWeb && act === "rename"
+            ? "web 是启动 DSH 用的环境，不能改名（改了壳就启动到别的环境去了）"
+            : isWeb && act === "delete"
               ? "web 是启动 DSH 用的环境，不能删"
-              : "这是当前正管理的环境，先在上面选一个别的再删"
-            : "这个环境已经不在清单里了"
+              : act === "delete"
+                ? "这是当前正管理的环境，先在上面选一个别的再删"
+                : "这个环境已经不在清单里了"
           : "";
       }
     }
@@ -2475,18 +2547,6 @@ async function main(): Promise<void> {
       return document.documentElement.dataset.motion === "off";
     }
 
-    /** 出场动画时长：直接读 --m-exit，避免 JS 里再写一份毫秒数。
-     *  浏览器把计算后的 <time> 序列化成秒（"0.13s"），不是变量里写的 "130ms"，
-     *  所以按单位换算，别把 0.13 当毫秒用。 */
-    function modalExitMs(): number {
-      const raw = getComputedStyle(document.documentElement).getPropertyValue("--m-exit").trim();
-      const value = Number.parseFloat(raw);
-      if (!Number.isFinite(value) || value <= 0) {
-        return 130;
-      }
-      return raw.endsWith("ms") ? value : value * 1000;
-    }
-
     function clearModalClose(): void {
       if (modalCloseTimer !== null) {
         window.clearTimeout(modalCloseTimer);
@@ -2564,7 +2624,7 @@ async function main(): Promise<void> {
       if (modalCloseTimer !== null) {
         window.clearTimeout(modalCloseTimer);
       }
-      modalCloseTimer = window.setTimeout(finishModalClose, modalExitMs());
+      modalCloseTimer = window.setTimeout(finishModalClose, readTimeToken("--m-exit", 130));
     }
 
     // 焦点圈在打开着的浮窗里：Tab / Shift+Tab 到首尾时折返，不会跑到浮窗背后的页面上。
@@ -4639,7 +4699,8 @@ async function main(): Promise<void> {
   // 下方小卡固定可见，视口永远不可滚，绑在视口上就等于没有。
   /**
    * 胶囊轨道相对主卡上下各让进多少：取卡片圆角（`--radius-card`）减去 2px 余量。
-   * 圆角是从令牌读的、不抄数字——维护者改令牌时这里跟着走（同 `motionMs` 的思路）。
+   * 圆角是从令牌读的、不抄数字——维护者改令牌时这里跟着走。读的是长度令牌（px），
+   * 所以不复用 readTimeToken() 的「秒 → 毫秒」换算，只借它「从计算样式里读令牌」的思路。
    */
   function trackInset(): number {
     const raw = getComputedStyle(document.documentElement).getPropertyValue("--radius-card").trim();
