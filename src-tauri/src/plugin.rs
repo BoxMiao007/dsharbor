@@ -406,27 +406,65 @@ pub(crate) fn strip_extended_prefix(path: &str) -> String {
 }
 
 /// 在应用资源目录里找桥接插件包（`dsharbor-bridge-*.tgz`）。
+///
+/// 目录里并存多个版本时取**最新**的那个：覆盖安装会留下旧版本的 tgz，
+/// 开发机上连续 `pnpm pack:bridge` 也会攒下几份，随便取第一个会把旧版桥接
+/// 装进用户环境（版本号退回、行为也跟着退回）。版本比较复用核心库的
+/// `registry::sort_newest_first`——与版本下拉是同一套 semver 规则，
+/// 不在这里另写一份。
 fn find_bridge_tgz(app: &tauri::AppHandle) -> Result<String, String> {
+    const PREFIX: &str = "dsharbor-bridge-";
+    const SUFFIX: &str = ".tgz";
+
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|err| format!("找不到应用资源目录：{err}"))?;
     let candidates = [resource_dir.clone(), resource_dir.join("resources")];
+    // (版本, 包路径)：版本从文件名里取，路径保留给 pnpm 用。
+    let mut packages: Vec<(String, String)> = Vec::new();
     for dir in &candidates {
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("dsharbor-bridge-") && name.ends_with(".tgz") {
-                return Ok(strip_extended_prefix(&entry.path().to_string_lossy()));
-            }
+            let Some(version) = name
+                .strip_prefix(PREFIX)
+                .and_then(|rest| rest.strip_suffix(SUFFIX))
+            else {
+                continue;
+            };
+            packages.push((
+                version.to_string(),
+                strip_extended_prefix(&entry.path().to_string_lossy()),
+            ));
         }
     }
-    Err("找不到桥接插件包（dsharbor-bridge-*.tgz）。\
-         请确认安装包完整，或在源码仓库先执行 pnpm pack:bridge。"
-        .to_string())
+    if packages.is_empty() {
+        return Err("找不到桥接插件包（dsharbor-bridge-*.tgz）。\
+             请确认安装包完整，或在源码仓库先执行 pnpm pack:bridge。"
+            .to_string());
+    }
+    newest_package(&packages).ok_or_else(|| "资源目录里的桥接插件包名读不出可用版本".to_string())
+}
+
+/// 从「(版本, 路径)」候选里挑出版本最新的那个路径（纯逻辑，便于单测）。
+///
+/// 排序用核心库的 `registry::sort_newest_first`（与版本下拉同一套 semver 规则），
+/// 再按版本号回查路径：同一版本在资源目录与 `resources/` 子目录里各有一份时，
+/// 取先扫到的那个（外层目录优先），与旧实现的选择顺序一致。
+fn newest_package(packages: &[(String, String)]) -> Option<String> {
+    let mut versions: Vec<String> = packages
+        .iter()
+        .map(|(version, _)| version.clone())
+        .collect();
+    dsharbor_core::registry::sort_newest_first(&mut versions);
+    let newest = versions.first()?;
+    packages
+        .iter()
+        .find(|(version, _)| version == newest)
+        .map(|(_, path)| path.clone())
 }
 
 /// 备份目录（`app_data_root/backups`）：安装/卸载前的回滚备份都放这里，
@@ -699,8 +737,12 @@ pub(crate) fn plugin_command_line(
 /// 所以插件包必须先复制到一个不含空格的路径再安装。
 ///
 /// 候选按「用户可写程度」排序：应用数据目录（最正常）→ 用户 TEMP → 系统
-/// ProgramData（用户名本身带空格时，前两个都会含空格）→ 系统盘根目录兜底。
-/// 都不可写才报错，避免「用户名是 John Doe 就装不了插件」。
+/// ProgramData（用户名本身带空格时，前两个都会含空格）。都不可写才报错，
+/// 避免「用户名是 John Doe 就装不了插件」。
+///
+/// 不再往系统盘根目录（`%SystemDrive%\DSHarborCache`）兜底：那条只在
+/// `%ProgramData%` 也不可写时才轮得到，而普通用户本来就写不进系统盘根，
+/// 真走到那一步只会留下一个建了一半、删不掉的目录。
 fn staging_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut candidates = vec![crate::app_data_root(app)?.join("cache")];
     if let Ok(temp) = std::env::var("TEMP") {
@@ -708,9 +750,6 @@ fn staging_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
     if let Ok(program_data) = std::env::var("ProgramData") {
         candidates.push(PathBuf::from(program_data).join("DSHarbor").join("cache"));
-    }
-    if let Ok(system_drive) = std::env::var("SystemDrive") {
-        candidates.push(PathBuf::from(format!("{system_drive}\\")).join("DSHarborCache"));
     }
     let mut tried: Vec<String> = Vec::new();
     for dir in candidates {
