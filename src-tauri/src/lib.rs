@@ -1555,13 +1555,23 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                 }
             }
             ShellAction::RestartDsh => {
+                // 托盘菜单回调是同步的、跑在 UI 线程上：在这里做「停止（最长 5 秒）
+                // → 拉起（WSL 下还要起 wsl.exe）」会把整个消息循环堵住——菜单收不
+                // 回去、窗口拖不动。与 tray_stop_dsh 同一处理，丢到后台线程执行。
+                //
                 // 停止失败就到此为止：旧进程可能还占着端口，这时再 spawn 只会
                 // 得到一个「外部运行中」的假状态（托盘动作没有回执，用户看不到
                 // 任何失败提示）。原因写进 spawn_error，界面状态轮询会显示出来。
-                if let Err(err) = restart_session(app, &state) {
-                    eprintln!("[dsharbor] 托盘「重启 DSH」失败：{err}");
-                    remember_spawn_error(&state, format!("托盘「重启 DSH」失败：{err}"));
-                }
+                let app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let Some(state) = app.try_state::<AppState>() else {
+                        return;
+                    };
+                    if let Err(err) = restart_session(&app, &state) {
+                        eprintln!("[dsharbor] 托盘「重启 DSH」失败：{err}");
+                        remember_spawn_error(&state, format!("托盘「重启 DSH」失败：{err}"));
+                    }
+                });
             }
             ShellAction::StopDshAndExit => {
                 // 退出是用户的明确意图，不能因为停止失败就卡住不退出；
