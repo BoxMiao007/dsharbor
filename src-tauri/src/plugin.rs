@@ -252,22 +252,20 @@ pub(crate) fn read_file(target: &Target, path: &str) -> Result<String, String> {
 }
 
 /// 写文件（跨目标环境；WSL 经 stdin 送内容，避免命令行长度与转义问题）。
+///
+/// 两侧都是「原子替换」：先写临时文件，成功了再改名盖住目标。直接覆盖的话，
+/// 写到一半被中断（壳被强杀、断电、磁盘满）就把用户的 `package.json` /
+/// `cordis.patch.yml` 留成空文件或半截，那是一个再也起不来的 DSH 环境。
 pub(crate) fn write_file(target: &Target, path: &str, content: &str) -> Result<(), String> {
     match target {
-        Target::Host => {
-            std::fs::write(path, content).map_err(|err| format!("写入 {path} 失败：{err}"))
-        }
+        Target::Host => crate::atomic::write_host(Path::new(path), content.as_bytes())
+            .map_err(|err| format!("写入 {path} 失败：{err}")),
         Target::Wsl { distro } => {
             use std::io::Write;
-            let mut child = Command::new("wsl.exe")
-                .args([
-                    "-d",
-                    distro,
-                    "--",
-                    "bash",
-                    "-lc",
-                    &format!("cat > '{path}'"),
-                ])
+            let mut command = Command::new("wsl.exe");
+            command.args(["-d", distro, "--", "bash", "-lc"]);
+            command.arg(crate::atomic::wsl_script(path));
+            let mut child = command
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())

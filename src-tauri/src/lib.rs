@@ -4,6 +4,7 @@
 //! 轻量模式（关窗销毁 WebView、DSH 常驻、托盘常驻）由核心库的
 //! `dsharbor_core::lifecycle` 状态机决策，本文件只负责执行副作用。
 
+mod atomic;
 mod detect;
 mod dsh_versions;
 mod launcher;

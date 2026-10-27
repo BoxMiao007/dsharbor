@@ -5,6 +5,8 @@
 //! 这类壳行为偏好同样要活过重开与卸载，统一存一个 JSON。
 //! 兼容旧格式：此前该文件顶层直接就是 `LaunchConfig`，加载时自动迁移。
 
+use std::path::{Path, PathBuf};
+
 use dsharbor_core::launch::{LaunchConfig, LaunchMode, Runtime};
 use dsharbor_core::prefs::ShellPrefs;
 use serde::{Deserialize, Serialize};
@@ -113,12 +115,16 @@ fn path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(crate::app_data_root(app)?.join("config.json"))
 }
 
-/// 读取设置；文件缺失/损坏时返回默认值（兼容旧的顶层 LaunchConfig 格式）。
+/// 读取设置；文件缺失时返回默认值（兼容旧的顶层 LaunchConfig 格式）。
+///
+/// 文件存在但读不懂时同样返回默认值（壳不能因此起不来），但**不再静默**：
+/// 记一条可读的原因，并把原文另存成 `config.json.bad`。因为界面随时会把整份
+/// 设置写回盘（`save_shell_config`），默认值一旦落盘，用户的设置就真的没了。
 pub fn load(app: &tauri::AppHandle) -> ShellConfig {
     let Ok(path) = path(app) else {
         return ShellConfig::default();
     };
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = std::fs::read_to_string(&path) else {
         return ShellConfig::default();
     };
     if let Ok(config) = serde_json::from_str::<ShellConfig>(&text) {
@@ -129,8 +135,38 @@ pub fn load(app: &tauri::AppHandle) -> ShellConfig {
             launch,
             ..ShellConfig::default()
         },
-        Err(_) => ShellConfig::default(),
+        Err(err) => {
+            eprintln!("[dsharbor] 读取配置失败（{}）：{err}", path.display());
+            keep_bad_copy(&path, &text);
+            ShellConfig::default()
+        }
     }
+}
+
+/// 读坏的配置原文另存成 `<文件名>.bad`，给用户留一条事后能查/能手工抢救的线索。
+///
+/// 只在内容与上一份副本不同时才写：配置坏掉期间 `load()` 会被调用很多次，
+/// 每次都重写一份没有意义。这一步是尽力而为——另存失败只记日志，
+/// 不能因为「留副本」这件事让壳起不来。
+fn keep_bad_copy(path: &Path, text: &str) {
+    let bad = bad_copy_path(path);
+    if std::fs::read_to_string(&bad).is_ok_and(|old| old == text) {
+        return;
+    }
+    match crate::atomic::write_host(&bad, text.as_bytes()) {
+        Ok(()) => eprintln!("[dsharbor] 已把读不出来的配置另存为 {}", bad.display()),
+        Err(err) => eprintln!(
+            "[dsharbor] 另存读不出来的配置失败（{}）：{err}",
+            bad.display()
+        ),
+    }
+}
+
+/// `config.json` → `config.json.bad`（直接追加后缀，不碰原扩展名）。
+fn bad_copy_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".bad");
+    PathBuf::from(name)
 }
 
 /// 写盘（先过核心库校验：非法输入不会落盘）。
@@ -143,7 +179,9 @@ fn store(app: &tauri::AppHandle, config: &ShellConfig) -> Result<(), String> {
     }
     let text =
         serde_json::to_string_pretty(config).map_err(|err| format!("序列化配置失败：{err}"))?;
-    std::fs::write(&path, text).map_err(|err| format!("写入配置失败：{err}"))
+    // 原子写：直接覆盖的话，写到一半被强杀/断电就留下空文件或半截 JSON，
+    // 下一次 load 读不懂→回默认值→界面自动保存把默认值固化，用户设置静默清零。
+    crate::atomic::write_host(&path, text.as_bytes()).map_err(|err| format!("写入配置失败：{err}"))
 }
 
 /// 代理地址的落盘前校验。
@@ -206,7 +244,10 @@ pub fn save_dsh_version(app: &tauri::AppHandle, version: &str) -> Result<(), Str
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|err| format!("创建配置目录失败：{err}"))?;
     }
-    std::fs::write(&path, version).map_err(|err| format!("写入 DSH 版本号失败：{err}"))
+    // 与 config.json 同一套原子写：半截版本号会被读成「DSH 版本未知」，
+    // 虽然不致命，但没必要留一个可避免的坏状态。
+    crate::atomic::write_host(&path, version.as_bytes())
+        .map_err(|err| format!("写入 DSH 版本号失败：{err}"))
 }
 
 /// 只更新启动配置、保留壳偏好（托盘单击目标等）；启动流程使用。
@@ -356,5 +397,25 @@ mod tests {
         };
 
         assert!(validate_proxy(&prefs).is_ok());
+    }
+
+    /// 读不懂的 config.json 要留一份原文副本：界面一旦把默认值写回去，
+    /// 没有这份副本就再也看不出用户原来配了什么。
+    #[test]
+    fn a_broken_config_file_leaves_a_readable_bad_copy() {
+        let root =
+            std::env::temp_dir().join(format!("dsharbor-settings-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.json");
+        let broken = "{ \"launch\": { \"mode\": ";
+        std::fs::write(&path, broken).unwrap();
+
+        keep_bad_copy(&path, broken);
+
+        let bad = bad_copy_path(&path);
+        assert_eq!(bad.file_name().unwrap(), "config.json.bad");
+        assert_eq!(std::fs::read_to_string(&bad).unwrap(), broken);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
