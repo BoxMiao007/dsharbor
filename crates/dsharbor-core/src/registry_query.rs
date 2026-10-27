@@ -23,9 +23,18 @@
 pub fn parse_reg_query_value(output: &str, name: &str) -> Option<String> {
     for line in output.lines() {
         let trimmed = line.trim_start();
-        if trimmed.len() <= name.len() || !trimmed[..name.len()].eq_ignore_ascii_case(name) {
+        // 取「前 name.len() 个字节」用 get 而不是切下标：`trimmed[..name.len()]`
+        // 是按字节切 UTF-8，行首含多字节字符时（第三方代理/VPN 会往
+        // Internet Settings 写中文值名，而 proxy.rs 查的是整键）切点落在字符
+        // 中间就直接 panic。get 在越界或非字符边界时返回 None，正好跳过该行。
+        let head = match trimmed.get(..name.len()) {
+            Some(head) => head,
+            None => continue,
+        };
+        if !head.eq_ignore_ascii_case(name) {
             continue;
         }
+        // 能走到这里说明 name.len() 是字符边界，下面的切片是安全的。
         let rest = &trimmed[name.len()..];
         if !rest.starts_with([' ', '\t']) {
             continue;
@@ -95,6 +104,22 @@ mod tests {
         assert_eq!(
             parse_reg_query_value(no_trailing, "Path").as_deref(),
             Some("")
+        );
+    }
+
+    #[test]
+    fn non_ascii_value_names_do_not_panic() {
+        // 整键 reg query 的输出里会出现第三方软件写的中文值名；历史实现按字节
+        // 切前缀，切点落在多字节字符中间就 panic（已复现：byte index 11 is not
+        // a char boundary）。这里同时盯住「跳过不匹配行」与「用中文值名查询」。
+        let output = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\r\n    代理开关    REG_DWORD    0x1\r\n    ProxyEnable    REG_DWORD    0x1\r\n";
+        assert_eq!(
+            parse_reg_query_value(output, "ProxyEnable").as_deref(),
+            Some("0x1")
+        );
+        assert_eq!(
+            parse_reg_query_value(output, "代理开关").as_deref(),
+            Some("0x1")
         );
     }
 
