@@ -238,17 +238,19 @@ test("四个浮窗打开时都有进出场动画、焦点进面板，关闭后�
       },
       {
         name: "重命名",
-        open: () => pickEnvMenu(page, "desktop", "rename"),
+        // 用 lab 而不是 web / desktop：那两个是触发用的启动环境与官方桌面端，
+        // 菜单里它们的改名/删除是按角色置灰的（与后端守卫同口径），点不动。
+        open: () => pickEnvMenu(page, "lab", "rename"),
         panel: "#modal-name",
         focus: "profile-manage-name",
-        trigger: { envMore: "desktop" },
+        trigger: { envMore: "lab" },
       },
       {
         name: "删除",
-        open: () => pickEnvMenu(page, "desktop", "delete"),
+        open: () => pickEnvMenu(page, "lab", "delete"),
         panel: "#modal-name",
         focus: "btn-name-cancel",
-        trigger: { envMore: "desktop" },
+        trigger: { envMore: "lab" },
       },
       {
         name: "补丁层",
@@ -336,7 +338,7 @@ test("关掉动效后：进出瞬时完成，焦点行为不变", { skip: skipRe
       document.documentElement.dataset.motion = "off";
     });
 
-    await pickEnvMenu(page, "desktop", "delete");
+    await pickEnvMenu(page, "lab", "delete");
     // 不等待动画：关掉动效时应该已经直接可见。
     const opened = await page.evaluate(() => {
       const panel = document.querySelector("#modal-name");
@@ -367,7 +369,7 @@ test("关掉动效后：进出瞬时完成，焦点行为不变", { skip: skipRe
     });
     assert.equal(closed.panelDisplay, "none", "关掉动效时浮窗应瞬时隐藏");
     assert.equal(closed.scrimDisplay, "none", "关掉动效时遮罩应瞬时隐藏");
-    assert.equal(closed.focusEnvMore, "desktop", "关掉动效时关闭后焦点仍应回到触发按钮");
+    assert.equal(closed.focusEnvMore, "lab", "关掉动效时关闭后焦点仍应回到触发按钮");
   } finally {
     await page.close();
   }

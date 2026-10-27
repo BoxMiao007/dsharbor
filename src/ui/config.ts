@@ -70,6 +70,19 @@ export const CUSTOM_DEFAULT_COMMAND = "npx --yes @deepseek-ai/dsh@next web";
  */
 export const START_PROFILE = "web";
 
+/**
+ * 官方桌面端独占的环境名（核心库 `profiles::DESKTOP_PROFILE`，判定不分大小写）。
+ *
+ * 它不归壳管：新建 / 改名 / 删除在核心库的守卫里都被拒。界面据此把两条环境操作
+ * 一并置灰——「能点的按钮都要能成功」，让人点了才看红字是下策。
+ */
+export const RESERVED_PROFILE = "desktop";
+
+/** 环境名是否属于「不归壳管」的保留名（与核心库 `profiles::is_reserved` 同口径）。 */
+export function isReservedProfile(name: string): boolean {
+  return name.toLowerCase() === RESERVED_PROFILE;
+}
+
 /** 「启动 DSH」按钮的两组文字：常显的一组 / 悬停时逐字换上的一组。 */
 export const TOGGLE_TEXT_REST = "启动 DSH";
 export const TOGGLE_TEXT_HOVER = "开始运行";

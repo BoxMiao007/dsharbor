@@ -9,7 +9,7 @@ import { prepareCopyButton, flashCopy, copyIconStack, copyTextChrome } from "./u
 import { isStarting } from "./ui/types";
 import type { AppInfo, LaunchRuntime, LaunchConfig, RegistryInfo, DistroInfo, TrayClick, PanelKey, DownloadSource, ProxyMode, ShellPrefs, ShellConfig, PortHint, SessionStatus, BridgeState, ProfileSummary, ProfileListing, ProxyState, SelfCheckReport, BridgeOutcome, CliIntegrationState, InstalledDsh } from "./ui/types";
 import { DEFAULT_PREFS, normalizePrefs } from "./ui/prefs";
-import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, PROXY_MODE_CHOICES, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOGGLE_TEXT_STARTING, TOGGLE_TEXT_INSTALLING, TOOLTIP_STOP, TOOLTIP_STARTING } from "./ui/config";
+import { DOWNLOAD_SOURCE_CHOICES, downloadSourceHint, isReservedProfile, PROXY_MODE_CHOICES, RESERVED_PROFILE, RUNTIME_DEFAULT, AUTO_VERSION, VERSION_AUTO_LABEL, VERSION_INITIAL_COUNT, VERSION_PAGE_SIZE, npxCommandOf, START_PROFILE, TOGGLE_TEXT_REST, TOGGLE_TEXT_STARTING, TOGGLE_TEXT_INSTALLING, TOOLTIP_STOP, TOOLTIP_STARTING } from "./ui/config";
 import { Picker } from "./ui/picker";
 import type { PickerBadge, PickerChoice } from "./ui/picker";
 import { THEME_KEY, readStoredTheme, applyMode } from "./ui/theme";
@@ -2261,29 +2261,33 @@ async function main(): Promise<void> {
       const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 6) : below;
       envMenu.style.left = `${Math.round(left)}px`;
       envMenu.style.top = `${Math.round(top)}px`;
-      // 不能管理的项置灰：web 是启动用的环境（改名/删除都不许），当前正管理的那个也不能删。
+      // 不能管理的项置灰：web 是启动用的环境（改名/删除都不许），官方桌面端 desktop
+      // 不归壳管（改名/删除都拒），当前正管理的那个也不能删。
       // 与后端 guard_rename / guard_delete 同口径：能点的按钮都要能成功，失败理由只留给
       // 真正没预见过的情况（两边任何一处改了守卫，这里必须跟着改）。
-      // 保留名 `desktop` 不在这里特判：它照样列在环境卡列表里，点了由后端以「不改它的名字」
-      // 拒绝（既有行为，改它要连带调整 test/frontend/motion-modal.test.mjs 的用例夹具）。
       const target = profileOf(name);
       const isWeb = name === START_PROFILE;
+      const isReserved = isReservedProfile(name);
       const isCurrent = name === prefs.profile;
       for (const item of envMenu.querySelectorAll<HTMLButtonElement>("[data-env-act]")) {
         const act = item.dataset.envAct;
         const disabled =
-          (isWeb && (act === "rename" || act === "delete")) ||
+          ((isWeb || isReserved) && (act === "rename" || act === "delete")) ||
           (act === "delete" && isCurrent) ||
           (act === "deps" && target === null);
         item.disabled = disabled;
         item.title = disabled
-          ? isWeb && act === "rename"
-            ? "web 是启动 DSH 用的环境，不能改名（改了壳就启动到别的环境去了）"
-            : isWeb && act === "delete"
-              ? "web 是启动 DSH 用的环境，不能删"
-              : act === "delete"
-                ? "这是当前正管理的环境，先在上面选一个别的再删"
-                : "这个环境已经不在清单里了"
+          ? act === "rename"
+            ? isWeb
+              ? "web 是启动 DSH 用的环境，不能改名（改了壳就启动到别的环境去了）"
+              : `${RESERVED_PROFILE} 属于官方桌面端，DSHarbor 不改它的名字`
+            : act === "delete"
+              ? isWeb
+                ? "web 是启动 DSH 用的环境，不能删"
+                : isReserved
+                  ? `${RESERVED_PROFILE} 属于官方桌面端，不是 DSHarbor 管的环境`
+                  : "这是当前正管理的环境，先在上面选一个别的再删"
+              : "这个环境已经不在清单里了"
           : "";
       }
     }

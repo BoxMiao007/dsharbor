@@ -81,9 +81,9 @@ async function openEnvPanel(browser) {
   return page;
 }
 
-/** 从 desktop 环境的三点菜单打开「删除」浮窗（desktop 在假数据里可删）。 */
+/** 从 lab 环境的三点菜单打开「删除」浮窗（web 与 desktop 按角色置灰，lab 可删）。 */
 async function openDeleteModal(page) {
-  await page.click('[data-env-more="desktop"]');
+  await page.click('[data-env-more="lab"]');
   await page.waitForSelector('#env-menu [data-env-act="delete"]', { visible: true, timeout: 4000 });
   await page.click('#env-menu [data-env-act="delete"]');
   await page.waitForSelector("#modal-name:not(.hidden)", { timeout: 4000 });
@@ -226,6 +226,50 @@ test("删除浮窗：内层不再「卡中卡」、底色是纯色、文字与�
     }
     // 两套外观各是各自的纯色（深色深红、浅色浅红），不是一个值混出来的。
     assert.notEqual(backgrounds.dark, backgrounds.light, "深色与浅色应有各自的危险面纯色");
+  } finally {
+    await page.close();
+  }
+});
+
+test("危险动作按角色置灰：web 与 desktop 的改名/删除点不动，lab 可点", { skip: skipReason }, async () => {
+  const page = await openEnvPanel(browser);
+  try {
+    /** 打开某个环境的三点菜单，读改名/删除两项的禁用态与说明，然后收起菜单。 */
+    const readMenu = async (envName) => {
+      await page.click(`[data-env-more="${envName}"]`);
+      await page.waitForSelector('#env-menu [data-env-act="delete"]', { visible: true, timeout: 4000 });
+      const state = await page.evaluate(() => {
+        const pick = (act) => {
+          const el = document.querySelector(`#env-menu [data-env-act="${act}"]`);
+          return { disabled: el.disabled, title: el.title };
+        };
+        return { rename: pick("rename"), del: pick("delete") };
+      });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("#env-menu", { hidden: true, timeout: 4000 });
+      return state;
+    };
+
+    // 启动环境：与核心库 guard_delete / guard_rename 同口径拦住。
+    const web = await readMenu("web");
+    assert.equal(web.rename.disabled, true, "web 是启动 DSH 用的环境，不能改名");
+    assert.match(web.rename.title, /启动 DSH/, "改名置灰的说明要说清是启动环境");
+    assert.equal(web.del.disabled, true, "web 是启动 DSH 用的环境，不能删");
+    assert.match(web.del.title, /启动 DSH/, "删除置灰的说明要说清是启动环境");
+
+    // 官方桌面端：保留名（不分大小写），壳不管它的新建/改名/删除。
+    const desktop = await readMenu("desktop");
+    assert.equal(desktop.rename.disabled, true, "desktop 属于官方桌面端，不能改名");
+    assert.match(desktop.rename.title, /官方桌面端/, "改名置灰的说明要指出官方桌面端");
+    assert.equal(desktop.del.disabled, true, "desktop 属于官方桌面端，不能删");
+    assert.match(desktop.del.title, /官方桌面端/, "删除置灰的说明要指出官方桌面端");
+
+    // 普通环境：既不是启动环境也不是保留名，也不是当前管理目标 → 两项都能点。
+    const lab = await readMenu("lab");
+    assert.equal(lab.rename.disabled, false, "lab 可以改名（后端也允许）");
+    assert.equal(lab.del.disabled, false, "lab 不是当前管理目标，可以删");
+    assert.equal(lab.rename.title, "", "能点的项不该挂禁用说明");
+    assert.equal(lab.del.title, "", "能点的项不该挂禁用说明");
   } finally {
     await page.close();
   }
