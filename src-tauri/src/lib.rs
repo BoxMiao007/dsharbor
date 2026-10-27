@@ -965,40 +965,62 @@ fn open_external(target: String) -> Result<(), String> {
 }
 
 /// 开窗即定 webview 底色：WebView2 首次绘制前有一帧自身底色（纯白），index.html
-/// 再怎么预着色也管不到它。深色给页面底 #0b0f14、浅色给 #eef2f7，与 index.html
-/// 的预着色规则、src/style.css 里 --bg 的取值同值，改色三处同步。
+/// 再怎么预着色也管不到它。深色给页面底 #101114、浅色给 #f2f3f5，与 index.html
+/// 的预着色规则、`src/styles/00-tokens.css` 里 `--bg` 的取值同值，改色三处同步。
 /// 前端切深浅不调这个：外观切换只重染页面，露不出底。
 fn webview_base_color(theme: Option<settings::UiTheme>) -> tauri::window::Color {
     if matches!(theme, Some(settings::UiTheme::Dark)) {
-        tauri::window::Color(11, 15, 20, 255)
+        // #101114
+        tauri::window::Color(16, 17, 20, 255)
     } else {
-        tauri::window::Color(238, 242, 247, 255)
+        // #f2f3f5
+        tauri::window::Color(242, 243, 245, 255)
     }
 }
 
 /// 在系统文件管理器里打开壳配置目录 / DSH 日志目录 / 桥接插件备份目录。
 /// 备份目录入口在「环境/插件」面板的桥接插件浮窗（安装/卸载的备份都落在那里）。
 /// `kind = "profile"` 打开某个环境自己的目录（名称由 `profile` 参数传入，缺省为管理目标）。
+///
+/// async + spawn_blocking：`kind = "profile"` 且运行环境是 WSL 时，拼目录要先问
+/// 发行版的 DSH 主目录（`wsl.exe`，超时 30 秒），同步命令会把这段压在主线程上。
 #[tauri::command]
-fn open_shell_dir(
+async fn open_shell_dir(
     app: tauri::AppHandle,
     kind: String,
     profile: Option<String>,
 ) -> Result<String, String> {
-    let dir = match kind.as_str() {
-        "config" => app_data_root(&app)?,
+    tauri::async_runtime::spawn_blocking(move || {
+        open_shell_dir_inner(&app, &kind, profile.as_deref())
+    })
+    .await
+    .map_err(|err| format!("后台打开目录失败：{err}"))?
+}
+
+/// [`open_shell_dir`] 的内核（同步，跑在后台线程里）。
+///
+/// 配置只读一次：`profile` 名字与目标环境必须来自同一份快照，分两次读盘会在
+/// 「刚好有人保存了配置」时拼出「A 配置的环境名 + B 配置的目标环境」。
+fn open_shell_dir_inner(
+    app: &tauri::AppHandle,
+    kind: &str,
+    profile: Option<&str>,
+) -> Result<String, String> {
+    let dir = match kind {
+        "config" => app_data_root(app)?,
         "logs" => std::path::PathBuf::from(plugin::host_dsh_home()?).join("logs"),
-        "backups" => plugin::backups_root(&app)?,
+        "backups" => plugin::backups_root(app)?,
         // 命令行集成的垫片目录（与版本目录解耦，PATH 里那条永远指这里）。
-        "bin" => shellpath::bin_dir(&app)?,
+        "bin" => shellpath::bin_dir(app)?,
         // 环境目录：前端算不出宿主 / WSL 下的 ~/.dsh/profiles/<名字>，所以由后端拼。
         "profile" => {
+            let shell = settings::load(app);
             let name = match profile {
-                Some(name) => name,
-                None => settings::load(&app).prefs.profile,
+                Some(name) => name.to_string(),
+                None => shell.prefs.profile,
             };
             std::path::PathBuf::from(plugin::profile_dir(
-                &plugin::Target::of(&settings::load(&app).launch),
+                &plugin::Target::of(&shell.launch),
                 &name,
             )?)
         }
