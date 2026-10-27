@@ -474,14 +474,43 @@ pub(crate) fn backups_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 /// 备份目录名列表，按名字升序（目录名是 `backup-<unix 秒>`，字典序即时间序）。
+///
+/// 只收 `backup-` 前缀：`backups/` 下还住着持久化目录 `patch`（补丁层备份，目录
+/// 结构完全不同，由 `patch.rs` 自己管）。不过滤的话两头都错——`latest_backup`
+/// 会恒返回 `backups/patch`（里面没有 4 件套，还原必然报「没有任何可恢复文件」），
+/// `prune_backups` 还会把它当成最旧的一份整个删掉。
 fn backup_dir_names(root: &std::path::Path) -> std::io::Result<Vec<String>> {
     let mut names: Vec<String> = std::fs::read_dir(root)?
         .flatten()
         .filter(|entry| entry.path().is_dir())
         .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with("backup-"))
         .collect();
     names.sort();
     Ok(names)
+}
+
+/// 本次备份要用的目录：同一秒里的第二次备份不能覆盖第一次。
+///
+/// 目录名按名字排序当时间序用（见 `backup_dir_names`），所以补位后缀要能保住
+/// 这个性质：`backup-1700000000` < `backup-1700000000-2` < `backup-1700000001`。
+fn next_backup_dir(root: &std::path::Path, stamp: u64) -> std::path::PathBuf {
+    let first = root.join(format!("backup-{stamp}"));
+    if !first.exists() {
+        return first;
+    }
+    for seq in 2..1000_u32 {
+        let candidate = root.join(format!("backup-{stamp}-{seq}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // 理论到不了这里（同一秒上千次备份）；真到了就用带纳秒的名字，绝不覆盖。
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.subsec_nanos())
+        .unwrap_or(0);
+    root.join(format!("backup-{stamp}-n{nanos}"))
 }
 
 /// 按上限清理最旧的备份，返回被删掉的备份名。
@@ -524,7 +553,8 @@ pub(crate) fn backup_profile(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let backup_dir = backups_root(app)?.join(format!("backup-{stamp}"));
+    // 同一秒连点两次（或两次操作紧挨着）必须各存一份，见 next_backup_dir。
+    let backup_dir = next_backup_dir(&backups_root(app)?, stamp);
     std::fs::create_dir_all(&backup_dir).map_err(|err| format!("创建备份目录失败：{err}"))?;
 
     let mut manifest = String::new();
@@ -1048,6 +1078,154 @@ mod tests {
         assert_eq!(
             cli_profile_label("desktop"),
             ".dsh-alias-desktop（别名 → desktop）"
+        );
+    }
+
+    #[test]
+    fn backup_dirs_ignore_other_residents_of_the_backups_root() {
+        // `backups/` 下还住着补丁层的持久化目录 `patch`：不把它排除掉，
+        // `latest_backup` 会恒指向一份没有 4 件套的目录，prune 还会误删它。
+        let root = std::env::temp_dir().join(format!("dsharbor-bkdirs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("patch").join("host").join("web")).unwrap();
+        std::fs::create_dir_all(root.join("backup-100")).unwrap();
+        std::fs::create_dir_all(root.join("backup-200")).unwrap();
+        std::fs::write(root.join("manifest.txt"), "留着").unwrap();
+
+        let names = backup_dir_names(&root).unwrap();
+        assert_eq!(
+            names,
+            vec!["backup-100".to_string(), "backup-200".to_string()]
+        );
+
+        // 最新的那一份是真的备份，不是 `patch`。
+        assert_eq!(names.last().map(String::as_str), Some("backup-200"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_second_backup_in_the_same_second_gets_its_own_directory() {
+        let root = std::env::temp_dir().join(format!("dsharbor-bkseq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let stamp = 1_700_000_000_u64;
+        let first = next_backup_dir(&root, stamp);
+        std::fs::create_dir_all(&first).unwrap();
+        let second = next_backup_dir(&root, stamp);
+        std::fs::create_dir_all(&second).unwrap();
+        let third = next_backup_dir(&root, stamp);
+        std::fs::create_dir_all(&third).unwrap();
+
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+        // 名字仍按时间序：同一秒的补位份排在下一秒之前。
+        let mut names: Vec<String> = [&first, &second, &third]
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        let next_second = next_backup_dir(&root, stamp + 1);
+        let next_second_name = next_second
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            names
+                .iter()
+                .all(|name| name.as_str() < next_second_name.as_str()),
+            "{names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn newest_package_picks_the_highest_semver_not_the_first_file() {
+        // 目录遍历顺序由文件系统决定，取「第一个」等于随机：真实症状是升级后
+        // 旧版本的 tgz 还在资源目录里，却被先读到、装回旧版桥接。
+        let packages = vec![
+            (
+                "0.9.0".to_string(),
+                r"C:\app\dsharbor-bridge-0.9.0.tgz".to_string(),
+            ),
+            (
+                "0.10.0".to_string(),
+                r"C:\app\dsharbor-bridge-0.10.0.tgz".to_string(),
+            ),
+            (
+                "0.2.1-rc.2".to_string(),
+                r"C:\app\dsharbor-bridge-0.2.1-rc.2.tgz".to_string(),
+            ),
+        ];
+        assert_eq!(
+            newest_package(&packages).as_deref(),
+            Some(r"C:\app\dsharbor-bridge-0.10.0.tgz"),
+            "0.10.0 比 0.9.0 新（字典序会选错）"
+        );
+
+        // 名字读不出版本号（手改过的包名）排最后，不会被当成「最新」。
+        let with_junk = vec![
+            ("snapshot".to_string(), "junk.tgz".to_string()),
+            ("0.1.0".to_string(), "real.tgz".to_string()),
+        ];
+        assert_eq!(newest_package(&with_junk).as_deref(), Some("real.tgz"));
+
+        assert_eq!(newest_package(&[]), None);
+    }
+
+    #[test]
+    fn host_write_file_replaces_content_and_leaves_no_temp_file() {
+        // 环境清单被改写（开关插件、复制/改名环境）都走 write_file，
+        // 它必须是「替换」而不是「截断后写」：否则一次中断就毁掉用户的环境。
+        let root = std::env::temp_dir().join(format!("dsharbor-write-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("package.json");
+        let target = Target::Host;
+        let path_text = path.to_string_lossy().to_string();
+
+        write_file(&target, &path_text, "{\"name\":\"first\"}").unwrap();
+        write_file(&target, &path_text, "{\"name\":\"second\"}").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"name\":\"second\"}"
+        );
+        let names: Vec<String> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["package.json".to_string()],
+            "临时文件不能留下：{names:?}"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 超时收尾必须连**整棵**进程树一起结束，而不是只杀直接子进程。
+    ///
+    /// 用一条会睡一会儿的 `cmd /C ping` 当替身：这正是 `run_capture` 里
+    /// `cmd /C npm` 的形状（cmd 下面还有真正的活）。只 kill 直接子进程的话，
+    /// 界面收到「命令超时」而孙进程还在写盘。
+    #[cfg(windows)]
+    #[test]
+    fn timeout_kill_ends_the_whole_process_tree() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "ping", "-n", "10", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("拉起替身进程");
+
+        let message = timeout_kill(&mut child, Duration::from_secs(1));
+
+        assert!(message.contains("已终止整棵进程树"), "{message}");
+        assert!(
+            matches!(child.try_wait(), Ok(Some(_))),
+            "超时收尾之后子进程必须已经结束"
         );
     }
 }
