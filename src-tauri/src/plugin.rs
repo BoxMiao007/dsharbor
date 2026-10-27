@@ -325,8 +325,7 @@ pub(crate) fn run_capture(
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if started.elapsed() > timeout {
-                    let _ = child.kill();
-                    return Err(format!("命令超时（{} 秒未结束）", timeout.as_secs()));
+                    return Err(timeout_kill(&mut child, timeout));
                 }
                 std::thread::sleep(Duration::from_millis(120));
             }
@@ -337,6 +336,46 @@ pub(crate) fn run_capture(
     std::thread::sleep(Duration::from_millis(150));
     let text = buffer.lock().map(|guard| guard.clone()).unwrap_or_default();
     Ok((status.code().unwrap_or(-1), text.trim_end().to_string()))
+}
+
+/// 超时收尾：杀**整棵**进程树并回收，返回给用户看的错误文案。
+///
+/// 这里拉起的多是 `cmd /C npm` / `cmd /C pnpm`，真正的活是孙进程 node 在干：
+/// 只 `kill()` 直接子进程的话，node 会留在后台继续写 `node_modules`——
+/// 界面收到「命令超时」，磁盘却还在变，用户看到的是自相矛盾的状态。
+/// 用 `launcher::kill_tree`（taskkill /T /F）连整棵树一起结束。
+///
+/// 回收用**有界**轮询而不是无界的 `child.wait()`：taskkill 万一没生效（权限、
+/// 进程句柄被占），`wait()` 会把这个线程永久挂住，那比超时本身更糟。
+fn timeout_kill(child: &mut std::process::Child, timeout: Duration) -> String {
+    let killed = crate::launcher::kill_tree(child.id());
+    let mut exited = false;
+    for _ in 0..10 {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => {
+                exited = true;
+                break;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    if !exited {
+        // 兜底：至少把直接子进程结束掉，别留一个我们自己再也管不到的句柄。
+        let _ = child.kill();
+        let _ = child.try_wait();
+    }
+    let seconds = timeout.as_secs();
+    // 话说准一点：taskkill 偶尔会报「找不到进程」（其实刚好自己退了），
+    // 这时真正该让用户知道的是「进程到底还在不在」，而不是 taskkill 的退出码。
+    let state = if exited {
+        "进程已结束"
+    } else {
+        "进程可能仍在运行，请到任务管理器确认"
+    };
+    match killed {
+        Ok(()) => format!("命令超时（{seconds} 秒未结束），已终止整棵进程树（{state}）"),
+        Err(err) => format!("命令超时（{seconds} 秒未结束）：{err}；{state}"),
+    }
 }
 
 pub(crate) fn tail_chars(text: &str, max: usize) -> String {
