@@ -15,7 +15,7 @@
 use std::fs;
 use std::time::Duration;
 
-use dsharbor_core::launch::{LaunchConfig, LaunchMode, Runtime};
+use dsharbor_core::launch::{self, LaunchConfig, LaunchMode, Runtime};
 use dsharbor_core::npx_cache;
 use serde::Serialize;
 
@@ -52,9 +52,13 @@ pub struct InstalledDsh {
 /// 超时）才把原因带出去，让界面能提示用户。
 pub fn scan(config: &LaunchConfig) -> Result<Vec<InstalledDsh>, String> {
     let mut installs: Vec<InstalledDsh> = Vec::new();
+    // 按「实际生效」的运行环境扫，不直接读 `config.runtime`：后者可能残留旧启动
+    // 方式下的 WSL 值，而「系统全局命令 / 指定程序路径」恒跑在 Windows 宿主上
+    // （口径与 `plugin::Target::of` 一致，那里注明了同一个原因）。
+    let runtime = launch::runtime_of(config);
 
     // npx 缓存：复用 npxcache 的扫描（它已经处理了「目录不存在返空」）。
-    for item in npxcache::installed(&config.runtime)? {
+    for item in npxcache::installed(runtime)? {
         installs.push(InstalledDsh {
             in_use: npx_in_use(config, item.version.as_deref()),
             version: item.version,
@@ -65,7 +69,7 @@ pub fn scan(config: &LaunchConfig) -> Result<Vec<InstalledDsh>, String> {
     }
 
     // npm 全局：问路径，有路径就算装了；版本从那个目录的 package.json 读。
-    if let Some(path) = npm_global_path(&config.runtime)? {
+    if let Some(path) = npm_global_path(runtime)? {
         installs.push(InstalledDsh {
             in_use: matches!(config.mode, LaunchMode::System),
             version: read_version(&path),
