@@ -173,7 +173,17 @@ async fn restart_dsh(app: tauri::AppHandle, config: LaunchConfig) -> Result<(), 
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         stop_session(&state)?;
-        start_session(&app, &state, &config)
+        start_session(&app, &state, &config).or_else(|err| {
+            // 连点两次「重启」（或界面重启撞上托盘重启）时的交错：两边都先停、再拉起，
+            // 先到的那次已经把会话按同一份配置拉起来了，后到的那次在 spawn 时撞上
+            // 「已有会话在运行」。此刻用户要的结果已经达成，把它当红字报出去是误导
+            // ——真机实测过：PID 确实换了、会话正常，界面却挂着一句失败。
+            if err == SESSION_BUSY {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        })
     })
     .await
     .map_err(|err| format!("后台重启 DSH 失败：{err}"))?
