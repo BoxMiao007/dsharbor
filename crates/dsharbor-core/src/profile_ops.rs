@@ -5,7 +5,7 @@
 //! 真正的建目录、递归复制、改名、删目录都在壳那一层（`src-tauri`），
 //! 于是这些规则可以在开发机上跑全自动测试，不需要在 Windows 上装 DSH。
 
-use crate::profiles::{validate_name, DESKTOP_PROFILE, WEB_APP_BUNDLE};
+use crate::profiles::{is_reserved, validate_name, DESKTOP_PROFILE, WEB_APP_BUNDLE};
 
 /// DSH 环境包清单里必有的基础 bundle（新环境都从它起步）。
 pub const BASE_BUNDLE: &str = "@deepseek-ai/dsh-base";
@@ -175,7 +175,11 @@ fn spec_points_into(spec: &serde_json::Value, normalized_dir: &str) -> bool {
 /// 新建环境的守卫。`exists` 由壳按磁盘实际情况传入。
 pub fn guard_create(name: &str, exists: bool) -> Result<(), String> {
     validate_name(name)?;
-    if name == DESKTOP_PROFILE {
+    // 用 profiles::is_reserved 而不是 `==`：那个函数不分大小写（DSH 自己按
+    // toLowerCase 比，Windows 目录名也不分大小写）。在这里精确比较会放过
+    // `Desktop`——Windows 上它被「已经存在」兜住，WSL 的 Linux 文件系统却真的
+    // 能建出来，随后被 CLI 映射到官方 desktop 环境。
+    if is_reserved(name) {
         return Err(format!(
             "「{DESKTOP_PROFILE}」是官方桌面端独占的环境名，换一个名字。"
         ));
@@ -200,7 +204,7 @@ pub fn guard_copy(source: &str, name: &str, exists: bool) -> Result<(), String> 
 pub fn guard_rename(old: &str, new: &str, new_exists: bool) -> Result<(), String> {
     validate_name(old)?;
     validate_name(new)?;
-    if old == DESKTOP_PROFILE {
+    if is_reserved(old) {
         return Err(format!(
             "「{DESKTOP_PROFILE}」属于官方桌面端，DSHarbor 不改它的名字。"
         ));
@@ -208,16 +212,25 @@ pub fn guard_rename(old: &str, new: &str, new_exists: bool) -> Result<(), String
     if old == new {
         return Err(format!("新旧环境名相同：「{new}」，没有需要改的地方。"));
     }
+    // 启动恒用 `web`（见 launch.rs 的 PROFILE_NAME）。把它改掉之后，壳下次启动的
+    // 已经不是用户一直在用的那份环境了：插件集、桥接插件、补丁层全留在旧目录里，
+    // 效果与「删掉 web」等价——而删除这条路在 guard_delete 里是明确拦住的。
+    if old == crate::launch::PROFILE_NAME {
+        return Err(format!(
+            "「{old}」是启动 DSH 用的环境，改了名壳就启动到别的环境去了。要换启动环境，先在上方改启动方式。"
+        ));
+    }
     guard_create(new, new_exists)
 }
 
-/// 删除环境的守卫：正在启动用的 web 环境、官方桌面端目录都不许删，并说清原因。
+/// 删除环境的守卫：官方桌面端、启动恒用的 `web`、当前管理目标，三者都不许删。
 ///
-/// 壳启动时恒用 `web`（见 launch.rs 的 PROFILE_NAME），所以真正不能删的是 `web`，
-/// 而不是界面里刚好选中的那个管理目标——选中的不是 web 时可以随便删掉。
+/// 三条理由不同，所以三条都要有：桌面端不归壳管；`web` 是启动恒用的（见 launch.rs
+/// 的 PROFILE_NAME），删了整个壳就没法启动；当前管理目标删掉之后，界面上正在管理
+/// 的那份环境立刻消失（选择得先换到别的环境）。除此之外的环境可以随便删。
 pub fn guard_delete(name: &str, current: &str) -> Result<(), String> {
     validate_name(name)?;
-    if name == DESKTOP_PROFILE {
+    if is_reserved(name) {
         return Err(format!(
             "「{DESKTOP_PROFILE}」属于官方桌面端，不是 DSHarbor 管的环境，不能删除。"
         ));
@@ -430,13 +443,29 @@ mod tests {
 
     #[test]
     fn renaming_checks_the_new_name_like_creating_one() {
-        assert!(guard_rename("web", "lab", false).is_ok());
-        let err = guard_rename("web", "web", false).unwrap_err();
+        assert!(guard_rename("lab", "dev", false).is_ok());
+        // 启动恒用的 web 不能被改名：改掉它等于把壳的启动环境换掉，而删除
+        // 同一份环境在 guard_delete 里是被拒绝的，两条路必须同样拦。
+        let err = guard_rename("web", "lab", false).unwrap_err();
+        assert!(err.contains("启动 DSH"), "{err}");
+        let err = guard_rename("lab", "lab", false).unwrap_err();
         assert!(err.contains("相同"), "{err}");
-        let err = guard_rename("web", "lab", true).unwrap_err();
+        let err = guard_rename("lab", "web", true).unwrap_err();
         assert!(err.contains("已经存在"), "{err}");
-        let err = guard_rename("web", "环境", false).unwrap_err();
+        let err = guard_rename("lab", "环境", false).unwrap_err();
         assert!(err.contains("环境名"), "{err}");
+    }
+
+    #[test]
+    fn reserved_names_are_rejected_regardless_of_case() {
+        // 大小写不敏感：CLI 自己按 toLowerCase 比，WSL 的 Linux 文件系统又真的
+        // 能建出 `Desktop`，精确比较会让它溜进管道再被映射到官方环境。
+        for name in ["desktop", "Desktop", "DESKTOP"] {
+            assert!(is_reserved(name), "{name}");
+            assert!(guard_create(name, false).is_err(), "{name}");
+            assert!(guard_delete(name, "web").is_err(), "{name}");
+            assert!(guard_rename(name, "lab", false).is_err(), "{name}");
+        }
     }
 
     #[test]
