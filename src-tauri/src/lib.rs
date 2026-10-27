@@ -77,6 +77,9 @@ struct AppState {
     /// 延迟销毁主窗口的世代号：每次重新计时或撤销计时都自增，
     /// 上一轮的计时线程醒来发现不是最新一代就直接放弃（见 arm_light_destroy）。
     light_generation: std::sync::atomic::AtomicU64,
+    /// 壳正在退出（见 `begin_exit`）：置位后不再拉起新进程，避免退出与后台
+    /// 「重启」并发时留下一个没人管的 DSH 占着端口。
+    exiting: std::sync::atomic::AtomicBool,
 }
 
 #[tauri::command]
@@ -199,6 +202,11 @@ fn spawn_session(
             .session
             .lock()
             .map_err(|_| "内部状态异常".to_string())?;
+        // 正在退出就别再拉起进程：退出路径的「置位 + 停会话」与这里抢同一把锁
+        // （见 begin_exit），所以此刻看到 false 就一定还有机会被那次停止收掉。
+        if state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("壳正在退出，没有拉起新的 DSH。".to_string());
+        }
         if let Some(existing) = guard.as_mut() {
             if existing.is_alive() {
                 return Err(SESSION_BUSY.into());
@@ -247,13 +255,7 @@ fn spawn_session(
         }
     };
     if let Ok(mut slot) = state.spawn_error.lock() {
-        // 「已有会话在运行」是拒绝，不是故障：会话好好在跑，把它当失败写进去只会
-        // 让界面长期挂一条红字（这个值平时只在下次成功启动时才清）。连点两次重启
-        // 就是这个情形——后到的那次被前一次刚拉起的会话挡住。
-        *slot = match result.as_ref().err() {
-            Some(err) if err.as_str() == SESSION_BUSY => None,
-            other => other.cloned(),
-        };
+        *slot = result.as_ref().err().cloned();
     }
     if result.is_ok() && spawned_child {
         // 版本号在启动成功后异步查，不拖慢「启动」按钮；取不到就保持「DSH 版本未知」。
@@ -541,6 +543,35 @@ fn stop_session(state: &AppState) -> Result<(), String> {
     // 停止成功：之前那条「停止失败，进程可能仍在运行」的红字必须撤掉，
     // 否则它会一直挂在界面上（状态轮询每次都把它显示出来），用户以为问题还在。
     clear_spawn_error(state);
+    Ok(())
+}
+
+/// 退出前的收尾：在 `session` 锁内先钉住「正在退出」，再停会话。
+///
+/// **调用方必须保证随后真的退出**：`exiting` 是单向标志，没有复位——它存在的
+/// 目的就是让并发跑着的后台任务（托盘「重启」）再也拉不起新进程。若哪天出现
+/// 「置位了但没退」的路径，壳会卡在「什么也启动不了」的状态里。
+///
+/// 为什么必须和 spawn 抢同一把锁：`StopDshAndExit` 与托盘「重启」现在是两个
+/// 各自跑在后台线程上的任务，会并发。若退出只做「停会话」就撒手，重启任务可能
+/// 恰好在停完之后才拿到锁、把新进程拉起来——壳随即退出，留下一个没人管的 DSH
+/// 占着端口（下次启动会被认成「外部运行中」，既停不掉也重启不掉）。
+/// 置位与 `spawn_session` 里的检查都在同一把锁内，于是只有两种结果：要么重启先
+/// 落地（这次退出会把那个会话停掉），要么重启被拒（根本不会拉起）。
+fn begin_exit(state: &AppState) -> Result<(), String> {
+    let Ok(mut guard) = state.session.lock() else {
+        return Err("内部状态异常：会话状态锁已损坏，无法停止 DSH".to_string());
+    };
+    state
+        .exiting
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let Some(session) = guard.as_mut() else {
+        // 没有会话在跑：标志已经钉住，退出照常进行。
+        return Ok(());
+    };
+    // 停不掉也要退（用户的明确意图），句柄留在状态里无妨——进程马上就没了。
+    session.stop()?;
+    guard.take();
     Ok(())
 }
 
@@ -1568,18 +1599,34 @@ pub(crate) fn dispatch_lifecycle(app: &tauri::AppHandle, event: ShellEvent) {
                         return;
                     };
                     if let Err(err) = restart_session(&app, &state) {
+                        // 「已有会话在运行」是拒绝而不是故障（连点两次重启就会踩到：
+                        // 后到的那次被前一次刚拉起的会话挡住）。会话好好在跑，写进
+                        // spawn_error 只会让界面长期挂一条红字——那个值要等下一次
+                        // 成功启动才清。所以只记日志，不往界面上报。
+                        if err == SESSION_BUSY {
+                            eprintln!("[dsharbor] 托盘「重启 DSH」跳过：已有会话在运行");
+                            return;
+                        }
                         eprintln!("[dsharbor] 托盘「重启 DSH」失败：{err}");
                         remember_spawn_error(&state, format!("托盘「重启 DSH」失败：{err}"));
                     }
                 });
             }
             ShellAction::StopDshAndExit => {
-                // 退出是用户的明确意图，不能因为停止失败就卡住不退出；
-                // 但原因必须留下——杀不掉的 DSH 会变成孤儿进程占着端口。
-                if let Err(err) = stop_session(&state) {
-                    eprintln!("[dsharbor] 完全退出前停止 DSH 失败：{err}");
-                }
-                app.exit(0);
+                // 退出是用户的明确意图，不能因为停止失败就卡住不退出；但原因必须留下
+                // ——杀不掉的 DSH 会变成孤儿进程占着端口。
+                // 「停（最长 5 秒）+ 退出」整段留在托盘回调里会把菜单冻住，与「重启」
+                // 一样丢到后台线程；退出前的收尾走 begin_exit（它会先钉住「正在退出」，
+                // 让并发的后台重启拉不起新进程）。
+                let app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        if let Err(err) = begin_exit(&state) {
+                            eprintln!("[dsharbor] 完全退出前停止 DSH 失败：{err}");
+                        }
+                    }
+                    app.exit(0);
+                });
             }
         }
     }
@@ -1936,11 +1983,39 @@ pub fn run() {
                     //（正常路径在 StopDshAndExit 里已停过）。进程要退了，所以
                     // 这里只记日志——但必须留下可读原因：没杀掉的 DSH 会变成孤儿。
                     cancel_light_destroy(app_handle);
-                    if let Err(err) = stop_session(&state) {
+                    if let Err(err) = begin_exit(&state) {
                         eprintln!("[dsharbor] 退出时停止 DSH 失败：{err}");
                     }
                 }
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn begin_exit_pins_the_flag_so_a_background_restart_cannot_spawn() {
+        let state = AppState::default();
+        assert!(!state.exiting.load(Ordering::SeqCst));
+
+        assert!(begin_exit(&state).is_ok(), "没有会话时退出收尾也应成功");
+        assert!(
+            state.exiting.load(Ordering::SeqCst),
+            "退出必须钉住标志：否则并发跑着的托盘重启会在「停完」之后把新进程拉起来，\
+             壳随即退出——留下一个没人管的 DSH 占着端口"
+        );
+    }
+
+    #[test]
+    fn begin_exit_is_idempotent() {
+        let state = AppState::default();
+        assert!(begin_exit(&state).is_ok());
+        // 正常退出会走两次收尾（托盘「完全退出」一次，事件循环的 ExitRequested 再兜一次），
+        // 第二次不能因为标志已经置位就报错。
+        assert!(begin_exit(&state).is_ok());
+    }
 }
