@@ -52,7 +52,7 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 ## 容易踩的
 
 - **前端测试跑的是 `dist/mock.html`,不是源码**:改完前端必须先 `pnpm build` 再跑 `node --test --test-concurrency=2 test/frontend/`,否则测的是旧构建、出「假失败」;测试莫名失败先怀疑构建没刷新,再怀疑代码。
-- **前端测试每个文件独占一个端口**(log-unread 8207 / plugin-switch 8208 / version-picker 8209 / toolbar-round 8210 / plugin-update 8211 / notice-hint 8212 / badge-color 8213 / danger-surface 8214 / motion-pref 8215 / motion-interactions 8216 / motion-tooltip 8217 / motion-theme 8218 / motion-panels 8219 / motion-modal 8220 / motion-spinner 8221 / motion-toast 8222 / motion-copy 8223 / motion-progress 8224 / motion-skeleton 8225 / plugin-transfer 8226 / plugin-home 8227;8228 起空闲):这张表是**唯一副本**,测试文件里只写 `const PORT = 8212;` 加一句指回本表,不再各自抄一份(抄的那几份已经烂过一次——notice-hint 与 motion-pref 曾同为 8215)。`node --test` 并行跑会同时起各自的预览台,新写测试文件先挑没占用的端口——先 `grep -h "const PORT" test/frontend/*.test.mjs` 看现状;调试留下的预览台进程占住端口,会让测试自己的预览台「预览台退出 (code 1)」整组秒挂,先 `netstat -ano` 找到 PID 再 `taskkill`。
+- **前端测试每个文件独占一个端口**(log-unread 8207 / plugin-switch 8208 / version-picker 8209 / toolbar-round 8210 / plugin-update 8211 / notice-hint 8212 / badge-color 8213 / danger-surface 8214 / motion-pref 8215 / motion-interactions 8216 / motion-tooltip 8217 / motion-theme 8218 / motion-panels 8219 / motion-modal 8220 / motion-spinner 8221 / motion-toast 8222 / motion-copy 8223 / motion-progress 8224 / motion-skeleton 8225 / plugin-transfer 8226 / plugin-home 8227;8228 起空闲):这张表是**唯一副本**,测试文件里只写 `const PORT = 8212;` 加一句指回本表,不再各自抄一份(抄的那几份已经烂过一次——notice-hint 与 motion-pref 曾同为 8215)。`node --test` 并行跑会同时起各自的预览台,新写测试文件先挑没占用的端口——先 `grep -h "const PORT" test/frontend/*.test.mjs` 看现状;调试留下的预览台进程占住端口,会让测试自己的预览台「预览台退出 (code 1)」整组秒挂,先 `netstat -ano` 找到 PID 再 `taskkill`——现在预览台自己会打印「端口 8223 已被占用：占用进程 PID …」,先看那一行再动手。
 - **前端测试要带 `--test-concurrency=2` 跑**(如 `node --test --test-concurrency=2 test/frontend/*.test.mjs`):默认全并行会让每个动效时序断言成片假失败(已两轮实证:全并行挂 8~9 个 motion-*/notice-hint/log-unread 用例,低并发全绿)——十几套 Edge + 预览台同时抢 CPU,动画帧时序全被拖慢;失败样例是「应已淡出,实测 opacity=1」「期望 162px 实测 165.5px」这类差一点点的断言,先怀疑并发而不是代码。
 - **mock 假命令的延时按「每条命令」计**(如「全部更新」一条命令 600ms,不是每个插件各 600ms):写等待与超时断言前,先看 mock 状态里注入的延时字段。
 
@@ -74,6 +74,8 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 
 ## 版本与发布(用户明确说发版时才做)
 
+版本号变更只发生在发布流程中：日常开发、修 bug、加功能都不主动改版本号，也不预先占用下一个版本号；只有用户明确说要发版时，才进入本节流程。
+
 本项目遵循 SemVer 2.0.0，标签格式 `vX.Y.Z`。递增由当前版本阶段与 Commit 类型机械决定：
 
 - `BREAKING CHANGE:` footer，或任意类型携带 `!`（如 `feat!:`、`fix!:`、`refactor!:`）→ 升 MAJOR；
@@ -81,13 +83,16 @@ v1 只做 Windows;开发与运行都在 Windows 本机(原 WSL2 + cargo-xwin 交
 - 其余类型一律升 PATCH（如 `fix:`、`perf:`、`docs:`、`chore:`、`test:`、`ci:`、`build:`）；
 - 处于 `0.y.z` 阶段时，凡按上述规则应升 MAJOR 的，改为升 MINOR；
 - 无法机械判定时，暂停自动决策，列出候选版本号及理由，请用户选择。
-- 仓库还没有任何 `vX.Y.Z` 标签时，首个发布为 `0.1.0`。
+
+递增依据上一个 `vX.Y.Z` 标签到 HEAD 之间的提交；仓库还没有任何 `vX.Y.Z` 标签时，首个发布为 `0.1.0`。
+
+预发布版本（需要预发布时使用，新项目初期通常用不到）：形式为 `-alpha.N`、`-beta.N`、`-rc.N` 后缀，如 `v1.2.0-beta.1`，同一目标版本内 `N` 从 1 递增。预发布不替代正式版递增规则——它只是把某个已按 MAJOR/MINOR/PATCH 算出的目标版本提前放出去；预发布同样走下面的发布流程与发布闸门（本地 annotated tag → 停下等批准 → 推送 tag 并创建 Release），`gh release create` 时按预发布语义建 Release。
 
 发布流程：
 
 1. 更新承载版本号的文件（如 `VERSION`、`package.json`）。
-2. 创建本地 annotated tag：`git tag -a vX.Y.Z -m "Release vX.Y.Z"`，**不推送**。
-3. 停下并等待用户批准（闸门规则见全局 `AGENTS.md`「发布闸门」）；批准前不再产生新提交，若已产生，批准后先删掉本地 tag 重打（未推送的 tag 可以删），再推送。
+2. 确认版本号改动已在提交中（未提交时先 `git commit -m "chore(release): X.Y.Z"`，本仓库升版提交不带 `v` 前缀），再创建本地 annotated tag：`git tag -a vX.Y.Z -m "Release vX.Y.Z"`，**不推送**。
+3. 停下并等待用户批准（闸门规则见全局 `AGENTS.md`「发布闸门」；未获批准不得推送 tag、不得执行 `gh release create`），报告候选版本号与递增理由。批准前不再产生新提交，若已产生，批准后先删掉本地 tag 重打（未推送的 tag 可以删），再推送。
 4. 获批准后推送 tag 并执行 `gh release create`，Release 正文写清本次版本号与变更分类（breaking / feature / fix）；`gh` 未认证或仓库无 Release 权限时，只推送 tag 并说明原因，不阻断发布。
 
 验证：宣称发布完成须附 `git tag -l vX.Y.Z` 与 `gh release view vX.Y.Z` 实际输出，并确认版本号文件与 tag 一致。
