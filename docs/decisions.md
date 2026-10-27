@@ -671,3 +671,15 @@
 |------|------|--------|------------|
 | 2026-10-26 | 检查更新的名单改成从**插件卡同一份清单**（新增的 `plugin_switch::bare_items`，`items()` 不读说明/主页的轻量版）里挑，而不是自己另读 `dsh.profile.bundles`；保留条件与界面一致（`switchable`、非桥接、`in_update_scope`） | 停用只是把名字从 `dsh.profile.bundles` 摘掉、包与 `dependencies` 都留在磁盘上（DSH 自己的组合包开关就是这个语义，`docs/decisions.md` 2026-10-25 那条），只扫 bundles 等于「一停用就连版本号都没了」；而自己再解析一次清单必然与卡片口径漂移——复用一个入口，界面有哪一行就查哪一行 | 继续只扫 `bundles` 并另加停用分支（两处名单要一直手动对齐）；把所有 `dependencies` 都查（传递依赖会被误当成插件，徽标计数虚高）；前端拿 `plugin_list` 的结果回填（检查更新是独立后端命令，界面状态不参与决策） |
 | 2026-10-26 | 轻量版只读清单与挂载点、不读每个包的 `description` / `homepage`；`items()` 复用它再补字段 | WSL 目标下每读一个包的 `package.json` 就是一条 `wsl.exe`，十几二十个插件叠加起来会把「检查更新」拖到明显能感觉到的时长，而这些字段根本用不上 | 直接调 `items()`（实现最省事，但每次检查多出 N 条 WSL 往返）；另写一套名字解析（与卡片口径分开，正是这次要消灭的漂移） |
+
+## 2026-10-27 一轮全仓审阅后的修复：原子写、失败可见、命令不再压主线程
+
+四组审阅（核心库 / 壳层 / 前端 / 验证门）跑完后，与「数据安全」「线程模型」「不变量一致」相关的几条需要留档——它们都属于「改对了但当初没写下来的理由」。
+
+| 日期 | 决策 | 为什么 | 放弃了什么 |
+|------|------|--------|------------|
+| 2026-10-27 | 用户配置与环境文件统一走**原子写**（新增 `src-tauri/src/atomic.rs`：同目录临时文件 + `rename` 覆盖；WSL 侧 `cat > x.tmp && mv -f`），覆盖 `config.json`、`dsh-version.txt` 与环境的 `package.json` / `cordis.patch.yml` 等；`settings::load` 读不懂时把原文另存成 `config.json.bad` 并打日志 | `std::fs::write` 是先 truncate 再写，中断落在两步之间就留下空文件或半截 JSON；而界面启动时会 `save_ui_theme` 整份回写，一次读坏就被固化成「配置归零」，全程没有任何提示或副本 | 每次写前都备份旧文件（用户目录里堆副本，而绝大多数写入是正常路径）；改用注册表/数据库存配置（Win 与 WSL 两套文件系统要各写一套） |
+| 2026-10-27 | 六个慢命令（`start_dsh` / `restart_dsh` / `bridge_install` / `bridge_uninstall` / `bridge_restore` / `open_shell_dir`）改成 `async` + `spawn_blocking`，闭包里用 `AppHandle` 取 `State` | 同步命令在 IPC 回调里内联执行（Windows 上 IPC 走 WebView2 的 `WebResourceRequested`，触发在创建 webview 的 UI 线程），`bridge_install` 最长 240 秒、WSL 的 `write_file` 连超时都没有——安装期间窗口不处理任何消息；同仓库 `install_profile_deps` / `plugin_update` 早已是 async，这是不一致 | 把 npm 调用换成异步库（仍要等子进程，多一层封装收益有限）；给命令加自绘「忙」遮罩（窗口消息照样不处理，只是看起来有反馈） |
+| 2026-10-27 | `stop_session` 返回 `Result`，停止失败时**句柄留在状态里**可重试；`restart` 停止失败即整体失败；托盘与退出这类没有回执通道的入口把原因写进 `spawn_error`，由 1 秒一次的状态轮询显示出来 | 旧实现 `let _ = session.stop()` 吞掉「停止超时」，之后仍旧 spawn：新进程起不来时壳会把它认成「外部运行中」，用户看到「重启成功」，实际旧进程还在跑，从此既停不掉也重启不掉 | 停止失败就无条件强杀（`taskkill /F` 对正在写盘的 DSH 有风险，用户可能正跑长任务）；失败后直接丢弃句柄（等于放弃这个进程） |
+| 2026-10-27 | 启动环境 `web` 不许**改名**（`guard_rename` 与 `guard_delete` 同口径）；保留名判定统一走 `profiles::is_reserved`（不分大小写） | 改名之后壳仍按 `dsh web` 启动，用户以为还是原来那份环境，实际起来的是一份没有插件集/桥接/补丁层的新环境；而删除同一份是被拦住的，两条路必须一致。保留名精确比较还会放过 `Desktop`（Windows 被「已存在」兜住，WSL 的 Linux 文件系统真能建出来） | 允许改名并同步改启动环境名（要动「启动恒用 web」这条契约，牵动启动、插件、补丁层全线） |
+| 2026-10-27 | 资源目录里并存多个 `dsharbor-bridge-*.tgz` 时按 semver 取**最新**（复用 `registry::sort_newest_first`） | 目录遍历顺序由文件系统决定，「取第一个」等于随机：升级后旧 tgz 还留在资源目录里，就可能把旧版桥接装回用户环境（版本号与行为一起回退） | 打包后清理旧 tgz（手工操作不可靠，安装包里也可能残留）；按修改时间取最新（时间戳会被复制/解压改写） |
