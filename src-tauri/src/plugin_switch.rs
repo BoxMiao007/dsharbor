@@ -24,7 +24,9 @@ use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::patch;
-use crate::plugin::{join_path, profile_dir, read_file, write_file, wsl_script, Target};
+use crate::plugin::{
+    backup_profile, join_path, profile_dir, read_file, write_file, wsl_script, Target,
+};
 
 /// 需要扫描的补丁文件名（与核心库里的候选表保持同一来源）。
 const PATCH_CANDIDATES: &[&str] = plugin_switch::BUNDLE_PATCH_CANDIDATES;
@@ -38,7 +40,10 @@ const NODE_MODULES: &str = "node_modules";
 pub struct ToggleOutcome {
     /// 给用户看的中文说明（含「重启后生效」的提醒）。
     pub message: String,
-    /// 本次开关前自动产生的环境备份（覆盖 package.json 与补丁层等），完整路径。
+    /// 本次开关前自动产生的环境备份目录（四件套：`package.json` /
+    /// `pnpm-workspace.yaml` / `pnpm-lock.yaml` / `cordis.patch.yml`），
+    /// 可交给 `plugin::restore` 整体回滚——开关真正改的就是前两个里的
+    /// `dsh.profile.bundles`，只备补丁层的话这个承诺是假的。
     pub backup: String,
     /// 关掉桥接插件时的额外提醒（其它情况没有）。
     pub warning: Option<String>,
@@ -290,9 +295,15 @@ pub fn toggle(
     let updated_patch = plugin_switch::drop_managed_block(&patch_text);
     let patch_changed = updated_patch != patch_text;
 
-    // 备份必须在写之前（票据要求：每次开关前自动备份；package.json 与补丁层都在
-    // 备份清单里）。
-    let backup = patch::backup(app, config, profile)?;
+    // 备份必须在写之前（票据要求：每次开关前自动备份）。开关真正改的是
+    // `package.json` 的 `dsh.profile.bundles` 与补丁层，所以两份都要留：
+    // - `backup_profile` 的四件套是**回滚的依据**（`plugin::restore` 能整体还原，
+    //   包括 `package.json`）；只备补丁层的旧写法会让回执里「已备份」对
+    //   `package.json` 不成立；
+    // - 补丁层备份单独留着（补丁层卡按它列清单/还原），改动补丁层的操作也照旧
+    //   在补丁层卡里能看见一条可还原的记录。
+    let backup = backup_profile(app, &target, profile)?;
+    let patch_backup = patch::backup(app, config, profile)?;
 
     if new_manifest != manifest {
         write_file(
@@ -316,10 +327,15 @@ pub fn toggle(
     if patch_changed {
         message.push_str("补丁层里旧版壳遗留的插件开关记录已一并清掉。");
     }
-    message.push_str(&format!("已自动备份环境文件：{}", backup.path));
+    message.push_str(&format!(
+        "已自动备份环境文件（package.json、pnpm 清单与锁文件、补丁层共 4 件）：{}{}",
+        backup.dir,
+        crate::plugin::prune_note(&backup.pruned)
+    ));
+    message.push_str(&format!("\n补丁层备份：{}", patch_backup.path));
     Ok(ToggleOutcome {
         message,
-        backup: backup.path,
+        backup: backup.dir,
         warning: if name == BRIDGE_PLUGIN && !enabled {
             Some(plugin_switch::bridge_off_warning().to_string())
         } else {
