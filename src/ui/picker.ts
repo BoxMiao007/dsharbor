@@ -87,15 +87,6 @@ export class Picker {
     document.addEventListener("pointerdown", this.onDocumentPointerDown);
   }
 
-  /**
-   * 摘掉挂在 document 上的监听。界面只在启动时生成一次，正常路径用不到；
-   * 留着是给「同一页里重建 DOM」的场景兜底（否则旧实例的监听会越积越多、一起关弹层）。
-   */
-  dispose(): void {
-    document.removeEventListener("pointerdown", this.onDocumentPointerDown);
-    this.close();
-  }
-
   get value(): string {
     return this.selected;
   }
