@@ -101,11 +101,6 @@ pub fn next_stamp(names: &[String], now: u64) -> u64 {
     }
 }
 
-/// 最新一份备份的文件名（没有备份就是 `None`）。
-pub fn latest_name(names: &[String]) -> Option<String> {
-    ordered(names).pop().map(|(_, name)| name)
-}
-
 /// 把备份清单排成「最旧 → 最新」，界面照顺序列出来。
 pub fn sort_backups(entries: Vec<PatchBackup>) -> Vec<PatchBackup> {
     let mut entries = entries;
@@ -239,16 +234,6 @@ mod tests {
         list.push("patch-notanumber.yml".to_string());
         let plan = prune_plan(&list, BACKUP_KEEP);
         assert_eq!(plan, names(&[100]), "{plan:?}");
-    }
-
-    #[test]
-    fn latest_name_picks_the_newest() {
-        assert_eq!(
-            latest_name(&names(&[300, 100, 200])),
-            Some(backup_file_name(300))
-        );
-        assert_eq!(latest_name(&[]), None);
-        assert_eq!(latest_name(&["readme.txt".to_string()]), None);
     }
 
     #[test]

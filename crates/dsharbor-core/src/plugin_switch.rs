@@ -520,11 +520,6 @@ pub fn items(
         .collect())
 }
 
-/// 零插件时的空状态提示（界面照抄，免得两处口径不一样）。
-pub fn empty_hint() -> &'static str {
-    "这个环境还没有装任何插件。先给环境安装依赖，再用官方命令把插件装上（dsh plugin --profile <环境名> add <插件名>）。"
-}
-
 /// 关掉桥接插件时的提醒：登录链接会失去自动获取。
 pub fn bridge_off_warning() -> &'static str {
     "桥接插件已关闭：DSH 每次启动会动态生成登录链接，关掉桥接后壳取不到它，只能从日志里翻。"
@@ -772,7 +767,6 @@ mod tests {
         assert!(toggle_message("x", true).contains("重启"));
         assert!(toggle_message("x", false).contains("不需要重新下载"));
         assert!(bridge_off_warning().contains("日志"));
-        assert!(empty_hint().contains("安装依赖"));
     }
 
     #[test]
