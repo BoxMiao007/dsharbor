@@ -7,14 +7,17 @@
     <style>
       /* 首帧预着色：页面加载到 main.ts 挂上界面还有一段空窗，那段时间先按
          <html data-mode> 把底色铺好，否则深色下会先闪一帧亮底。
-         底色是两处「首帧底」之一（另一处：src-tauri/src/lib.rs 的 webview_base_color），
-         与 src/style.css 里 --bg 的取值一致，改色三处同步。 */
+         这份底色有三处副本，必须同值（行号会漂，认符号名）：
+           1. 本文件下面的 html[data-mode] 规则；
+           2. src/styles/00-tokens.css 里 --bg（深色在 :85、浅色在 :145）；
+           3. src-tauri/src/lib.rs 的 webview_base_color()（当前 :907-915）。
+         改色三处一起改，否则冷启动/托盘重建窗口时会闪一帧另一种底色。 */
       html[data-mode="dark"] {
-        background: #0b0f14;
+        background: #101114;
       }
 
       html[data-mode="light"] {
-        background: #eef2f7;
+        background: #f2f3f5;
       }
     </style>
     <script>
