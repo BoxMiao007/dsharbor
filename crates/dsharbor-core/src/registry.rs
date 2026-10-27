@@ -196,6 +196,13 @@ impl PartialOrd for PreId {
 /// 只实现排序要用到的那部分 semver 优先级规则（完整规范里的构建元数据不参与比较）。
 fn semver_key(version: &str) -> Option<SemverKey> {
     let text = version.trim().trim_start_matches('v');
+    // 构建元数据（`1.2.3+build.7`）是合法的 semver，规范里不参与优先级比较，
+    // 所以先按 `+` 截掉。不截会让整个版本被当成「非版本」：排到最后，
+    // 并且 updater 永远判不出它比当前版本新。
+    let text = match text.split_once('+') {
+        Some((core, _)) => core,
+        None => text,
+    };
     let (core, pre) = match text.split_once('-') {
         Some((core, pre)) => (core, Some(pre)),
         None => (text, None),
@@ -307,6 +314,18 @@ mod tests {
             info.versions,
             vec!["0.10.0-rc.1", "0.9.0-rc.1", "0.2.0-rc.10", "0.2.0-rc.2"]
         );
+    }
+
+    #[test]
+    fn build_metadata_versions_still_rank_as_versions() {
+        // `+build` 不参与优先级，但版本本身合法：不能因为带它就当成非版本。
+        let mut versions = vec![
+            "0.2.0+build.9".to_string(),
+            "0.3.0".to_string(),
+            "0.1.0+sha.abc".to_string(),
+        ];
+        sort_newest_first(&mut versions);
+        assert_eq!(versions, vec!["0.3.0", "0.2.0+build.9", "0.1.0+sha.abc"]);
     }
 
     #[test]
