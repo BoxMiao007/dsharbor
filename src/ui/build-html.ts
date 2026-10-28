@@ -123,7 +123,9 @@ export function buildHtml(info: AppInfo): string {
   const statusErrorBlock = `<p id="status-error" class="error hidden" role="alert" aria-live="assertive"></p>`;
   const loginNoteBlock = `<p id="login-note" class="hint notice login-note hidden" role="status" aria-live="polite"></p>`;
   // 「正在下载安装」提示行（安装动画）：npx 启动且缓存里没有对应写法时出现，
-  // 一直留到登录链接就绪或失败。左侧转环与按钮 busy 形态同款，省略号逐拍浮现（60-controls.css）。
+  // 一直留到登录链接就绪或失败。它讲的就是「所选版本要不要现下载」，所以放在 npx
+  // 启动方式卡的版本下拉下方，而不是工具条下面那片全局区域；左侧转环与按钮 busy
+  // 形态同款，省略号逐拍浮现（60-controls.css）。
   const installNoteBlock =
     `<p id="install-note" class="hint notice login-note hidden" role="status" aria-live="polite">` +
     `<span class="launch-spin" aria-hidden="true"></span>` +
@@ -315,6 +317,7 @@ export function buildHtml(info: AppInfo): string {
           <div class="picker" id="npx-version-picker"></div>
           <button type="button" id="npx-versions-refresh" class="square-btn has-tip" data-tip="重新获取官方版本列表" aria-label="重新获取官方版本列表">${squareBusyChrome(ICON_REFRESH)}</button>
         </div>
+        ${installNoteBlock}
         <div id="npx-versions-hint" class="hint hidden"></div>
         <div id="npx-installed-hint" class="hint notice hidden"></div>
         <div class="preview-line"><span class="field-label">命令预览</span><code id="npx-command-preview" class="command-preview">${npxCommandOf(null)}</code></div>
@@ -528,7 +531,6 @@ export function buildHtml(info: AppInfo): string {
       ${toolbar}
       ${statusErrorBlock}
       ${loginNoteBlock}
-      ${installNoteBlock}
       <div class="content-main">
         <div class="page" id="page">${panels}</div>
       </div>
