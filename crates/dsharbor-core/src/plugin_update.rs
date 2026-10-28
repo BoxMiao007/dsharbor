@@ -110,6 +110,65 @@ pub fn lockfile_needs_repair(output: &str) -> bool {
         || output.contains("Broken lockfile")
 }
 
+/// pnpm 供应链保护：这次失败是因为「版本太新」，不是因为这个包装不上。
+///
+/// pnpm 11 起默认 `minimumReleaseAge = 1440`（发布不满 1 天的版本不参与解析）。
+/// 显式 `pnpm add 包@版本` 时 pnpm 会自己把该版本写进环境的
+/// `minimumReleaseAgeExclude` 放行；但只要锁文件里存在这类条目而 exclude 里没有
+/// （上次更新中断、还原了旧的 `pnpm-workspace.yaml`、并发安装互相覆盖都会造成），
+/// 安装前的锁文件校验就整次失败，报 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`。
+/// 这跟「这个包坏了」是两件事：用户点的是「更新到这个明确版本」，壳放行一次再重装。
+pub fn release_age_blocked(output: &str) -> bool {
+    output.contains("ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION")
+        || output.contains("failed supply-chain policy")
+        || output.contains("minimumReleaseAge cutoff")
+}
+
+/// pnpm 供应链保护：这次失败是因为有依赖的安装脚本没被批准。
+///
+/// pnpm 11 起默认不执行依赖的 `preinstall`/`install`/`postinstall`，不在环境
+/// `pnpm-workspace.yaml` 的 `allowBuilds` 名单里的包会被拦下，整次 `add` 以
+/// `ERR_PNPM_IGNORED_BUILDS` 失败——所以「只有新发布的那几个版本装不上」，
+/// 因为它们刚引入了需要编译或下载二进制的依赖。
+pub fn builds_blocked(output: &str) -> bool {
+    output.contains("ERR_PNPM_IGNORED_BUILDS") || output.contains("Ignored build scripts:")
+}
+
+/// 从 pnpm 输出里取「等批准的安装脚本」属于哪些包（去重、保持出现顺序）。
+///
+/// 只认 `Ignored build scripts:` 之后那一行的逗号列表（`esbuild@0.28.2, sharp@0.34.1`），
+/// 版本号去掉只留包名——`--allow-build` 要的是包名。抓不到就是空表，调用方据此
+/// 决定别乱放行。
+pub fn blocked_build_packages(output: &str) -> Vec<String> {
+    const MARKER: &str = "Ignored build scripts:";
+    let mut packages: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let Some((_, rest)) = line.split_once(MARKER) else {
+            continue;
+        };
+        for item in rest.split(',') {
+            let item = item.trim().trim_end_matches('.').trim();
+            if item.is_empty() {
+                continue;
+            }
+            // `name@1.2.3` → `name`；`@scope/name@1.2.3` → `@scope/name`。
+            // 只按「最后一段以数字开头」判版本，免得把 scope 里的 `@` 当分隔。
+            let name = match item.rsplit_once('@') {
+                Some((head, tail))
+                    if !head.is_empty() && tail.starts_with(|ch: char| ch.is_ascii_digit()) =>
+                {
+                    head
+                }
+                _ => item,
+            };
+            if validate_package_name(name).is_ok() && !packages.iter().any(|done| done == name) {
+                packages.push(name.to_string());
+            }
+        }
+    }
+    packages
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +305,46 @@ mod tests {
         ));
         assert!(!lockfile_needs_repair(""));
         assert!(!lockfile_needs_repair("Progress: resolved 12, reused 12"));
+    }
+
+    // ---- pnpm 供应链保护识别 -------------------------------------------------
+
+    #[test]
+    fn release_age_violation_is_recognized() {
+        // 实机日志原文（desktop 环境 2026-10-21 那次失败，dshmarket@1.66.45）。
+        let real = "\u{d7} Lockfile failed supply-chain policy check (73 entries in 3.3s)\n\
+                    [ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:\n\
+                    \u{a0} dshmarket@1.66.45 was published at 2026-10-20T17:40:41.049Z, within the minimumReleaseAge cutoff\n";
+        assert!(release_age_blocked(real));
+        // 成功时的 exclude 提示不该被当成失败（那种行里也有 minimumReleaseAge 字样）。
+        assert!(!release_age_blocked(
+            "Added 1 entry to minimumReleaseAgeExclude in pnpm-workspace.yaml:\n  dsh-ops@0.4.4\nDone in 25.5s"
+        ));
+        assert!(!release_age_blocked(""));
+        assert!(!release_age_blocked("Error: ERR_PNPM_FETCH_404"));
+    }
+
+    #[test]
+    fn blocked_build_scripts_are_recognized_and_named() {
+        // 实机输出（DSH 自带的 pnpm 11.28.5 装 esbuild）。
+        let real = "dependencies:\n+ esbuild 0.28.2\n\n\
+                    [ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.28.2\n\n\
+                    Run \"pnpm approve-builds\" to pick which dependencies should be allowed to run scripts.\n";
+        assert!(builds_blocked(real));
+        assert_eq!(blocked_build_packages(real), list(&["esbuild"]));
+
+        // 多个包、带 scope、结尾带句号都要能认出来，且去重。
+        let multi =
+            "x\nIgnored build scripts: @scope/native@1.2.3, sharp@0.34.1, esbuild@0.28.2.\n";
+        assert_eq!(
+            blocked_build_packages(multi),
+            list(&["@scope/native", "sharp", "esbuild"])
+        );
+        let dup = "Ignored build scripts: sharp@0.34.1\nIgnored build scripts: sharp@0.34.2\n";
+        assert_eq!(blocked_build_packages(dup), list(&["sharp"]));
+
+        // 不是这一类失败就别乱放行。
+        assert!(!builds_blocked("Error: ERR_PNPM_FETCH_404"));
+        assert!(blocked_build_packages("Error: ERR_PNPM_FETCH_404").is_empty());
     }
 }

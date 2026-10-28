@@ -18,7 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dsharbor_core::launch::{
-    build_plugin_plan, runtime_of, LaunchConfig, LaunchPlan, PluginOp, Runtime,
+    build_plugin_plan, build_plugin_plan_with, runtime_of, LaunchConfig, LaunchPlan, PluginOp,
+    PnpmRelax, Runtime,
 };
 use dsharbor_core::paths::windows_path_to_wsl;
 use dsharbor_core::profiles::{self, ProfileListing};
@@ -746,16 +747,33 @@ pub(crate) fn plugin_command(
     }))
 }
 
-/// 与 [`plugin_command`] 同一套计划算出的命令行回显（不执行）。失败回执等
-/// 要给用户看「到底跑了什么」的场合用它，避免文案里硬编码 `dsh` 与实际
-/// 启动方式（npx / 全局 / 二进制 / WSL）对不上。
-pub(crate) fn plugin_command_line(
+/// 与 [`plugin_command`] 相同，另外带上 pnpm 供应链保护的放行开关
+/// （见 `dsharbor_core::launch::PnpmRelax`；只在「更新撞上 pnpm 保护后重试」时用）。
+pub(crate) fn plugin_command_with(
     config: &LaunchConfig,
     profile: &str,
     op: &PluginOp,
+    env: &[(String, String)],
+    relax: &[PnpmRelax],
+) -> Result<Command, String> {
+    ensure_cli_alias(&Target::of(config), profile)?;
+    let spawn = build_plugin_plan_with(config, profile, op, relax)?;
+    Ok(command_for_plan(&LaunchPlan {
+        spawn,
+        env: env.to_vec(),
+    }))
+}
+
+/// 与 [`plugin_command_line`] 相同，另外带上放行开关——回执里要能让用户照着
+/// 这一行自己重跑，参数就得与实际执行的一致。
+pub(crate) fn plugin_command_line_with(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &PluginOp,
+    relax: &[PnpmRelax],
 ) -> Result<String, String> {
     ensure_cli_alias(&Target::of(config), profile)?;
-    let spawn = build_plugin_plan(config, profile, op)?;
+    let spawn = build_plugin_plan_with(config, profile, op, relax)?;
     Ok(match spawn {
         dsharbor_core::launch::SpawnPlan::ShellLine { line, .. } => line,
         other => format!("{other:?}"),

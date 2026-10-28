@@ -591,6 +591,36 @@ pub enum PluginOp {
     InstallDeps,
 }
 
+/// pnpm 供应链保护的按需放行（只在「用户明确点选某个版本去装」时用）。
+///
+/// pnpm 11 起默认做两件事：发布不满 `minimumReleaseAge`（默认 1 天）的版本不参与
+/// 解析、锁文件里出现这类条目就整次安装失败（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`）；
+/// 依赖带的安装脚本不在环境 `allowBuilds` 名单里也整次失败
+/// （`ERR_PNPM_IGNORED_BUILDS`）。两者拦住的是「刚发布的新版本」，而壳的「更新」
+/// 本来就是用户指着某个版本点的，所以失败后放行一次再重装——放行了什么要写进回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PnpmRelax {
+    /// 放行发布时长限制：`--config.minimumReleaseAge=0`。
+    ReleaseAge,
+    /// 允许这个包的安装脚本执行：`--allow-build=<包名>`。
+    AllowBuild(String),
+}
+
+impl PnpmRelax {
+    /// 变成 `dsh plugin` 的一个额外参数（它把参数原样转发给 pnpm）。
+    fn flag(&self) -> Result<String, String> {
+        match self {
+            // `--config.<键>=<值>` 是 pnpm 的通用配置覆盖写法，只影响这一次安装。
+            PnpmRelax::ReleaseAge => Ok("--config.minimumReleaseAge=0".to_string()),
+            PnpmRelax::AllowBuild(name) => {
+                // 包名会进命令行，先按插件同一套规则校验，别让输出里的怪字符串变成参数。
+                crate::plugin_update::validate_package_name(name)?;
+                Ok(format!("--allow-build={name}"))
+            }
+        }
+    }
+}
+
 /// 构造插件管理命令：复用当前启动方式的前缀，但把环境名位置参数换成
 /// `plugin --profile <环境名> <add|remove> ...`（官方插件机制，会自动登记/摘除
 /// `dsh.profile.bundles`，不手工编辑用户配置）。
@@ -600,6 +630,16 @@ pub fn build_plugin_plan(
     config: &LaunchConfig,
     profile: &str,
     op: &PluginOp,
+) -> Result<SpawnPlan, String> {
+    build_plugin_plan_with(config, profile, op, &[])
+}
+
+/// 与 [`build_plugin_plan`] 相同，另外在命令末尾补上 pnpm 的放行开关（见 [`PnpmRelax`]）。
+pub fn build_plugin_plan_with(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &PluginOp,
+    relax: &[PnpmRelax],
 ) -> Result<SpawnPlan, String> {
     validate(config)?;
     crate::profiles::validate_name(profile)?;
@@ -623,6 +663,9 @@ pub fn build_plugin_plan(
         }
         // `dsh plugin` 把参数转发给 pnpm，所以 `install` 就是 pnpm 的安装。
         PluginOp::InstallDeps => args.push("install".into()),
+    }
+    for option in relax {
+        args.push(option.flag()?);
     }
     Ok(match &config.mode {
         LaunchMode::Npx { version } => {
@@ -1008,6 +1051,42 @@ mod tests {
                 wrap: ShellWrap::Cmd
             }
         );
+    }
+
+    #[test]
+    fn plugin_plan_carries_pnpm_relax_flags() {
+        // 更新撞上 pnpm 的供应链保护时，壳在命令末尾补放行开关（`dsh plugin` 把
+        // 参数原样转发给 pnpm，所以位置必须在 `add <包>` 之后）。
+        let plan = build_plugin_plan_with(
+            &cfg(LaunchMode::System, &[]),
+            PROFILE_NAME,
+            &PluginOp::Install {
+                package: "dsh-free-search@0.9.19".into(),
+            },
+            &[
+                PnpmRelax::ReleaseAge,
+                PnpmRelax::AllowBuild("esbuild".into()),
+            ],
+        )
+        .unwrap();
+        match plan {
+            SpawnPlan::ShellLine { line, .. } => assert_eq!(
+                line,
+                "dsh plugin --profile web add dsh-free-search@0.9.19 \
+                 --config.minimumReleaseAge=0 --allow-build=esbuild"
+            ),
+            other => panic!("unexpected plan: {other:?}"),
+        }
+        // 包名要过校验：输出里的怪字符串不能直接变成命令行参数。
+        assert!(build_plugin_plan_with(
+            &cfg(LaunchMode::System, &[]),
+            PROFILE_NAME,
+            &PluginOp::Install {
+                package: "dsh-free-search@0.9.19".into(),
+            },
+            &[PnpmRelax::AllowBuild("bad name; rm -rf".into())],
+        )
+        .is_err());
     }
 
     #[test]

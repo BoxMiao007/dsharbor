@@ -258,47 +258,161 @@ fn send_progress(progress: Option<&Channel<ProgressEvent>>, event: ProgressEvent
     }
 }
 
-/// 跑一次插件安装/卸载命令；输出显示环境锁文件坏了就先修锁文件再重跑一次。
+/// [`run_plugin_op`] 的结果：最后一次执行的退出码与输出，加上壳补做了什么。
+/// 补做动作为空表示没触发；触发了但没补好也会留一句原因，界面回执要能让用户
+/// 知道壳查过这一步。
+struct OpRun {
+    /// 最后一次执行的退出码。
+    code: i32,
+    /// 最后一次执行的输出。
+    output: String,
+    /// 壳替用户补做的动作（修锁文件、放行 pnpm 供应链保护），回执要写清。
+    note: Option<String>,
+    /// 重跑时实际用上的放行开关——回执里的命令回显要带上，用户照着敲才等价。
+    relax: Vec<launch::PnpmRelax>,
+}
+
+/// 跑一次插件安装/卸载命令；遇到「壳能自救」的失败就补一步再重跑。
 ///
-/// DSH 的 plugin 命令把 pnpm 当外部命令直接 exec，`pnpm add` 在装包之前就会因为
-/// 环境自己的 `pnpm-lock.yaml` 断裂而退出（`ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY`）。
-/// 这跟「这个包装不上」是两件事，壳替它补一步 `pnpm install --fix-lockfile` 再重跑，
-/// 而不是把 pnpm 的原始报错原样丢给用户。
+/// 目前两类，都会让「装上新版本」这件事莫名其妙地失败，而原因都不在包本身：
+/// 1. 环境自己的锁文件坏了（`ERR_PNPM_LOCKFILE_*`）：DSH 的 plugin 命令把 pnpm 当
+///    外部命令直接 exec，不会自救，壳替它补 `pnpm install --fix-lockfile` 再重跑。
+/// 2. pnpm 的供应链保护拦了「刚发布」的版本（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`
+///    发布不满 1 天、`ERR_PNPM_IGNORED_BUILDS` 依赖的安装脚本未批准）：用户点的是
+///    「更新到这个明确版本」，壳放行一次再重装，并在回执里说明放行了什么。
 ///
-/// 返回（退出码，输出，修复说明）。修复动作为空表示没触发；触发了但没修好也会
-/// 留一句原因，界面回执要能让用户知道壳查过这一步。
+/// 每类最多补一次，补完还失败就照原样把 pnpm 的报错交给用户。
 fn run_plugin_op(
     config: &LaunchConfig,
     profile: &str,
     op: &launch::PluginOp,
     env: &[(String, String)],
-) -> Result<(i32, String, Option<String>), String> {
-    let command = plugin::plugin_command(config, profile, op, env)?;
-    let (code, output) = plugin::run_capture(command, plugin::PLUGIN_OP_TIMEOUT)?;
-    if code == 0 || !plugin_update::lockfile_needs_repair(&output) {
-        return Ok((code, output, None));
-    }
-    match repair_lockfile(config, profile, env) {
-        Ok((0, _repair_output)) => {
-            let retry = plugin::plugin_command(config, profile, op, env)?;
-            let (retry_code, retry_output) = plugin::run_capture(retry, plugin::PLUGIN_OP_TIMEOUT)?;
-            Ok((
-                retry_code,
-                retry_output,
-                Some("锁文件已按现存依赖重修（pnpm install --fix-lockfile）".to_string()),
-            ))
-        }
-        Ok((repair_code, repair_output)) => Ok((
-            code,
-            output,
-            Some(format!(
+) -> Result<OpRun, String> {
+    let (mut code, mut output) = run_plugin_command(config, profile, op, env, &[])?;
+    let mut notes: Vec<String> = Vec::new();
+
+    if code != 0 && plugin_update::lockfile_needs_repair(&output) {
+        match repair_lockfile(config, profile, env) {
+            Ok((0, _repair_output)) => {
+                let (retry_code, retry_output) = run_plugin_command(config, profile, op, env, &[])?;
+                code = retry_code;
+                output = retry_output;
+                notes.push("锁文件已按现存依赖重修（pnpm install --fix-lockfile）".to_string());
+            }
+            Ok((repair_code, repair_output)) => notes.push(format!(
                 "锁文件自动修复失败（退出码 {repair_code}）：{}",
                 plugin::tail_chars(&repair_output, 600)
             )),
-        )),
-        // 起不来 pnpm（没装 / 不在 PATH）就照原样报下去，别把真实失败原因盖掉。
-        Err(err) => Ok((code, output, Some(format!("锁文件自动修复没能执行：{err}")))),
+            // 起不来 pnpm（没装 / 不在 PATH）就照原样报下去，别把真实失败原因盖掉。
+            Err(err) => notes.push(format!("锁文件自动修复没能执行：{err}")),
+        }
     }
+
+    // 供应链保护可能与「锁文件坏了」叠着出现（修好锁文件后校验才轮到它），
+    // 所以这一步独立判断，最多补两轮（先放行发布时长，再放行安装脚本）。
+    let mut relax: Vec<launch::PnpmRelax> = Vec::new();
+    for _ in 0..2 {
+        if code == 0 {
+            break;
+        }
+        let Some(next) = supply_chain_relax(&output) else {
+            break;
+        };
+        let fresh: Vec<launch::PnpmRelax> = next
+            .into_iter()
+            .filter(|option| !relax.contains(option))
+            .collect();
+        if fresh.is_empty() {
+            break;
+        }
+        relax.extend(fresh);
+        let (retry_code, retry_output) = run_plugin_command(config, profile, op, env, &relax)?;
+        code = retry_code;
+        output = retry_output;
+    }
+    if !relax.is_empty() {
+        let outcome = if code == 0 {
+            "重装成功"
+        } else {
+            "重装仍未成功"
+        };
+        notes.push(format!(
+            "已放行 pnpm 的供应链保护（{}）{outcome}",
+            relax_text(&relax)
+        ));
+    }
+
+    Ok(OpRun {
+        code,
+        output,
+        note: if notes.is_empty() {
+            None
+        } else {
+            Some(notes.join("\n"))
+        },
+        relax,
+    })
+}
+
+/// 跑一条插件命令（`relax` 为空就是原命令）。
+fn run_plugin_command(
+    config: &LaunchConfig,
+    profile: &str,
+    op: &launch::PluginOp,
+    env: &[(String, String)],
+    relax: &[launch::PnpmRelax],
+) -> Result<(i32, String), String> {
+    let command = if relax.is_empty() {
+        plugin::plugin_command(config, profile, op, env)?
+    } else {
+        plugin::plugin_command_with(config, profile, op, env, relax)?
+    };
+    plugin::run_capture(command, plugin::PLUGIN_OP_TIMEOUT)
+}
+
+/// 这次失败是不是 pnpm 供应链保护拦的；是就给出要放行的开关。
+///
+/// 认不出、或者认得出但取不到包名（`--allow-build` 需要包名）就返回 `None`：
+/// 宁可不放行，也不要拿着猜出来的参数去跑第三方安装脚本。
+fn supply_chain_relax(output: &str) -> Option<Vec<launch::PnpmRelax>> {
+    if plugin_update::release_age_blocked(output) {
+        return Some(vec![launch::PnpmRelax::ReleaseAge]);
+    }
+    if plugin_update::builds_blocked(output) {
+        let packages = plugin_update::blocked_build_packages(output);
+        if packages.is_empty() {
+            return None;
+        }
+        return Some(
+            packages
+                .into_iter()
+                .map(launch::PnpmRelax::AllowBuild)
+                .collect(),
+        );
+    }
+    None
+}
+
+/// 放行说明里的人话部分（回执正文用，不写参数）。
+fn relax_text(relax: &[launch::PnpmRelax]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if relax
+        .iter()
+        .any(|option| matches!(option, launch::PnpmRelax::ReleaseAge))
+    {
+        parts.push("该版本发布不满 1 天，pnpm 默认要等满才装".to_string());
+    }
+    let builds: Vec<&str> = relax
+        .iter()
+        .filter_map(|option| match option {
+            launch::PnpmRelax::AllowBuild(name) => Some(name.as_str()),
+            launch::PnpmRelax::ReleaseAge => None,
+        })
+        .collect();
+    if !builds.is_empty() {
+        parts.push(format!("已允许 {} 的安装脚本执行", builds.join("、")));
+    }
+    parts.join("；")
 }
 
 /// 修环境自己的 `pnpm-lock.yaml`（`pnpm install --fix-lockfile`）。
@@ -360,13 +474,19 @@ fn update_one(
     let op = launch::PluginOp::Install {
         package: package.clone(),
     };
-    let command_line = plugin::plugin_command_line(config, profile, &op).unwrap_or_else(|_| {
-        format!(
-            "dsh plugin --profile {} add {package}",
-            plugin::cli_profile_label(profile)
-        )
-    });
-    let (code, output, repaired) = run_plugin_op(config, profile, &op, &env)?;
+    let run = run_plugin_op(config, profile, &op, &env)?;
+    // 命令回显要带上壳实际用过的放行开关（撞上 pnpm 供应链保护时会补参数），
+    // 用户照着这一行自己重跑才等价。
+    let command_line = plugin::plugin_command_line_with(config, profile, &op, &run.relax)
+        .unwrap_or_else(|_| {
+            format!(
+                "dsh plugin --profile {} add {package}",
+                plugin::cli_profile_label(profile)
+            )
+        });
+    let OpRun {
+        code, output, note, ..
+    } = run;
     let verify = verify_installed_version(&target, &dir, name, &latest);
     let ok = code == 0 && verify.is_ok();
     if ok {
@@ -394,15 +514,16 @@ fn update_one(
             cli_error_digest(&output)
         ),
     };
-    // 自动修复这一步做了什么要写进回执：修好了用户不用管，没修好也得知道查过什么。
-    let repair_note = match &repaired {
+    // 壳替用户补做的动作（修锁文件、放行 pnpm 供应链保护）要写进回执：
+    // 补成功了用户不用管，没补好也得知道壳查过什么。
+    let recover_note = match &note {
         Some(note) => format!("\n{}", note),
         None => String::new(),
     };
     let message = format!(
         "{first_line}\n\
          命令：{command_line}（经 {}）\n\
-         校验：{verify_text}{repair_note}\n\
+         校验：{verify_text}{recover_note}\n\
          输出：\n{}\n\
          备份目录：{}{}",
         target.label(),
@@ -678,15 +799,19 @@ pub fn install_into(
     let op = launch::PluginOp::Install {
         package: package.clone(),
     };
-    let command_line =
-        plugin::plugin_command_line(config, target_profile, &op).unwrap_or_else(|_| {
+    let backup = plugin::backup_profile(app, &target, target_profile)?;
+    let run = run_plugin_op(config, target_profile, &op, &env)?;
+    // 命令回显要带上壳实际用过的放行开关（撞上 pnpm 供应链保护时会补参数）。
+    let command_line = plugin::plugin_command_line_with(config, target_profile, &op, &run.relax)
+        .unwrap_or_else(|_| {
             format!(
                 "dsh plugin --profile {} add {package}",
                 plugin::cli_profile_label(target_profile)
             )
         });
-    let backup = plugin::backup_profile(app, &target, target_profile)?;
-    let (code, output, repaired) = run_plugin_op(config, target_profile, &op, &env)?;
+    let OpRun {
+        code, output, note, ..
+    } = run;
     let verify = verify_installed_version(&target, &target_dir, name, &version);
     let ok = code == 0 && verify.is_ok();
     let verify_text = match &verify {
@@ -705,7 +830,7 @@ pub fn install_into(
             cli_error_digest(&output)
         ),
     };
-    let repair_note = match &repaired {
+    let recover_note = match &note {
         Some(note) => format!(
             "
 {note}"
@@ -715,7 +840,7 @@ pub fn install_into(
     let detail = format!(
         "{first_line}
          命令：{command_line}（经 {}）
-         校验：{verify_text}{repair_note}
+         校验：{verify_text}{recover_note}
          输出：
 {}
          备份目录：{}{}",
