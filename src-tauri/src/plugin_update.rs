@@ -197,33 +197,41 @@ fn summarize_results(results: &[(String, Result<String, String>)]) -> String {
         .iter()
         .filter_map(|(name, r)| r.as_ref().ok().map(|v| format!("{name}@{v}")))
         .collect();
-    let bad: Vec<String> = results
+    // 失败项拆两截：首行（原因）进后面的明细行，名字进第一行的名单。
+    let bad: Vec<(String, String)> = results
         .iter()
         .filter_map(|(name, r)| {
-            r.as_ref()
-                .err()
-                .map(|e| format!("{name}：{}", e.lines().next().unwrap_or(e.as_str())))
+            r.as_ref().err().map(|err| {
+                (
+                    name.clone(),
+                    err.lines().next().unwrap_or(err.as_str()).to_string(),
+                )
+            })
         })
         .collect();
-    // 一句能照着念的汇总：成功 0 个时不再印一对空括号，全失败时也不说「重启后生效」
-    // ——那会让人以为版本已经换了。
+    let bad_names: Vec<String> = bad.iter().map(|(name, _)| name.clone()).collect();
+    // 第一行只放「能照着念」的结论：提示条与 Toast 只取这一行，把每个插件的
+    // 原因都塞进来会把它撑到上千像素高。逐条原因放在后面几行，进统一日志。
     let mut text = match (ok.is_empty(), bad.is_empty()) {
         (_, true) => format!("全部更新完成：成功 {} 个（{}）。", ok.len(), ok.join("、")),
         (true, false) => format!(
             "更新完成：{} 个插件都没能更新（{}）。",
             bad.len(),
-            bad.join("；")
+            bad_names.join("、")
         ),
         (false, false) => format!(
             "更新完成：成功 {} 个（{}）；失败 {} 个（{}）。",
             ok.len(),
             ok.join("、"),
             bad.len(),
-            bad.join("；")
+            bad_names.join("、")
         ),
     };
     if !ok.is_empty() {
         text.push_str("重启 DSH 后生效。");
+    }
+    for (name, reason) in &bad {
+        text.push_str(&format!("\n· {name}：{reason}"));
     }
     text
 }
@@ -393,9 +401,10 @@ fn run_plugin_op(
         // 「这次新出现的」是主口径；另外，报错正文里点名（精确到 `包名@版本`）的
         // 既有条目也要放行——上一次失败的安装会把自己的待批准项留在环境里，
         // 之后任何一次 add 都会被它拦下，只按差量算永远放行不到它。
+        let flat: String = output.lines().map(str::trim).collect();
         let fresh: Vec<PackageSpec> = plugin::ignored_builds(&target, profile)
             .into_iter()
-            .filter(|spec| !builds_before.contains(spec) || output.contains(&spec.written()))
+            .filter(|spec| !builds_before.contains(spec) || flat.contains(&spec.written()))
             .filter(|spec| {
                 !relax.iter().any(
                     |option| matches!(option, launch::PnpmRelax::AllowBuild(done) if done == spec),
@@ -730,7 +739,9 @@ pub fn update(
                             total,
                             plugin: name.clone(),
                             ok: Some(false),
-                            message: Some(err.lines().next().unwrap_or(err.as_str()).to_string()),
+                            // 整份回执进事件：行内只显示首行（CSS 截断），
+                            // 鼠标停上去的气泡能看全命令、输出与备份目录。
+                            message: Some(err.clone()),
                         }
                     }
                 };

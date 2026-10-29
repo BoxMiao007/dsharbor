@@ -1996,7 +1996,8 @@ async function main(): Promise<void> {
           const outcome = await invoke<BridgeOutcome>(name, { config: collectConfig() });
           logAction(outcome.message);
           // 安装/卸载的结果除了进日志，再补一条回执：浮窗与日志都可能没在眼前。
-          showToast(outcome.message, outcome.ok ? "ok" : "error");
+          // 提示条只放首行——整份回执带着命令、输出尾巴与备份目录，会把提示条撑满屏幕。
+          showToast(firstLine(outcome.message), outcome.ok ? "ok" : "error");
           if (!outcome.ok) {
             bridgeError.textContent = "命令返回非成功状态，请看下方输出与备份目录。";
             bridgeError.classList.remove("hidden");
@@ -2034,7 +2035,7 @@ async function main(): Promise<void> {
           });
           logAction(message);
           bridgeError.classList.add("hidden");
-          showToast(message, "ok");
+          showToast(firstLine(message), "ok");
         } catch (err) {
           bridgeError.textContent = String(err);
           bridgeError.classList.remove("hidden");

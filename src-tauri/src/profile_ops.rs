@@ -387,6 +387,9 @@ pub fn install_deps(
     if !profile_exists(&target, name)? {
         return Err(format!("找不到环境「{name}」（{dir}）。"));
     }
+    // 环境的 `file:` 依赖包被清理掉时，pnpm 会在读本地包这一步整次失败，
+    // 报错只说文件不存在。安装目录里有同名包就先补回去（与插件更新同一条自救）。
+    let heal_notes = plugin::heal_local_deps(app, &target, name);
     let command = plugin::plugin_command(
         config,
         name,
@@ -397,13 +400,18 @@ pub fn install_deps(
     let summary = summarize_dir(&target, name, &dir).ok();
     let installed = summary.as_ref().map(|s| s.deps_installed).unwrap_or(false);
     let message = format!(
-        "重装依赖：dsh plugin --profile {} install（经 {}）\n退出码：{code}\n校验：{}\n输出：\n{}",
+        "重装依赖：dsh plugin --profile {} install（经 {}）\n退出码：{code}\n校验：{}{}\n输出：\n{}",
         plugin::cli_profile_label(name),
         target.label(),
         if installed {
             "node_modules 已就位 ✓"
         } else {
             "仍未看到 node_modules ✗（安装可能未生效）"
+        },
+        if heal_notes.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}", heal_notes.join("\n"))
         },
         tail(&output, 4000)
     );
