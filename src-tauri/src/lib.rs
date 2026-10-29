@@ -80,6 +80,9 @@ struct AppState {
     /// 壳正在退出（见 `begin_exit`）：置位后不再拉起新进程，避免退出与后台
     /// 「重启」并发时留下一个没人管的 DSH 占着端口。
     exiting: std::sync::atomic::AtomicBool,
+    /// 会话世代号：拉起或停止会话都 +1。异步查版本靠它确认「这个结果还属于
+    /// 当前会话」——否则用户换版本重启后，上一次查询可能把旧版本号写回界面与盘。
+    session_generation: std::sync::atomic::AtomicU64,
 }
 
 #[tauri::command]
@@ -257,6 +260,7 @@ fn spawn_session(
             match launcher::spawn(config, profile, launcher_args, &env, endpoint) {
                 Ok(session) => {
                     *guard = Some(session);
+                    bump_session_generation(state);
                     spawned_child = true;
                     Ok(())
                 }
@@ -281,40 +285,60 @@ fn spawn_session(
 /// 60 秒没结束就会被整棵杀掉——正好杀在装包中途，留下一个永远修不好的
 /// 半成品缓存（见 `npxcache::ensure_healthy` 的说明）。
 fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig, profile: &str) {
-    if let LaunchMode::Npx {
-        version: Some(version),
-    } = &config.mode
-    {
-        if !version.is_empty() {
-            record_dsh_version(app, version);
-            return;
-        }
-    }
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let generation = state
+        .session_generation
+        .load(std::sync::atomic::Ordering::SeqCst);
+    // 钉版本：版本号就是用户选的那一版，不用再开 npx 去问。但仍然要等它真正
+    // 起来才记账——启动失败时界面该保持「未知」，不能把没跑起来的版本写上去。
+    let pinned = match &config.mode {
+        LaunchMode::Npx {
+            version: Some(version),
+        } if !version.is_empty() => Some(version.clone()),
+        _ => None,
+    };
     let app = app.clone();
     let config = config.clone();
     let profile = profile.to_string();
     std::thread::spawn(move || {
-        // 自动最新（裸包名）才需要问；问之前必须等这次启动的 npx 装完（DSH 起来
-        // 就代表装完了）。否则两个 npx 会同时往同一份缓存目录里装：npm 的两段
-        // 锁挡不住第二次安装，后进来的会把先装好的依赖再解压一遍，正在跑的
-        // DSH 会有一两秒读不到自己的依赖。
-        if matches!(config.mode, LaunchMode::Npx { .. }) && !wait_session_ready(&app) {
+        // npx 方式要等这次启动的 npx 装完（DSH 起来就代表装完了）再动手。
+        // 否则两个 npx 会同时往同一份缓存目录里装：npm 的两段锁挡不住第二次
+        // 安装，后进来的会把先装好的依赖再解压一遍，正在跑的 DSH 会有一两秒
+        // 读不到自己的依赖。
+        if matches!(config.mode, LaunchMode::Npx { .. }) && !wait_session_ready(&app, generation) {
             eprintln!("[dsharbor] 会话没起来，跳过 DSH 版本查询");
             return;
         }
-        match query_dsh_version(&config, &profile) {
-            Ok(version) => record_dsh_version(&app, &version),
+        let result = match pinned {
+            Some(version) => Ok(version),
+            None => query_dsh_version(&config, &profile),
+        };
+        match result {
+            Ok(version) => record_dsh_version(&app, generation, &version),
             Err(err) => eprintln!("[dsharbor] 查询 DSH 版本失败：{err}"),
         }
     });
 }
 
 /// 记下版本号：内存（随状态轮询回给界面）+ 盘（壳重开后先填这个值）。
-fn record_dsh_version(app: &tauri::AppHandle, version: &str) {
-    if let Some(state) = app.try_state::<AppState>() {
-        if let Ok(mut slot) = state.dsh_version.lock() {
-            *slot = Some(version.to_string());
-        }
+///
+/// 写之前核对会话世代：等待期间会话被停止或换成了别的启动配置时，这次的结果
+/// 属于上一个会话，写进去会让界面显示一个根本没在跑的版本。
+fn record_dsh_version(app: &tauri::AppHandle, generation: u64, version: &str) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    if state
+        .session_generation
+        .load(std::sync::atomic::Ordering::SeqCst)
+        != generation
+    {
+        return;
+    }
+    if let Ok(mut slot) = state.dsh_version.lock() {
+        *slot = Some(version.to_string());
     }
     if let Err(err) = settings::save_dsh_version(app, version) {
         eprintln!("[dsharbor] 记录 DSH 版本号失败：{err}");
@@ -324,9 +348,10 @@ fn record_dsh_version(app: &tauri::AppHandle, version: &str) {
 
 /// 等这次启动的 DSH 真正起来（取到登录链接即算起来）。
 ///
-/// 只用于「等它装完再跑第二条 npx」这种串行化：会话被停止、启动失败、
-/// 或者确实起不来（超时）都返回 false——宁可不查版本号，也不要和启动抢缓存。
-fn wait_session_ready(app: &tauri::AppHandle) -> bool {
+/// 只用于「等它装完再跑第二条 npx」这种串行化：会话被停止、被换成新的一次启动
+/// （世代号变了）、启动失败、或者确实起不来（超时）都返回 false——宁可不查
+/// 版本号，也不要和启动抢缓存或把结果记到别的会话头上。
+fn wait_session_ready(app: &tauri::AppHandle, generation: u64) -> bool {
     const STEP: std::time::Duration = std::time::Duration::from_millis(500);
     const LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
     let started = std::time::Instant::now();
@@ -334,6 +359,13 @@ fn wait_session_ready(app: &tauri::AppHandle) -> bool {
         let Some(state) = app.try_state::<AppState>() else {
             return false;
         };
+        if state
+            .session_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != generation
+        {
+            return false;
+        }
         let Ok(mut guard) = state.session.lock() else {
             return false;
         };
@@ -613,6 +645,7 @@ fn stop_session(state: &AppState) -> Result<(), String> {
     };
     session.stop()?;
     guard.take();
+    bump_session_generation(state);
     drop(guard);
     // 停止成功：之前那条「停止失败，进程可能仍在运行」的红字必须撤掉，
     // 否则它会一直挂在界面上（状态轮询每次都把它显示出来），用户以为问题还在。
@@ -646,7 +679,15 @@ fn begin_exit(state: &AppState) -> Result<(), String> {
     // 停不掉也要退（用户的明确意图），句柄留在状态里无妨——进程马上就没了。
     session.stop()?;
     guard.take();
+    bump_session_generation(state);
     Ok(())
+}
+
+/// 会话换了一代（拉起或停止）。异步任务在写回结果前都要拿它核对一次。
+fn bump_session_generation(state: &AppState) {
+    state
+        .session_generation
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// 清掉 `spawn_error`（问题已经不成立了）。
@@ -695,6 +736,7 @@ async fn stop_dsh(state: tauri::State<'_, AppState>) -> Result<(), String> {
         session.stop()?;
     }
     *guard = None;
+    bump_session_generation(&state);
     Ok(())
 }
 
@@ -1983,6 +2025,7 @@ pub fn run() {
                             Ok(session) => {
                                 if let Ok(mut guard) = state.session.lock() {
                                     *guard = Some(session);
+                                    bump_session_generation(&state);
                                 }
                             }
                             Err(err) => eprintln!("DSHARBOR_AUTOSTART 启动失败：{err}"),

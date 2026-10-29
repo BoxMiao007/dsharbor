@@ -24,7 +24,8 @@ use dsharbor_core::bridge::{
 use dsharbor_core::console::ConsoleDecoder;
 use dsharbor_core::endpoint::Endpoint;
 use dsharbor_core::launch::{
-    build_launch_plan, extract_port, LaunchConfig, LaunchPlan, ShellWrap, SpawnPlan,
+    build_launch_plan, extract_port, LaunchConfig, LaunchMode, LaunchPlan, Runtime, ShellWrap,
+    SpawnPlan,
 };
 use dsharbor_core::logparse::{parse_announcement, Announcement};
 use serde::Serialize;
@@ -230,6 +231,11 @@ pub struct SessionHandle {
     pid: u32,
     stop_requested: bool,
     shared: Arc<Shared>,
+    /// npx 启动方式用的包规格（`@deepseek-ai/dsh@0.2.1-rc.4` 这种）；别的启动方式为 None。
+    ///
+    /// 停止会话时要靠它告诉缓存自检：这把残留的 npm 锁是我们自己杀出来的，
+    /// 别当成「还有人在装」而白等 60 秒。
+    npx_spec: Option<String>,
 }
 
 impl SessionHandle {
@@ -319,6 +325,10 @@ impl SessionHandle {
         }
         self.stop_requested = true;
         self.shared.cancel();
+        if let Some(spec) = &self.npx_spec {
+            // 先记账再杀：杀完可能正好停在装包中途，下次启动要能立刻判坏清理。
+            crate::npxcache::record_kill(spec);
+        }
         kill_tree(self.pid)?;
         for _ in 0..50 {
             if matches!(self.child.try_wait(), Ok(Some(_)) | Err(_)) {
@@ -347,6 +357,15 @@ pub fn spawn(
     // 冷缓存且上次没装完时先清掉再拉：那种目录 npx 永远不会自己重装，
     // 每次都在 1 秒内报 ENOENT 退出（见 npxcache::ensure_healthy）。
     let cache_note = crate::npxcache::ensure_healthy(config);
+    // 停止时要记下「是我们杀的」，所以先把这份 npx 的包规格存进会话。
+    let npx_spec = match &config.mode {
+        LaunchMode::Npx { version }
+            if matches!(dsharbor_core::launch::runtime_of(config), Runtime::Default) =>
+        {
+            Some(dsharbor_core::launch::npx_spec(version.as_deref()))
+        }
+        _ => None,
+    };
     // 每次启动现生成 nonce，经环境变量注入 DSH 进程；桥接插件在运行时从
     // process.env 读取它（见插件的 dsh.bundle.patch.yml）。nonce 不落盘。
     let nonce = generate_nonce()?;
@@ -387,6 +406,7 @@ pub fn spawn(
         pid,
         stop_requested: false,
         shared,
+        npx_spec,
     })
 }
 

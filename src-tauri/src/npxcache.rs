@@ -174,6 +174,33 @@ fn cache_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// 壳自己杀掉的 npx 安装：（spec，杀掉时刻）。
+///
+/// npm 的互斥锁在进程被杀后不会立刻消失，60 秒内看起来仍像「有人正在装」。
+/// 记下「是我们杀的」，下一次启动就能立刻判坏清理，而不是先干等锁过期、
+/// 再以 ENOENT 失败一次。
+fn recent_kill() -> std::sync::MutexGuard<'static, Option<(String, std::time::Instant)>> {
+    static KILL: std::sync::Mutex<Option<(String, std::time::Instant)>> =
+        std::sync::Mutex::new(None);
+    KILL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 记下「壳刚刚杀掉了这个 spec 的 npx」。
+pub(crate) fn record_kill(spec: &str) {
+    *recent_kill() = Some((spec.to_string(), std::time::Instant::now()));
+}
+
+/// 这个 spec 是不是最近（5 分钟内）被壳杀过；是就返回距今多少秒。
+fn killed_recently(spec: &str) -> Option<i64> {
+    let guard = recent_kill();
+    let (recorded, at) = guard.as_ref()?;
+    if recorded != spec {
+        return None;
+    }
+    let elapsed = at.elapsed().as_secs() as i64;
+    (elapsed < 300).then_some(elapsed)
+}
+
 /// 跑 npx 之前自检它的缓存目录：发现「装了一半」就删掉，让 npx 重新下载。
 ///
 /// 为什么必须自检：任何把正在安装的 npx 进程杀掉的操作（壳以前查版本号超时就
@@ -195,16 +222,22 @@ pub(crate) fn ensure_healthy(config: &LaunchConfig) -> Option<String> {
     let LaunchMode::Npx { version } = &config.mode else {
         return None;
     };
+    let spec = launch::npx_spec(version.as_deref());
     let dir = cached_root()?
         .join(npx_cache::NPX_DIR_NAME)
-        .join(npx_cache::install_dir_name(&launch::npx_spec(
-            version.as_deref(),
-        )));
+        .join(npx_cache::install_dir_name(&spec));
     let _guard = cache_lock();
     if !dir.is_dir() {
         return None;
     }
-    if npx_cache::health(&probe(&dir)) != npx_cache::Health::Broken {
+    let mut state = probe(&dir);
+    // 锁如果是壳自己杀进程留下的，别把它当成「有人正在装」——那种安装已经断了。
+    if let Some(since_kill) = killed_recently(&spec) {
+        if state.lock_age_secs.is_some_and(|age| age >= since_kill - 2) {
+            state.lock_age_secs = None;
+        }
+    }
+    if npx_cache::health(&state) != npx_cache::Health::Broken {
         return None;
     }
     Some(match std::fs::remove_dir_all(&dir) {
@@ -311,12 +344,18 @@ fn probe(dir: &Path) -> npx_cache::DirState {
             }
         }
     }
+    // 根清单不仅要「在」，还要是能解析的 JSON：写了一半被中断的文件同样是坏的，
+    // 而 npx 读到它只会报一个看不懂的 JSON 错误、也不会重装。
+    let has_root_manifest = std::fs::read_to_string(dir.join("package.json"))
+        .ok()
+        .and_then(|text| npx_cache::parse_manifest(&text))
+        .is_some();
     npx_cache::DirState {
         has_target_package: modules
             .join(launch::NPX_PACKAGE)
             .join("package.json")
             .is_file(),
-        has_root_manifest: dir.join("package.json").is_file(),
+        has_root_manifest,
         lock_age_secs,
         missing_manifest_dirs,
     }
