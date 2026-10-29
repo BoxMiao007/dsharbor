@@ -24,7 +24,7 @@ mod wsl;
 
 use std::sync::Mutex;
 
-use dsharbor_core::launch::{self, LaunchConfig};
+use dsharbor_core::launch::{self, LaunchConfig, LaunchMode};
 use dsharbor_core::lifecycle::{ShellAction, ShellEvent, ShellMachine, ShellState};
 use dsharbor_core::links::{navigation_decision, NavigationDecision};
 use launcher::{SessionHandle, SessionStatus};
@@ -275,25 +275,83 @@ fn spawn_session(
 }
 
 /// 启动成功后异步查询 DSH 版本号（失败只记日志：界面显示「DSH 版本未知」即可）。
+///
+/// 钉版本启动时根本不用问：版本号就是用户选的那一版。以前这里也会再开一个
+/// 同样写法的 npx 去问，冷缓存时两个 npx 抢同一份缓存目录，而且查询进程
+/// 60 秒没结束就会被整棵杀掉——正好杀在装包中途，留下一个永远修不好的
+/// 半成品缓存（见 `npxcache::ensure_healthy` 的说明）。
 fn query_dsh_version_async(app: &tauri::AppHandle, config: &LaunchConfig, profile: &str) {
+    if let LaunchMode::Npx {
+        version: Some(version),
+    } = &config.mode
+    {
+        if !version.is_empty() {
+            record_dsh_version(app, version);
+            return;
+        }
+    }
     let app = app.clone();
     let config = config.clone();
     let profile = profile.to_string();
-    std::thread::spawn(move || match query_dsh_version(&config, &profile) {
-        Ok(version) => {
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Ok(mut slot) = state.dsh_version.lock() {
-                    *slot = Some(version.clone());
-                }
-            }
-            // 记盘：壳完全退出再打开时用这个值先填界面，不会回到「未知」。
-            if let Err(err) = settings::save_dsh_version(&app, &version) {
-                eprintln!("[dsharbor] 记录 DSH 版本号失败：{err}");
-            }
-            eprintln!("[dsharbor] 当前 DSH 版本：{version}");
+    std::thread::spawn(move || {
+        // 自动最新（裸包名）才需要问；问之前必须等这次启动的 npx 装完（DSH 起来
+        // 就代表装完了）。否则两个 npx 会同时往同一份缓存目录里装：npm 的两段
+        // 锁挡不住第二次安装，后进来的会把先装好的依赖再解压一遍，正在跑的
+        // DSH 会有一两秒读不到自己的依赖。
+        if matches!(config.mode, LaunchMode::Npx { .. }) && !wait_session_ready(&app) {
+            eprintln!("[dsharbor] 会话没起来，跳过 DSH 版本查询");
+            return;
         }
-        Err(err) => eprintln!("[dsharbor] 查询 DSH 版本失败：{err}"),
+        match query_dsh_version(&config, &profile) {
+            Ok(version) => record_dsh_version(&app, &version),
+            Err(err) => eprintln!("[dsharbor] 查询 DSH 版本失败：{err}"),
+        }
     });
+}
+
+/// 记下版本号：内存（随状态轮询回给界面）+ 盘（壳重开后先填这个值）。
+fn record_dsh_version(app: &tauri::AppHandle, version: &str) {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut slot) = state.dsh_version.lock() {
+            *slot = Some(version.to_string());
+        }
+    }
+    if let Err(err) = settings::save_dsh_version(app, version) {
+        eprintln!("[dsharbor] 记录 DSH 版本号失败：{err}");
+    }
+    eprintln!("[dsharbor] 当前 DSH 版本：{version}");
+}
+
+/// 等这次启动的 DSH 真正起来（取到登录链接即算起来）。
+///
+/// 只用于「等它装完再跑第二条 npx」这种串行化：会话被停止、启动失败、
+/// 或者确实起不来（超时）都返回 false——宁可不查版本号，也不要和启动抢缓存。
+fn wait_session_ready(app: &tauri::AppHandle) -> bool {
+    const STEP: std::time::Duration = std::time::Duration::from_millis(500);
+    const LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+    let started = std::time::Instant::now();
+    loop {
+        let Some(state) = app.try_state::<AppState>() else {
+            return false;
+        };
+        let Ok(mut guard) = state.session.lock() else {
+            return false;
+        };
+        let Some(session) = guard.as_mut() else {
+            return false;
+        };
+        if !session.is_alive() {
+            return false;
+        }
+        if session.login_url().is_some() {
+            return true;
+        }
+        drop(guard);
+        if started.elapsed() > LIMIT {
+            return false;
+        }
+        std::thread::sleep(STEP);
+    }
 }
 
 /// 按当前启动方式跑一次 `<启动方式> … --version` 取版本号。
@@ -329,15 +387,21 @@ fn query_dsh_version(config: &LaunchConfig, profile: &str) -> Result<String, Str
         output.push_str(&line);
         output.push('\n');
     }
-    // 读完或超时：查询进程不该留活口（npx 可能还在下载）。
+    // 读完或超时都不杀：npx 冷缓存时这个进程可能正在往 `_npx` 里装包，杀掉会
+    // 留下一个「依赖都在、清单缺了」的半成品目录，之后同一写法的 npx 永远报
+    // ENOENT（见 npxcache::ensure_healthy）。查询命令只打印版本号，装完自己就退，
+    // 所以超时后交给后台线程等它结束、顺带回收，不再 taskkill。
     if child
         .try_wait()
         .map(|state| state.is_none())
         .unwrap_or(false)
     {
-        let _ = launcher::kill_tree(child.id());
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    } else {
+        let _ = child.wait();
     }
-    let _ = child.wait();
 
     dsharbor_core::launch::parse_version_output(&output)
         .ok_or_else(|| "命令输出里没有版本号".to_string())
@@ -1887,6 +1951,15 @@ pub fn run() {
                     *slot = settings::load_dsh_version(app.handle());
                 }
             }
+            // npx 缓存自检：上次下载被打断留下的半成品目录会让 npx 每次都报
+            // ENOENT（启动、插件更新全线失败，报错里看不出是缓存坏了）。放到
+            // 后台跑，不拖慢开窗；判定与清理都只针对「确定坏了、且没人在装」的。
+            std::thread::spawn(|| {
+                let cleaned = npxcache::sweep_broken();
+                for path in cleaned {
+                    eprintln!("[dsharbor] 已清理损坏的 npx 缓存目录：{path}");
+                }
+            });
             // 托盘：轻量模式的入口。这里失败会直接终止启动——
             // 没有托盘的轻量态意味着窗口关掉后应用再也回不来。
             tray::setup(app.handle())?;

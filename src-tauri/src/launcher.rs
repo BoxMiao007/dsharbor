@@ -344,6 +344,9 @@ pub fn spawn(
     env: &[(String, String)],
     bridge_endpoint: Endpoint,
 ) -> Result<SessionHandle, String> {
+    // 冷缓存且上次没装完时先清掉再拉：那种目录 npx 永远不会自己重装，
+    // 每次都在 1 秒内报 ENOENT 退出（见 npxcache::ensure_healthy）。
+    let cache_note = crate::npxcache::ensure_healthy(config);
     // 每次启动现生成 nonce，经环境变量注入 DSH 进程；桥接插件在运行时从
     // process.env 读取它（见插件的 dsh.bundle.patch.yml）。nonce 不落盘。
     let nonce = generate_nonce()?;
@@ -363,6 +366,10 @@ pub fn spawn(
         .map_err(|err| format!("启动 DSH 失败：{err}"))?;
     let pid = child.id();
     let shared = Arc::new(Shared::new());
+    if let Some(note) = cache_note {
+        // 写进日志尾巴：清理是壳替用户做的决定，界面日志里要查得到。
+        shared.push_note(&note);
+    }
     if let Some(stdout) = child.stdout.take() {
         pump(stdout, shared.clone(), true);
     }

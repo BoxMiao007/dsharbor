@@ -14,3 +14,5 @@ encoding_rs = "0.8"
 getrandom = "0.3"
 # 链接策略要解析并比较地址（与 tauri 依赖同一份 url 2.x）。
 url = "2"
+# 算 npx 缓存目录名（sha512 取前 16 位十六进制，与 npm 的 libnpmexec 一致）。
+sha2 = "0.10"

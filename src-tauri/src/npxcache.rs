@@ -12,9 +12,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::Duration;
 
-use dsharbor_core::launch::{self, Runtime};
+use dsharbor_core::launch::{self, LaunchConfig, LaunchMode, Runtime};
 use dsharbor_core::npx_cache;
 
 use crate::launcher::{apply_no_window, spawn_line_reader};
@@ -154,6 +155,171 @@ fn resolve_root() -> Option<PathBuf> {
         }
     }
     Some(default_cache_root())
+}
+
+/// 进程内只问一次 npm 缓存根。
+///
+/// 启动、插件更新、版本查询都要自检缓存目录，每条命令都起一次 `cmd /C npm`
+/// 问同一个值是白花几百毫秒；一次会话里 npm 的缓存根不会变。
+fn cached_root() -> Option<PathBuf> {
+    static ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    ROOT.get_or_init(resolve_root).clone()
+}
+
+/// 自检与清理串行化：启动时那次全量清扫在后台线程跑，用户这时点「启动」
+/// 会同时进来。不加锁的话，清扫判定「坏了」之后可能正好删到启动刚重建的目录。
+/// 自检本身只有几十毫秒，等一等没关系。
+fn cache_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 跑 npx 之前自检它的缓存目录：发现「装了一半」就删掉，让 npx 重新下载。
+///
+/// 为什么必须自检：任何把正在安装的 npx 进程杀掉的操作（壳以前查版本号超时就
+/// 会 taskkill 整棵树、用户点「停止」、壳退出）都会在 `_npx` 里留下一个
+/// 「依赖都在、但 npm 装完最后才写的清单没有」的目录。之后同一写法的 npx
+/// **永远不会重装**——npm 认为树里已经有这个包，直接跳过安装去读根清单，
+/// 读到不存在就报 ENOENT 退出。症状是启动、插件更新全线失败，报错里却只有
+/// `Could not read package.json`，看不出是缓存坏了。
+///
+/// 只清「确定坏了」的（判定见 `npx_cache::health`）：正在装的（锁新鲜）、
+/// 还没装到能判定的、别的包的缓存，一律不动。清理失败的目录也照常往下走——
+/// 清理是顺手自救，不是命令的前置条件。
+///
+/// 返回一句给用户看的话（清掉了什么），没动手时为空。
+pub(crate) fn ensure_healthy(config: &LaunchConfig) -> Option<String> {
+    if !cfg!(windows) || !matches!(launch::runtime_of(config), Runtime::Default) {
+        return None;
+    }
+    let LaunchMode::Npx { version } = &config.mode else {
+        return None;
+    };
+    let dir = cached_root()?
+        .join(npx_cache::NPX_DIR_NAME)
+        .join(npx_cache::install_dir_name(&launch::npx_spec(
+            version.as_deref(),
+        )));
+    let _guard = cache_lock();
+    if !dir.is_dir() {
+        return None;
+    }
+    if npx_cache::health(&probe(&dir)) != npx_cache::Health::Broken {
+        return None;
+    }
+    Some(match std::fs::remove_dir_all(&dir) {
+        Ok(()) => format!(
+            "npx 缓存里这一版的安装不完整（上次下载被打断），已清掉，本次会重新下载：{}",
+            dir.display()
+        ),
+        Err(err) => format!(
+            "npx 缓存里这一版的安装不完整（上次下载被打断），清理失败（{}）：{err}",
+            dir.display()
+        ),
+    })
+}
+
+/// 扫一遍 `_npx`，清掉属于本包、但装了一半的缓存目录（应用启动时后台跑一次）。
+///
+/// 与 [`ensure_healthy`] 同一套判定；区别是它管「所有」本包目录，包括当前启动
+/// 方式用不到的那些（比如换过版本后留下的旧目录）。只认 `node_modules` 里确实
+/// 有本包的目录，别的工具（asar、skills…）的缓存一个都不碰。
+pub(crate) fn sweep_broken() -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let Some(root) = cached_root() else {
+        return Vec::new();
+    };
+    sweep_in(&root.join(npx_cache::NPX_DIR_NAME))
+}
+
+/// [`sweep_broken`] 的实现：给定 `_npx` 目录，返回清理掉的路径（便于单测）。
+fn sweep_in(npx_dir: &Path) -> Vec<String> {
+    let _guard = cache_lock();
+    let Ok(listing) = std::fs::read_dir(npx_dir) else {
+        return Vec::new();
+    };
+    let mut cleaned: Vec<String> = Vec::new();
+    for item in listing.flatten() {
+        let path = item.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        // 归属判定：本包的 `package.json` 必须在（根清单可能正是丢掉的那份）。
+        if !path
+            .join("node_modules")
+            .join(launch::NPX_PACKAGE)
+            .join("package.json")
+            .is_file()
+        {
+            continue;
+        }
+        if npx_cache::health(&probe(&path)) != npx_cache::Health::Broken {
+            continue;
+        }
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => cleaned.push(path.display().to_string()),
+            Err(err) => eprintln!(
+                "[dsharbor] 清理损坏的 npx 缓存失败（{}）：{err}",
+                path.display()
+            ),
+        }
+    }
+    cleaned
+}
+
+/// 读一份 `_npx` 目录的现场（判定在核心库 `npx_cache::health`）。
+fn probe(dir: &Path) -> npx_cache::DirState {
+    let lock_age_secs = std::fs::metadata(dir.join("concurrency.lock"))
+        .and_then(|meta| meta.modified())
+        .ok()
+        .map(|time| {
+            // 时钟偏差导致 mtime 在未来时算「刚刚动过」，按正在装处理。
+            match std::time::SystemTime::now().duration_since(time) {
+                Ok(age) => age.as_secs() as i64,
+                Err(_) => -1,
+            }
+        });
+    let modules = dir.join("node_modules");
+    let mut missing_manifest_dirs = 0;
+    if let Ok(listing) = std::fs::read_dir(&modules) {
+        for item in listing.flatten() {
+            let name = item.file_name().to_string_lossy().to_string();
+            // `.bin` / `.package-lock.json` 这类不是包目录。
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = item.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if name.starts_with('@') {
+                // scope 目录本身没有清单，看它下面每个包。
+                if let Ok(children) = std::fs::read_dir(&path) {
+                    for child in children.flatten() {
+                        if child.path().is_dir() && !child.path().join("package.json").is_file() {
+                            missing_manifest_dirs += 1;
+                        }
+                    }
+                }
+            } else if !path.join("package.json").is_file() {
+                missing_manifest_dirs += 1;
+            }
+        }
+    }
+    npx_cache::DirState {
+        has_target_package: modules
+            .join(launch::NPX_PACKAGE)
+            .join("package.json")
+            .is_file(),
+        has_root_manifest: dir.join("package.json").is_file(),
+        lock_age_secs,
+        missing_manifest_dirs,
+    }
 }
 
 /// 组装 `npm config get cache` 命令。
@@ -435,6 +601,68 @@ mod tests {
         assert!(!has_bare_spec(&["@deepseek-ai/dsh@0.2.1-rc.2".to_string()]));
         assert!(!has_bare_spec(&["@deepseek-ai/dsh@next".to_string()]));
         assert!(!has_bare_spec(&[]));
+    }
+
+    /// 造一份 `_npx` 目录：`healthy=false` 复刻实机坏目录（依赖在、根清单缺），
+    /// `healthy=true` 造一份装好的。
+    fn fake_install(root: &Path, name: &str, healthy: bool) -> PathBuf {
+        let dir = root.join(npx_cache::NPX_DIR_NAME).join(name);
+        let modules = dir.join("node_modules");
+        std::fs::create_dir_all(modules.join("@deepseek-ai/dsh")).unwrap();
+        std::fs::create_dir_all(modules.join("plain-dep")).unwrap();
+        std::fs::write(
+            modules.join("@deepseek-ai/dsh/package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.4"}"#,
+        )
+        .unwrap();
+        std::fs::write(modules.join("plain-dep/package.json"), "{}").unwrap();
+        if healthy {
+            std::fs::write(dir.join("package.json"), r#"{"_npx":{"packages":["x"]}}"#).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn probe_separates_the_real_broken_cache_from_a_healthy_one() {
+        let root = std::env::temp_dir().join(format!("dsharbor-npx-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let broken = fake_install(&root, "4f99bf10e014d1ed", false);
+        let healthy = fake_install(&root, "aaaa", true);
+        // 只造了依赖、没有本包：别的工具的缓存，不该被判坏。
+        let foreign = root.join(npx_cache::NPX_DIR_NAME).join("bbbb");
+        std::fs::create_dir_all(foreign.join("node_modules/other")).unwrap();
+        std::fs::write(foreign.join("node_modules/other/package.json"), "{}").unwrap();
+        std::fs::write(
+            foreign.join("package.json"),
+            r#"{"_npx":{"packages":["asar"]}}"#,
+        )
+        .unwrap();
+
+        assert!(!probe(&broken).has_root_manifest);
+        assert!(probe(&broken).has_target_package);
+        assert_eq!(
+            npx_cache::health(&probe(&broken)),
+            npx_cache::Health::Broken
+        );
+        assert_eq!(
+            npx_cache::health(&probe(&healthy)),
+            npx_cache::Health::Healthy
+        );
+        // 锁还新鲜（别的进程在装）时谁都不该被判坏。
+        std::fs::write(broken.join("concurrency.lock"), "").unwrap();
+        assert_eq!(
+            npx_cache::health(&probe(&broken)),
+            npx_cache::Health::Installing
+        );
+        std::fs::remove_file(broken.join("concurrency.lock")).unwrap();
+
+        // 清扫只动坏掉的那一份。
+        let cleaned = sweep_in(&root.join(npx_cache::NPX_DIR_NAME));
+        assert_eq!(cleaned.len(), 1, "{cleaned:?}");
+        assert!(!broken.exists(), "坏目录应被清掉");
+        assert!(healthy.exists(), "好目录不能被碰");
+        assert!(foreign.exists(), "别的工具的缓存不能被碰");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -164,6 +164,73 @@ where
     versions
 }
 
+/// npx 给一份 spec 建的缓存目录名：`sha512(spec)` 的前 16 位十六进制。
+///
+/// 这是 npm 内部实现（`libnpmexec`）的规则，不是公开协议。算错只会「找不到目录」，
+/// 不会有任何破坏性后果——所以可以放心拿来当提示用（定位要自检的那一份缓存）。
+/// 与 npm 一样，裸包名与钉版本写法是两个不同目录，差一个字符就是两份缓存。
+pub fn install_dir_name(spec: &str) -> String {
+    use sha2::{Digest, Sha512};
+    let digest = Sha512::digest(spec.as_bytes());
+    digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// 一份 `_npx` 目录的现场（由外壳读盘填好，这里只做判定）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DirState {
+    /// `node_modules/@deepseek-ai/dsh/package.json` 在不在——在即「这是本包的缓存」。
+    pub has_target_package: bool,
+    /// 目录根上的 `package.json` 在不在（npm 装完最后一步才写它）。
+    pub has_root_manifest: bool,
+    /// 互斥锁文件的年龄（秒）；`None` 表示没有锁。负数（时钟偏差）按新鲜处理。
+    pub lock_age_secs: Option<i64>,
+    /// `node_modules` 下缺 `package.json` 的包目录个数（装了一半的残留）。
+    pub missing_manifest_dirs: usize,
+}
+
+/// 一份缓存目录的健康状况。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Health {
+    /// 什么都还没有（或坏得不彻底，npx 自己会重装）：不用管。
+    Absent,
+    /// 有进程正在往里装：绝不能碰。
+    Installing,
+    /// 装好了。
+    Healthy,
+    /// 装了一半、而且 npx 不会自己重装：留着就永远失败，只能删掉重下。
+    Broken,
+}
+
+/// 「正在装」的判定阈值：npm 持有锁时每秒 touch 一次，超过 60 秒没动就是没人持有。
+pub const LOCK_STALE_SECS: i64 = 60;
+
+/// 判定一份缓存目录能不能用。规则来自对 npm 11 装包流程与实机坏目录的复现：
+///
+/// - 锁新鲜 → 正在装（哪怕看起来缺东西，也可能是刚解到一半）；
+/// - 连本包与根清单都没有 → 还没到能判定的地步，npx 会自己重装；
+/// - 本包在、根清单不在 → 硬杀留下的半成品（npm 把根清单放在最后一步写）；
+/// - 根清单在、但有包目录缺清单 → 依赖被掏空，npx 认为已装好、永远不再补。
+///   实机症状是「Cannot find package …」或运行期找不到模块。
+pub fn health(state: &DirState) -> Health {
+    if state.lock_age_secs.is_some_and(|age| age < LOCK_STALE_SECS) {
+        return Health::Installing;
+    }
+    if !state.has_target_package && !state.has_root_manifest {
+        return Health::Absent;
+    }
+    if state.has_target_package && !state.has_root_manifest {
+        return Health::Broken;
+    }
+    if state.missing_manifest_dirs > 0 {
+        return Health::Broken;
+    }
+    Health::Healthy
+}
+
 /// 从 `npm config get cache` 的输出里抽出缓存根。
 ///
 /// 不能直接取第一行：采集 stdout 与 stderr 是合并的，npm 可能把升级提示、警告排在前面。
@@ -339,6 +406,81 @@ mod tests {
             vec!["@deepseek-ai/dsh@0.3.0"],
         ];
         assert_eq!(pin_served_versions(&entries), vec!["0.3.0", "0.2.0"]);
+    }
+
+    #[test]
+    fn install_dir_name_matches_npm_hashes() {
+        // 本机实测的三个目录名（npm 11.20.0 建出来的）：
+        // 钉版本、另一个钉版本、裸包名各是一份缓存。
+        assert_eq!(
+            install_dir_name("@deepseek-ai/dsh@0.2.1-rc.4"),
+            "4f99bf10e014d1ed"
+        );
+        assert_eq!(
+            install_dir_name("@deepseek-ai/dsh@0.2.2-alpha.2"),
+            "bd325e168b7188a4"
+        );
+        assert_eq!(install_dir_name("@deepseek-ai/dsh"), "1e7f6d9597241db0");
+        assert_ne!(
+            install_dir_name("@deepseek-ai/dsh"),
+            install_dir_name("@deepseek-ai/dsh@latest")
+        );
+        assert_eq!(install_dir_name("").len(), 16);
+    }
+
+    #[test]
+    fn health_separates_installing_broken_and_health() {
+        let healthy = DirState {
+            has_target_package: true,
+            has_root_manifest: true,
+            lock_age_secs: None,
+            missing_manifest_dirs: 0,
+        };
+        assert_eq!(health(&healthy), Health::Healthy);
+
+        // 锁新鲜：正在装，绝不能碰（负数按新鲜处理，mtime 有秒级取整）。
+        for age in [0, 1, 59, -1] {
+            assert_eq!(
+                health(&DirState {
+                    lock_age_secs: Some(age),
+                    has_target_package: true,
+                    has_root_manifest: false,
+                    missing_manifest_dirs: 0,
+                }),
+                Health::Installing,
+                "锁 {age} 秒"
+            );
+        }
+        // 锁过期后同一种现场才算坏（实机 4f99：本包在、根清单不在）。
+        assert_eq!(
+            health(&DirState {
+                lock_age_secs: Some(LOCK_STALE_SECS),
+                has_target_package: true,
+                has_root_manifest: false,
+                missing_manifest_dirs: 0,
+            }),
+            Health::Broken
+        );
+        // 连本包都还没落盘：npx 会自己重装，不动。
+        assert_eq!(health(&DirState::default()), Health::Absent);
+        // 依赖被掏空（实机 F7：跑起来找不到模块，npx 永远不补）。
+        assert_eq!(
+            health(&DirState {
+                missing_manifest_dirs: 3,
+                ..healthy.clone()
+            }),
+            Health::Broken
+        );
+        // 别的包的缓存目录（没有本包）不算坏。
+        assert_eq!(
+            health(&DirState {
+                has_target_package: false,
+                has_root_manifest: true,
+                lock_age_secs: None,
+                missing_manifest_dirs: 0,
+            }),
+            Health::Healthy
+        );
     }
 
     #[test]
