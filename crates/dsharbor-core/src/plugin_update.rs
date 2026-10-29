@@ -231,76 +231,81 @@ pub fn parse_modules_ignored_builds(text: &str) -> Vec<PackageSpec> {
 /// 不写清单——环境就永远停在「下次再撞一次」的状态。补清单等价于 pnpm 自己
 /// 在成功那次会做的事，且不改任何别的设置。
 ///
-/// 只认块状写法（`minimumReleaseAgeExclude:` 下面一行一项）。键不存在就追加；
-/// 键写成行内数组之类认不出的形状就原样返回、一条都不补，绝不猜着改。
+/// **安全边界**：这是用户环境里的真实文件，写坏一次该环境所有 pnpm 操作都报废。
+/// 所以只处理能看懂的块状序列（有缩进与无缩进两种都合法），并且：
+/// - 键写成行内数组、值在键的下一行用 flow 写法、条目是映射/怪引号……
+///   一律原样返回、一条都不补（调用方会退到「临时关闸门」的兜底）；
+/// - 全文出现过这个键名却没被认出来，也不追加新键——否则会变成重复键；
+/// - 根节点是 flow 形式（`{}` / `[]`）时不追加（会变成两个根节点）。
 pub fn merge_release_age_exclude(
     yaml: &str,
     additions: &[PackageSpec],
 ) -> (String, Vec<PackageSpec>) {
     const KEY: &str = "minimumReleaseAgeExclude:";
+    let unchanged = || (yaml.to_string(), Vec::new());
     let newline = if yaml.contains("\r\n") { "\r\n" } else { "\n" };
     let mut lines: Vec<String> = yaml.split_inclusive('\n').map(str::to_string).collect();
+    // 末尾没有换行时先补一个：否则新追加的条目会与最后一行拼成一行。
+    if let Some(last) = lines.last_mut() {
+        if !last.ends_with('\n') {
+            last.push_str(newline);
+        }
+    }
     let key_index = lines
         .iter()
         .position(|line| exclude_key_tail(line).is_some());
-    // 键后面直接跟了值（`key: [...]` / `key: []`）：行内写法认不准，一个字都不改。
-    if let Some(index) = key_index {
-        let tail = exclude_key_tail(&lines[index]).unwrap_or_default();
-        if !tail.is_empty() && !tail.starts_with('#') {
-            return (yaml.to_string(), Vec::new());
-        }
-    }
-    let mut applied: Vec<PackageSpec> = Vec::new();
-    let block_start = match key_index {
-        Some(index) => index + 1,
+    let block = match key_index {
         None => {
+            // 认不出键就先别追加：文件里出现过这个名字说明写法超出理解范围
+            // （BOM、引号键、别处提及……），再追加一个同名键只会更糟。
+            if yaml.contains("minimumReleaseAgeExclude") || root_is_flow(&lines) {
+                return unchanged();
+            }
             // 追加一整块：留一个空行与上面的内容分开（空文件不画蛇添足）。
             if !yaml.trim().is_empty() {
-                if !yaml.ends_with('\n') {
-                    lines.push(newline.to_string());
-                }
                 lines.push(newline.to_string());
             }
             lines.push(format!("{KEY}{newline}"));
-            lines.len()
+            let at = lines.len();
+            Block {
+                start: at,
+                end: at,
+                indent: 2,
+            }
+        }
+        Some(index) => {
+            let tail = exclude_key_tail(&lines[index]).unwrap_or_default();
+            // 键后面直接跟了值（`key: [...]` / `key: []`）：行内写法认不准，一个字都不改。
+            if !tail.is_empty() && !tail.starts_with('#') {
+                return unchanged();
+            }
+            let Some(block) = scan_block(&lines, index + 1) else {
+                return unchanged();
+            };
+            block
         }
     };
-    // 块到下一个顶层键为止；新条目插在最后一条已有条目之后（不插到块尾的空行后面）。
-    let mut block_end = block_start;
-    while block_end < lines.len() {
-        let raw = lines[block_end].trim_end_matches(['\r', '\n']);
-        let trimmed = raw.trim();
-        let top_level = !raw.is_empty() && !raw.starts_with([' ', '\t']);
-        if top_level && !trimmed.starts_with('#') {
-            break;
-        }
-        block_end += 1;
-    }
-    let last_item = (block_start..block_end)
+
+    let mut applied: Vec<PackageSpec> = Vec::new();
+    let last_item = (block.start..block.end)
         .rev()
         .find(|&index| lines[index].trim_start().starts_with("- "));
-    let insert_at = match last_item {
+    let mut cursor = match last_item {
         Some(index) => index + 1,
-        None => block_start,
+        None => block.start,
     };
-    // 缩进沿用已有的条目（没有就两格）。
-    let indent = lines[block_start..block_end]
-        .iter()
-        .find(|line| line.trim_start().starts_with("- "))
-        .map(|line| line.len() - line.trim_start().len())
-        .unwrap_or(2);
-
-    let mut cursor = insert_at;
     for addition in additions {
-        let existing = (block_start..block_end).find(|&index| {
+        let existing = (block.start..block.end).find(|&index| {
             item_specs(&lines[index])
                 .first()
                 .and_then(|spec| PackageSpec::parse(spec))
                 .map(|spec| spec.name == addition.name)
                 .unwrap_or(false)
         });
-        match existing {
-            Some(index) => {
+        if let Some(index) = existing {
+            // 行尾带注释（pnpm 不会这么写，但用户可能手改）：追加会把版本写进
+            // 注释里，等于没放行。改成另起一行，别碰原文。
+            if !lines[index].contains('#') {
                 // 第一个片段是 `包名@版本`，后面都是裸版本号（`|| 1.1.9`）。
                 let already = item_specs(&lines[index]).iter().enumerate().any(
                     |(offset, token)| match offset {
@@ -311,73 +316,173 @@ pub fn merge_release_age_exclude(
                 if already {
                     continue;
                 }
-                let raw = lines[index].trim_end_matches(['\r', '\n']).to_string();
-                let updated = append_exclude_version(&raw, &addition.version);
+                let raw = lines[index].trim_end_matches(['\r', '\n']);
+                let Some(updated) = append_exclude_version(raw, &addition.version) else {
+                    // 引号结构认不准（混合引号、flow 条目……）：这一条不补。
+                    continue;
+                };
                 lines[index] = format!("{updated}{newline}");
                 applied.push(addition.clone());
-            }
-            None => {
-                let quoted = if addition.name.starts_with('@') {
-                    format!("'{}'", addition.written())
-                } else {
-                    addition.written()
-                };
-                let line = format!("{}- {quoted}{newline}", " ".repeat(indent));
-                lines.insert(cursor, line);
-                cursor += 1;
-                block_end += 1;
-                applied.push(addition.clone());
+                continue;
             }
         }
+        let quoted = if addition.name.starts_with('@') {
+            format!("'{}'", addition.written())
+        } else {
+            addition.written()
+        };
+        let line = format!("{}- {quoted}{newline}", " ".repeat(block.indent));
+        lines.insert(cursor, line);
+        cursor += 1;
+        applied.push(addition.clone());
+    }
+    // 兜底自检：合并后必须恰好一个这个键（重复键会让 pnpm 读不了配置）。
+    if lines
+        .iter()
+        .filter(|line| exclude_key_tail(line).is_some())
+        .count()
+        != 1
+    {
+        return unchanged();
     }
     (lines.concat(), applied)
 }
 
+/// `minimumReleaseAgeExclude` 块的范围与条目缩进。
+struct Block {
+    start: usize,
+    end: usize,
+    indent: usize,
+}
+
+/// 扫描键下面的块序列，返回范围与缩进；认不出的形状返回 `None`。
+///
+/// 支持两种合法写法：有缩进的序列（`  - pkg@1`）与**无缩进序列**
+/// （`- pkg@1` 顶格，YAML 规范允许，真实仓库里就有）。除此之外——flow 数组、
+/// 下一行裸标量、映射项——一律不认，让调用方走兜底。
+fn scan_block(lines: &[String], start: usize) -> Option<Block> {
+    let first = (start..lines.len()).find(|&index| meaningful(&lines[index]))?;
+    let raw = lines[first].trim_end_matches(['\r', '\n']);
+    let body = raw.trim_start();
+    if body.starts_with(['[', '{']) {
+        return None;
+    }
+    if !body.starts_with("- ") {
+        return None;
+    }
+    let indent = raw.len() - body.len();
+    // 块到下一个「顶层且不是注释」的行为止；无缩进序列里顶格的 `- ` 仍算块内。
+    let mut end = start;
+    while end < lines.len() {
+        let line = lines[end].trim_end_matches(['\r', '\n']);
+        let trimmed = line.trim();
+        let top_level = !line.is_empty() && !line.starts_with([' ', '\t']);
+        let indentless_item = indent == 0 && line.starts_with("- ");
+        if top_level && !trimmed.starts_with('#') && !indentless_item {
+            break;
+        }
+        end += 1;
+    }
+    Some(Block { start, end, indent })
+}
+
+/// 这一行是不是有效内容（非空、不是注释）。
+fn meaningful(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.is_empty() && !trimmed.starts_with('#')
+}
+
+/// 根节点是不是 flow 形式（`{}` / `[]`）；是的话不能再追加块状键。
+fn root_is_flow(lines: &[String]) -> bool {
+    for line in lines {
+        let trimmed = line.trim_start_matches('\u{feff}').trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" {
+            continue;
+        }
+        return trimmed.starts_with('{') || trimmed.starts_with('[');
+    }
+    false
+}
+
 /// 这一行是不是 `minimumReleaseAgeExclude:` 键；是就返回键名后面剩下的部分。
 ///
-/// 键名后面必须是空白 / 注释 / 行尾——`minimumReleaseAgeExcludeSomething:` 不是它。
+/// 容忍行首 BOM、引号包起来的键名、冒号前的空白、行尾注释——这些写法 pnpm 都认，
+/// 认不出来就会走到「追加一个同名键」那条更糟的路上。
 fn exclude_key_tail(line: &str) -> Option<String> {
-    const KEY: &str = "minimumReleaseAgeExclude:";
-    let tail = line
+    let text = line
         .trim_end_matches(['\r', '\n'])
-        .trim_start()
-        .strip_prefix(KEY)?;
+        .trim_start_matches('\u{feff}')
+        .trim_start();
+    let (name, tail) = text.split_once(':')?;
+    let name = name.trim().trim_matches(|ch| ch == '\'' || ch == '"');
+    if name != "minimumReleaseAgeExclude" {
+        return None;
+    }
     if !tail.is_empty() && !tail.starts_with([' ', '\t', '#']) {
         return None;
     }
     Some(tail.trim().to_string())
 }
 
+/// 拆一条序列项：返回（条目本体，包住它的引号）。引号结构认不准时 `None`。
+fn item_body(line: &str) -> Option<(&str, Option<char>)> {
+    let trimmed = line.trim();
+    let item = trimmed.strip_prefix("- ")?.trim_end();
+    if let Some(quote) = item.chars().next().filter(|ch| *ch == '\'' || *ch == '"') {
+        if item.len() < 2 || !item.ends_with(quote) {
+            return None;
+        }
+        let inner = &item[1..item.len() - 1];
+        // 混合引号（`'a@1' || '2'`）不是 pnpm 的写法，也认不准，别碰。
+        if inner.contains(quote) {
+            return None;
+        }
+        return Some((inner, Some(quote)));
+    }
+    if item.starts_with(['[', '{']) {
+        return None;
+    }
+    Some((item, None))
+}
+
 /// 一条放行清单项里的各个「包名@版本」（`name@1.0.0 || 1.0.1` 按 `||` 拆开）。
+///
+/// 行尾注释先切掉：包名里不允许出现 `#`，按它切不会误伤真包名；不切的话
+/// `dshmarket@1.0.0 # 备注` 的版本部分解析不出来，会被当成「清单里没有这个包」。
 fn item_specs(line: &str) -> Vec<String> {
     let trimmed = line.trim();
     let Some(rest) = trimmed.strip_prefix("- ") else {
         return Vec::new();
     };
-    let unquoted = rest.trim().trim_matches(|ch| ch == '\'' || ch == '"');
-    unquoted
+    let rest = rest.split_once('#').map(|(head, _)| head).unwrap_or(rest);
+    let rest = rest.trim();
+    let inner = item_body(line).map(|(body, _)| body).unwrap_or(rest);
+    inner
         .split("||")
         .map(|part| part.trim().to_string())
         .filter(|part| !part.is_empty())
         .collect()
 }
 
-/// 在一条清单项末尾追加一个版本（只在没有重复时调用），保持原有的引号风格。
-fn append_exclude_version(raw: &str, version: &str) -> String {
+/// 在一条清单项末尾追加一个版本，保持原有的缩进与引号风格。
+///
+/// 引号结构认不准（混合引号、flow 条目）就返回 `None`——宁可这一条不补，
+/// 也不要把非法 YAML 写进用户的环境文件。
+fn append_exclude_version(raw: &str, version: &str) -> Option<String> {
     let trimmed = raw.trim_end();
-    // 带收尾引号的写法（`- '@scope/x@1 || 2'`）：补在收尾引号里面。
-    if let Some(body) = trimmed.strip_suffix('\'') {
-        if let Some(open) = body.find('\'') {
-            let inner = &body[open + 1..];
-            let separator = if inner.trim_end().ends_with("||") {
-                " "
-            } else {
-                " || "
-            };
-            return format!("{}{}{separator}{version}'", &body[..=open], inner);
-        }
-    }
-    format!("{trimmed} || {version}")
+    let indent_len = trimmed.len() - trimmed.trim_start().len();
+    let indent = &trimmed[..indent_len];
+    let (item, quote) = item_body(trimmed)?;
+    let separator = if item.trim_end().ends_with("||") {
+        " "
+    } else {
+        " || "
+    };
+    let body = format!("{}{separator}{version}", item.trim_end());
+    Some(match quote {
+        Some(quote) => format!("{indent}- {quote}{body}{quote}"),
+        None => format!("{indent}- {body}"),
+    })
 }
 
 #[cfg(test)]
@@ -650,6 +755,106 @@ mod tests {
         let (merged, applied) = merge_release_age_exclude(inline, &additions);
         assert_eq!(merged, inline);
         assert!(applied.is_empty());
+    }
+
+    #[test]
+    fn exclude_merge_survives_missing_final_newline_and_refuses_commented_lines() {
+        // 文件最后一行没有换行：新条目不能和它拼成一行。
+        let no_eol = "minimumReleaseAgeExclude:\n  - dshmarket@1.0.0";
+        let (merged, applied) = merge_release_age_exclude(
+            no_eol,
+            &[PackageSpec {
+                name: "dshmarket".into(),
+                version: "1.73.3".into(),
+            }],
+        );
+        assert_eq!(
+            merged,
+            "minimumReleaseAgeExclude:\n  - dshmarket@1.0.0 || 1.73.3\n"
+        );
+        assert_eq!(applied.len(), 1);
+
+        // 行尾带注释：版本不能追加到注释后面（等于没放行），改另起一行。
+        let commented = "minimumReleaseAgeExclude:\n  - dshmarket@1.0.0 # 手改过\n";
+        let (merged, applied) = merge_release_age_exclude(
+            commented,
+            &[PackageSpec {
+                name: "dshmarket".into(),
+                version: "1.73.3".into(),
+            }],
+        );
+        assert_eq!(
+            merged,
+            "minimumReleaseAgeExclude:\n  - dshmarket@1.0.0 # 手改过\n  - dshmarket@1.73.3\n"
+        );
+        assert_eq!(applied.len(), 1);
+    }
+
+    #[test]
+    fn exclude_merge_keeps_every_legal_shape_legal() {
+        let addition = |name: &str, version: &str| PackageSpec {
+            name: name.into(),
+            version: version.into(),
+        };
+        // 无缩进序列（合法 YAML，真实仓库里有这种写法）：沿用 0 缩进往后接，
+        // 不能把顶格的 `- ` 当成「下一个顶层键」再把条目插到它前面。
+        let indentless = "minimumReleaseAgeExclude:\n- dshmarket@1.0.0\nallowBuilds:\n  x: true\n";
+        let (merged, applied) = merge_release_age_exclude(
+            indentless,
+            &[addition("dshmarket", "1.73.3"), addition("zod", "4.6.7")],
+        );
+        assert_eq!(
+            merged,
+            "minimumReleaseAgeExclude:\n- dshmarket@1.0.0 || 1.73.3\n- zod@4.6.7\nallowBuilds:\n  x: true\n"
+        );
+        assert_eq!(applied.len(), 2);
+
+        // 键的下一行是 flow 数组：认不出，原样返回（调用方走临时关闸门兜底）。
+        let flow = "minimumReleaseAgeExclude:\n  [dshmarket@1.0.0]\nallowBuilds:\n  x: true\n";
+        assert_eq!(
+            merge_release_age_exclude(flow, &[addition("zod", "4.6.7")]),
+            (flow.to_string(), Vec::new())
+        );
+
+        // 双引号条目：版本补进闭引号里面，不是拼在引号外。
+        let double = "minimumReleaseAgeExclude:\n  - \"dshmarket@1.0.0\"\n";
+        let (merged, applied) =
+            merge_release_age_exclude(double, &[addition("dshmarket", "1.73.3")]);
+        assert_eq!(
+            merged,
+            "minimumReleaseAgeExclude:\n  - \"dshmarket@1.0.0 || 1.73.3\"\n"
+        );
+        assert_eq!(applied.len(), 1);
+
+        // 混合引号不是 pnpm 的写法，也认不准：这一条不补（返回原样）。
+        let mixed = "minimumReleaseAgeExclude:\n  - 'a@1.0.0' || '2.0.0'\n";
+        assert_eq!(
+            merge_release_age_exclude(mixed, &[addition("a", "3.0.0")]),
+            (mixed.to_string(), Vec::new())
+        );
+
+        // 带 BOM 的键要认得出，不能追加出第二个同名键。
+        let bom = "\u{feff}minimumReleaseAgeExclude:\n  - dshmarket@1.0.0\n";
+        let (merged, applied) = merge_release_age_exclude(bom, &[addition("dshmarket", "1.73.3")]);
+        assert_eq!(
+            merged,
+            "\u{feff}minimumReleaseAgeExclude:\n  - dshmarket@1.0.0 || 1.73.3\n"
+        );
+        assert_eq!(applied.len(), 1);
+
+        // 根节点是 flow 映射：再追加块状键会变成两个根节点，原样返回。
+        let empty_map = "{}\n";
+        assert_eq!(
+            merge_release_age_exclude(empty_map, &[addition("zod", "4.6.7")]),
+            (empty_map.to_string(), Vec::new())
+        );
+
+        // 近似但不等于的键名 / 别处提到这个名字：不猜，原样返回。
+        let similar = "minimumReleaseAgeExcludePatch: 1\n";
+        assert_eq!(
+            merge_release_age_exclude(similar, &[addition("zod", "4.6.7")]),
+            (similar.to_string(), Vec::new())
+        );
     }
 
     #[test]
