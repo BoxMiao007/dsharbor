@@ -3988,14 +3988,18 @@ async function main(): Promise<void> {
           progress,
         });
         ok = outcome.ok;
+        // 回执的首行是「一句能照着念的结论」，后面是给排查用的细节（完整命令、
+        // 输出尾巴、备份目录）。提示条与行内只放首行；全文进统一日志——
+        // 整段塞进提示条会撑到一千多像素高，按钮都被挤出屏幕。
+        const receiptLine = firstLine(outcome.message);
         // 收尾文案只往「这个环境」自己那份写（界面提示留给还在看它的人）。
         if (prefs.profile === target) {
-          setPluginNote(outcome.message);
+          setPluginNote(receiptLine);
         }
         logAction(outcome.message);
         // 更新结果的回执（#34）：批量收尾的那句里带失败条数，这里只把后端的话搬出来，
         // 进度事件与行级状态归 #33，这里不碰。
-        showToast(outcome.message, outcome.ok ? "ok" : "error");
+        showToast(receiptLine, outcome.ok ? "ok" : "error");
         if (name !== null) {
           // 单插件：返回值的 ok 就是这一行的结果，失败原因就写在 message 里。
           round.phases.set(name, {
@@ -4020,13 +4024,17 @@ async function main(): Promise<void> {
         }
         await refreshPluginUpdates(target);
       } catch (err) {
+        // 单插件失败时后端返回的是整份回执（多行）：提示条与行内只放首行，
+        // 全文进统一日志；行内的气泡仍带全文，鼠标停上去能看细节。
+        const text = String(err);
+        const head = firstLine(text);
         if (prefs.profile === target) {
-          setPluginNote(`更新插件失败：${String(err)}`);
+          setPluginNote(`更新插件失败：${head}`);
         }
-        logAction(`更新插件失败：${String(err)}`);
-        showToast(`更新插件失败：${String(err)}`, "error");
+        logAction(`更新插件失败：${text}`);
+        showToast(`更新插件失败：${head}`, "error");
         if (name) {
-          round.phases.set(name, { phase: "fail", message: String(err) });
+          round.phases.set(name, { phase: "fail", message: text });
           markFreshPhase(name, target);
         }
       } finally {

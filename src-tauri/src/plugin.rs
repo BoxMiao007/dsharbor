@@ -740,6 +740,9 @@ pub(crate) fn plugin_command(
     // 保留名环境的命令会落到别名目录上，所以别名必须先存在（在真跑命令之前失败，
     // 免得 CLI 拿别名名字在别处初始化出一份空环境）。
     ensure_cli_alias(&Target::of(config), profile)?;
+    // npx 缓存坏了（上次下载被打断）时命令会在 1 秒内报 ENOENT，pnpm 根本没机会跑；
+    // 进每条插件命令前先自检一次，坏了就清掉重下（见 npxcache::ensure_healthy）。
+    crate::npxcache::ensure_healthy(config);
     let spawn = build_plugin_plan(config, profile, op)?;
     Ok(command_for_plan(&LaunchPlan {
         spawn,
@@ -757,6 +760,7 @@ pub(crate) fn plugin_command_with(
     relax: &[PnpmRelax],
 ) -> Result<Command, String> {
     ensure_cli_alias(&Target::of(config), profile)?;
+    crate::npxcache::ensure_healthy(config);
     let spawn = build_plugin_plan_with(config, profile, op, relax)?;
     Ok(command_for_plan(&LaunchPlan {
         spawn,
@@ -847,6 +851,107 @@ fn stage_bridge_tgz(app: &tauri::AppHandle, target: &Target, tgz: &str) -> Resul
             Ok(format!("{dir}/{name}"))
         }
     }
+}
+
+/// 环境里「还没被批准执行安装脚本」的依赖（精确到版本，读 `node_modules/.modules.yaml`）。
+///
+/// 这是 pnpm 自己的账本：不放行这些，任何一次 `add` / `install` 都会以
+/// `ERR_PNPM_IGNORED_BUILDS` 失败。读不到（环境还没装过依赖）就是空表。
+pub(crate) fn ignored_builds(
+    target: &Target,
+    profile: &str,
+) -> Vec<dsharbor_core::plugin_update::PackageSpec> {
+    let Ok(dir) = profile_dir(target, profile) else {
+        return Vec::new();
+    };
+    let path = join_path(target, &dir, "node_modules/.modules.yaml");
+    match read_file(target, &path) {
+        Ok(text) => dsharbor_core::plugin_update::parse_modules_ignored_builds(&text),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// 环境的 `file:` 依赖指向的本地包不见了，就从安装目录里补回去。
+///
+/// 桥接插件是以 `file:<暂存目录>/dsharbor-bridge-<版本>.tgz` 装进去的；暂存目录
+/// 落在 `%APPDATA%\DSHarbor\cache`，被清理工具或用户删掉之后，pnpm 每次装别的
+/// 插件都会撞上「读不到本地包」，报错只说文件不存在，看不出该补什么。安装目录
+/// 里本来就带着同一份 tgz（随壳发版），文件名对得上就复制回原位。
+///
+/// 只处理**宿主上的绝对路径**（壳自己写的就是这种）。WSL 环境与相对路径直接
+/// 跳过：前者要经 `wsl.exe` 才能读写，后者没有可判断的基准目录——都不猜。
+/// 补不了的（安装目录里没有同名文件、复制失败）会留一句说明，不假装成功。
+pub(crate) fn heal_local_deps(
+    app: &tauri::AppHandle,
+    target: &Target,
+    profile: &str,
+) -> Vec<String> {
+    let Target::Host = target else {
+        return Vec::new();
+    };
+    let Ok(dir) = profile_dir(target, profile) else {
+        return Vec::new();
+    };
+    heal_local_deps_at(
+        find_bridge_tgz(app).ok().as_deref().map(Path::new),
+        Path::new(&dir),
+    )
+}
+
+/// [`heal_local_deps`] 的实现：对着一个环境目录干活（`shipped` 是安装目录里的
+/// 桥接包，纯逻辑便于单测）。
+fn heal_local_deps_at(shipped: Option<&Path>, dir: &Path) -> Vec<String> {
+    let mut notes: Vec<String> = Vec::new();
+    let Ok(manifest) = std::fs::read_to_string(dir.join("package.json")) else {
+        return notes;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&manifest) else {
+        return notes;
+    };
+    let Some(dependencies) = value.get("dependencies").and_then(|deps| deps.as_object()) else {
+        return notes;
+    };
+    for value in dependencies.values() {
+        let Some(spec) = value.as_str().and_then(|spec| spec.strip_prefix("file:")) else {
+            continue;
+        };
+        let path = PathBuf::from(spec);
+        if !path.is_absolute() || path.is_file() {
+            continue;
+        }
+        let name = name_of(&path);
+        let replacement = shipped.filter(|tgz| name_of(tgz) == name);
+        let Some(replacement) = replacement else {
+            notes.push(format!(
+                "环境的本地依赖包不见了：{}（安装目录里没有同名文件，没法自动补回）",
+                path.display()
+            ));
+            continue;
+        };
+        let restored = path
+            .parent()
+            .map(std::fs::create_dir_all)
+            .unwrap_or(Ok(()))
+            .and_then(|()| std::fs::copy(replacement, &path).map(|_| ()));
+        match restored {
+            Ok(()) => notes.push(format!(
+                "环境的本地依赖包不见了（{name}），已从安装目录补回：{}",
+                path.display()
+            )),
+            Err(err) => notes.push(format!(
+                "环境的本地依赖包不见了（{name}），补回失败（{}）：{err}",
+                path.display()
+            )),
+        }
+    }
+    notes
+}
+
+/// 路径的文件名（给 `heal_local_deps` 比较用，避免再写一遍 Option 链）。
+fn name_of(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default()
 }
 
 /// 这次插件操作要注入的环境变量：当前设置里的下载源 + 代理。
@@ -1220,6 +1325,42 @@ mod tests {
             vec!["package.json".to_string()],
             "临时文件不能留下：{names:?}"
         );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn missing_local_deps_are_restored_from_the_shipped_package() {
+        let root = std::env::temp_dir().join(format!("dsharbor-local-dep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile = root.join("profiles/web");
+        let shipped_dir = root.join("resources");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::create_dir_all(&shipped_dir).unwrap();
+        // 暂存目录整个不见了（实机就是这样：%APPDATA%\DSHarbor\cache 被清掉）。
+        let pinned = root.join("cache/dsharbor-bridge-0.1.0.tgz");
+        let shipped = shipped_dir.join("dsharbor-bridge-0.1.0.tgz");
+        std::fs::write(&shipped, b"tgz-bytes").unwrap();
+        let manifest = format!(
+            r#"{{"dependencies":{{"dsharbor-bridge":"file:{}","dsh-x":"^1.0.0"}}}}"#,
+            pinned.to_string_lossy().replace('\\', "/")
+        );
+        std::fs::write(profile.join("package.json"), manifest).unwrap();
+
+        let notes = heal_local_deps_at(Some(&shipped), &profile);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("已从安装目录补回"), "{notes:?}");
+        assert_eq!(std::fs::read(&pinned).unwrap(), b"tgz-bytes");
+        // 已经在了就不该再报一次（幂等）。
+        assert!(heal_local_deps_at(Some(&shipped), &profile).is_empty());
+
+        // 安装目录里没有同名文件：如实说补不了，不误报成功。
+        std::fs::remove_file(&pinned).unwrap();
+        let other = shipped_dir.join("dsharbor-bridge-9.9.9.tgz");
+        std::fs::write(&other, b"x").unwrap();
+        let notes = heal_local_deps_at(Some(&other), &profile);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("没法自动补回"), "{notes:?}");
+        assert!(!pinned.exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

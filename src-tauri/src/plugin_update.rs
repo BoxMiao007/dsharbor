@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use dsharbor_core::launch::{self, LaunchConfig};
 use dsharbor_core::plugin_switch;
 use dsharbor_core::plugin_switch::PluginItem;
-use dsharbor_core::plugin_update::{self, PluginUpdateItem};
+use dsharbor_core::plugin_update::{self, PackageSpec, PluginUpdateItem};
 use dsharbor_core::prefs::DownloadSource;
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -205,18 +205,26 @@ fn summarize_results(results: &[(String, Result<String, String>)]) -> String {
                 .map(|e| format!("{name}：{}", e.lines().next().unwrap_or(e.as_str())))
         })
         .collect();
-    let mut text = if bad.is_empty() {
-        format!("全部更新完成：成功 {} 个（{}）。", ok.len(), ok.join("、"))
-    } else {
-        format!(
+    // 一句能照着念的汇总：成功 0 个时不再印一对空括号，全失败时也不说「重启后生效」
+    // ——那会让人以为版本已经换了。
+    let mut text = match (ok.is_empty(), bad.is_empty()) {
+        (_, true) => format!("全部更新完成：成功 {} 个（{}）。", ok.len(), ok.join("、")),
+        (true, false) => format!(
+            "更新完成：{} 个插件都没能更新（{}）。",
+            bad.len(),
+            bad.join("；")
+        ),
+        (false, false) => format!(
             "更新完成：成功 {} 个（{}）；失败 {} 个（{}）。",
             ok.len(),
             ok.join("、"),
             bad.len(),
             bad.join("；")
-        )
+        ),
     };
-    text.push_str("重启 DSH 后生效。");
+    if !ok.is_empty() {
+        text.push_str("重启 DSH 后生效。");
+    }
     text
 }
 
@@ -274,22 +282,43 @@ struct OpRun {
 
 /// 跑一次插件安装/卸载命令；遇到「壳能自救」的失败就补一步再重跑。
 ///
-/// 目前两类，都会让「装上新版本」这件事莫名其妙地失败，而原因都不在包本身：
-/// 1. 环境自己的锁文件坏了（`ERR_PNPM_LOCKFILE_*`）：DSH 的 plugin 命令把 pnpm 当
+/// 目前四类，都会让「装上新版本」这件事莫名其妙地失败，而原因都不在包本身：
+/// 1. npx 缓存里本包的安装是半成品（上次下载被打断）：命令在 1 秒内报 ENOENT，
+///    pnpm 根本没机会跑。先自检、坏了就清掉重下（见 `npxcache::ensure_healthy`）。
+/// 2. 环境的 `file:` 依赖指向的本地包不见了（桥接 tgz 被清理）：每次都报
+///    「读不到本地包」。安装目录里有同名文件就补回去（见 `plugin::heal_local_deps`）。
+/// 3. 环境自己的锁文件坏了（`ERR_PNPM_LOCKFILE_*`）：DSH 的 plugin 命令把 pnpm 当
 ///    外部命令直接 exec，不会自救，壳替它补 `pnpm install --fix-lockfile` 再重跑。
-/// 2. pnpm 的供应链保护拦了「刚发布」的版本（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`
-///    发布不满 1 天、`ERR_PNPM_IGNORED_BUILDS` 依赖的安装脚本未批准）：用户点的是
-///    「更新到这个明确版本」，壳放行一次再重装，并在回执里说明放行了什么。
+/// 4. pnpm 的供应链保护：
+///    - 发布时长（`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` / `NO_MATURE_MATCHING_VERSION`）：
+///      把被拦的版本补进环境 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`
+///      再原样重跑——这正是 pnpm 自己在装成功那一次会做的事。以前这里图省事，
+///      只把闸门关掉一次（`--config.minimumReleaseAge=0`）：这一次装上了，环境却
+///      留着「锁文件里有新版本、放行清单里没有」的状态，下一次任何更新都再撞一次。
+///    - 安装脚本未批准（`ERR_PNPM_IGNORED_BUILDS`）：按 `.modules.yaml` 里精确的
+///      `包名@版本` 放行这次新出现的，不碰别的（见 `plugin::ignored_builds`）。
+///      报错正文会被 pnpm 12 在连字符处硬换行，照着正文抠包名会抠出 `utf-8-`
+///      这种半个名字，而且 pnpm 会把它永久记进 `allowBuilds`。
 ///
-/// 每类最多补一次，补完还失败就照原样把 pnpm 的报错交给用户。
+/// 每一类都只补有限轮，补完还失败就照原样把 pnpm 的报错交给用户。
 fn run_plugin_op(
+    app: &tauri::AppHandle,
     config: &LaunchConfig,
     profile: &str,
     op: &launch::PluginOp,
     env: &[(String, String)],
 ) -> Result<OpRun, String> {
-    let (mut code, mut output) = run_plugin_command(config, profile, op, env, &[])?;
+    let target = Target::of(config);
     let mut notes: Vec<String> = Vec::new();
+    if let Some(note) = crate::npxcache::ensure_healthy(config) {
+        notes.push(note);
+    }
+    notes.extend(plugin::heal_local_deps(app, &target, profile));
+    // 开跑前记一份「已忽略的安装脚本」，后面只放行这次新出现的。
+    let builds_before = plugin::ignored_builds(&target, profile);
+
+    let (mut code, mut output) = run_plugin_command(config, profile, op, env, &[])?;
+    let mut relax: Vec<launch::PnpmRelax> = Vec::new();
 
     if code != 0 && plugin_update::lockfile_needs_repair(&output) {
         match repair_lockfile(config, profile, env) {
@@ -309,36 +338,89 @@ fn run_plugin_op(
     }
 
     // 供应链保护可能与「锁文件坏了」叠着出现（修好锁文件后校验才轮到它），
-    // 所以这一步独立判断，最多补两轮（先放行发布时长，再放行安装脚本）。
-    let mut relax: Vec<launch::PnpmRelax> = Vec::new();
+    // 所以发布时长这一步独立判断。最多两轮：pnpm 11 一次最多列 20 个被拦的版本。
     for _ in 0..2 {
-        if code == 0 {
+        if code == 0 || !plugin_update::release_age_blocked(&output) {
             break;
         }
-        let Some(next) = supply_chain_relax(&output) else {
+        let offenders = plugin_update::release_age_offenders(&output);
+        if offenders.is_empty() {
             break;
-        };
-        let fresh: Vec<launch::PnpmRelax> = next
+        }
+        match merge_release_age_exclude(&target, profile, &offenders) {
+            Ok(applied) if !applied.is_empty() => {
+                notes.push(format!(
+                    "已把 {} 记进环境的发布时长放行清单（pnpm-workspace.yaml）",
+                    applied
+                        .iter()
+                        .map(|spec| spec.written())
+                        .collect::<Vec<_>>()
+                        .join("、")
+                ));
+                let (retry_code, retry_output) =
+                    run_plugin_command(config, profile, op, env, &relax)?;
+                code = retry_code;
+                output = retry_output;
+            }
+            // 清单里已经有这些条目、错误却没变：这条路修不好，交给下面的兜底。
+            Ok(_) => break,
+            Err(err) => {
+                notes.push(format!("发布时长放行清单没能补上：{err}"));
+                break;
+            }
+        }
+    }
+    // 兜底：清单补不上（yaml 形状认不出、写不进去）时，至少把这一次装完。
+    // 说清楚这只是这一次——环境没修，下次可能再撞。
+    if code != 0 && plugin_update::release_age_blocked(&output) {
+        relax.push(launch::PnpmRelax::ReleaseAge);
+        let (retry_code, retry_output) = run_plugin_command(config, profile, op, env, &relax)?;
+        code = retry_code;
+        output = retry_output;
+        notes.push(if code == 0 {
+            "这次是临时关掉发布时长闸门装上的；环境里的放行清单没补全，下次更新可能还要再撞一次"
+                .to_string()
+        } else {
+            "临时关掉发布时长闸门重装，仍未成功".to_string()
+        });
+    }
+
+    // 安装脚本：只放行这次新出现的，精确到版本。
+    for _ in 0..2 {
+        if code == 0 || !plugin_update::builds_blocked(&output) {
+            break;
+        }
+        // 「这次新出现的」是主口径；另外，报错正文里点名（精确到 `包名@版本`）的
+        // 既有条目也要放行——上一次失败的安装会把自己的待批准项留在环境里，
+        // 之后任何一次 add 都会被它拦下，只按差量算永远放行不到它。
+        let fresh: Vec<PackageSpec> = plugin::ignored_builds(&target, profile)
             .into_iter()
-            .filter(|option| !relax.contains(option))
+            .filter(|spec| !builds_before.contains(spec) || output.contains(&spec.written()))
+            .filter(|spec| {
+                !relax.iter().any(
+                    |option| matches!(option, launch::PnpmRelax::AllowBuild(done) if done == spec),
+                )
+            })
             .collect();
         if fresh.is_empty() {
             break;
         }
-        relax.extend(fresh);
+        relax.extend(fresh.into_iter().map(launch::PnpmRelax::AllowBuild));
         let (retry_code, retry_output) = run_plugin_command(config, profile, op, env, &relax)?;
         code = retry_code;
         output = retry_output;
     }
-    if !relax.is_empty() {
-        let outcome = if code == 0 {
-            "重装成功"
-        } else {
-            "重装仍未成功"
-        };
+    let allowed: Vec<String> = relax
+        .iter()
+        .filter_map(|option| match option {
+            launch::PnpmRelax::AllowBuild(spec) => Some(spec.written()),
+            launch::PnpmRelax::ReleaseAge => None,
+        })
+        .collect();
+    if !allowed.is_empty() {
         notes.push(format!(
-            "已放行 pnpm 的供应链保护（{}）{outcome}",
-            relax_text(&relax)
+            "已允许 {} 的安装脚本执行（pnpm 会把它记进环境的 allowBuilds，这一版以后不用再批准）",
+            allowed.join("、")
         ));
     }
 
@@ -352,6 +434,26 @@ fn run_plugin_op(
         },
         relax,
     })
+}
+
+/// 把被发布时长拦住的版本补进环境 `pnpm-workspace.yaml` 的放行清单。
+///
+/// 只改这一个键下面的条目（见 `plugin_update::merge_release_age_exclude`）；
+/// 读不到文件或形状认不出就返回错误，由调用方决定要不要走「临时关闸门」的兜底。
+fn merge_release_age_exclude(
+    target: &Target,
+    profile: &str,
+    offenders: &[PackageSpec],
+) -> Result<Vec<PackageSpec>, String> {
+    let dir = plugin::profile_dir(target, profile)?;
+    let path = plugin::join_path(target, &dir, "pnpm-workspace.yaml");
+    let yaml = plugin::read_file(target, &path)
+        .map_err(|err| format!("读不到环境的 pnpm-workspace.yaml：{err}"))?;
+    let (merged, applied) = plugin_update::merge_release_age_exclude(&yaml, offenders);
+    if !applied.is_empty() {
+        plugin::write_file(target, &path, &merged)?;
+    }
+    Ok(applied)
 }
 
 /// 跑一条插件命令（`relax` 为空就是原命令）。
@@ -368,51 +470,6 @@ fn run_plugin_command(
         plugin::plugin_command_with(config, profile, op, env, relax)?
     };
     plugin::run_capture(command, plugin::PLUGIN_OP_TIMEOUT)
-}
-
-/// 这次失败是不是 pnpm 供应链保护拦的；是就给出要放行的开关。
-///
-/// 认不出、或者认得出但取不到包名（`--allow-build` 需要包名）就返回 `None`：
-/// 宁可不放行，也不要拿着猜出来的参数去跑第三方安装脚本。
-fn supply_chain_relax(output: &str) -> Option<Vec<launch::PnpmRelax>> {
-    if plugin_update::release_age_blocked(output) {
-        return Some(vec![launch::PnpmRelax::ReleaseAge]);
-    }
-    if plugin_update::builds_blocked(output) {
-        let packages = plugin_update::blocked_build_packages(output);
-        if packages.is_empty() {
-            return None;
-        }
-        return Some(
-            packages
-                .into_iter()
-                .map(launch::PnpmRelax::AllowBuild)
-                .collect(),
-        );
-    }
-    None
-}
-
-/// 放行说明里的人话部分（回执正文用，不写参数）。
-fn relax_text(relax: &[launch::PnpmRelax]) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if relax
-        .iter()
-        .any(|option| matches!(option, launch::PnpmRelax::ReleaseAge))
-    {
-        parts.push("该版本发布不满 1 天，pnpm 默认要等满才装".to_string());
-    }
-    let builds: Vec<&str> = relax
-        .iter()
-        .filter_map(|option| match option {
-            launch::PnpmRelax::AllowBuild(name) => Some(name.as_str()),
-            launch::PnpmRelax::ReleaseAge => None,
-        })
-        .collect();
-    if !builds.is_empty() {
-        parts.push(format!("已允许 {} 的安装脚本执行", builds.join("、")));
-    }
-    parts.join("；")
 }
 
 /// 修环境自己的 `pnpm-lock.yaml`（`pnpm install --fix-lockfile`）。
@@ -437,7 +494,7 @@ fn repair_lockfile(
     plugin::run_capture(command, LOCKFILE_REPAIR_TIMEOUT)
 }
 
-/// 更新单个第三方插件到 registry 上的目标版本。成功返回（装上的版本，备份目录）。
+/// 更新单个第三方插件到 registry 上的目标版本。成功返回（装上的版本，备份目录，壳补做的说明）。
 ///
 /// 目标版本以会话缓存（没有就现查）为准，界面传来的按钮状态不参与决策；
 /// 磁盘上读不到已装版本或没有更新时拒绝执行。
@@ -447,7 +504,7 @@ fn update_one(
     profile: &str,
     source: DownloadSource,
     name: &str,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, Option<String>), String> {
     if !plugin_update::in_update_scope(name) {
         return Err("官方内置包与桥接插件不适用在线更新".to_string());
     }
@@ -474,7 +531,7 @@ fn update_one(
     let op = launch::PluginOp::Install {
         package: package.clone(),
     };
-    let run = run_plugin_op(config, profile, &op, &env)?;
+    let run = run_plugin_op(app, config, profile, &op, &env)?;
     // 命令回显要带上壳实际用过的放行开关（撞上 pnpm 供应链保护时会补参数），
     // 用户照着这一行自己重跑才等价。
     let command_line = plugin::plugin_command_line_with(config, profile, &op, &run.relax)
@@ -496,23 +553,31 @@ fn update_one(
         Ok(()) => format!("版本已换成 {latest} ✓"),
         Err(err) => format!("{err} ✗"),
     };
-    // 首行必须能直接定位问题：命令退了非零就给退出码 + CLI 报错摘要，
-    // 命令退了零但校验不过就给校验原因；其余细节（完整命令、输出、备份）
-    // 挪到后面——界面失败行与汇总只取首行，报错被埋在末尾等于看不见。
+    // 首行必须能直接定位问题，顺序按「谁才是原因」排：
+    // 1. 命令退了非零 → 退出码 + CLI 报错摘要（校验不过只是它的后果，不能顶在前面，
+    //    否则最常见的失败只会显示「装上的版本没变」，真正的原因埋在末尾）；
+    // 2. 命令成功但校验不过 → 校验原因（版本没换过来）；
+    // 3. 其余细节（完整命令、输出、备份）挪到后面——界面失败行与汇总只取首行。
     //
     // 锁文件坏了要单独说清：报错原文是「装上的版本没变」，用户会以为是包的问题，
     // 实际是环境里 pnpm-lock.yaml 的 importers 与 packages 两段脱节。
     let lockfile_broken = plugin_update::lockfile_needs_repair(&output);
-    let first_line = match (&verify, code) {
-        (Err(err), _) if lockfile_broken => format!(
-            "环境的依赖锁文件坏了（pnpm-lock.yaml 与已装依赖对不上），装在装之前就失败：{err}（退出码 {code}）：{}",
-            cli_error_digest(&output)
-        ),
-        (Err(err), _) => format!("已执行但校验未过：{err}（退出码 {code}）"),
-        (Ok(()), code) => format!(
-            "更新命令失败（退出码 {code}）：{}",
-            cli_error_digest(&output)
-        ),
+    let first_line = if code != 0 {
+        let digest = cli_error_digest(&output);
+        if lockfile_broken {
+            format!("环境的依赖锁文件坏了（pnpm-lock.yaml 与已装依赖对不上），命令在装之前就失败（退出码 {code}）：{digest}")
+        } else {
+            let state = match &verify {
+                Ok(()) => format!("新版本 {latest} 已就位，但命令报了错"),
+                Err(err) => format!("当前版本仍是 {current}：{err}"),
+            };
+            format!("更新命令失败（退出码 {code}）：{digest}（{state}）")
+        }
+    } else if let Err(err) = &verify {
+        format!("已执行但校验未过：{err}")
+    } else {
+        // ok == true 时这里用不到；留一句兜底，避免将来改动漏掉分支。
+        format!("更新到 {latest} 的校验未通过")
     };
     // 壳替用户补做的动作（修锁文件、放行 pnpm 供应链保护）要写进回执：
     // 补成功了用户不用管，没补好也得知道壳查过什么。
@@ -532,29 +597,56 @@ fn update_one(
         plugin::prune_note(&backup.pruned)
     );
     if ok {
-        Ok((latest, backup.dir))
+        // 成功时也把「壳补做了什么」带回去：放行过 pnpm 的闸门、补过放行清单、
+        // 修过锁文件——这些用户该知道，不能只写在失败回执里。
+        Ok((latest, backup.dir, note))
     } else {
         eprintln!("[plugin-update] {name} 更新失败：\n{message}");
         Err(message)
     }
 }
 
-/// 从 CLI 输出里抓最像报错的一段做摘要：从末尾往前找报错头（pnpm/npm 的
-/// `Error:`/`×`/`ERR_` 与中文「失败」），从那一行起拼到输出结束；找不到就落回
-/// 最后一个非空行。只用于失败首行，压成一行并截断——完整输出仍留在「输出：」块里。
+/// 从 CLI 输出里抓最像报错的一段做摘要。
+///
+/// 报错头分两档，按「谁更接近原因」排优先级：
+/// 1. DSH 自己的拒绝原文（`dsh: installation rejected…`）、npm 错误块的首行
+///    （`npm error code ENOENT`）、pnpm 的错误码行（`Error: ERR_…` / `[ERR_…]` /
+///    `[ENOENT]`）；
+/// 2. miette 的上下文行（`×` / `✗`）与中文「失败」。
+///
+/// 为什么分档：pnpm 12 把 `Error: ERR_…` 印在 `× adding a new package` **上面**，
+/// 只按「最后出现的报错头」取会把错误码丢掉；npm 的错误块最后一行又是
+/// 「完整日志在…」这种废话，按最后一条取同样没用。两档都没有才落回最后一个非空行。
+/// 只用于失败首行，压成一行并截断——完整输出仍留在「输出：」块里。
 fn cli_error_digest(output: &str) -> String {
     let lines: Vec<&str> = output
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
+        // `dsh: plugin command failed; diagnostics: …pnpm.log` 是 DSH 每次失败都加
+        // 的尾巴，CLI 模式下那个文件里只有一行 execa 报错，留着只会挤掉真原因。
+        .filter(|line| !line.starts_with("dsh: plugin command failed"))
         .collect();
     let start = lines
         .iter()
-        .rposition(|line| {
-            line.starts_with("Error")
-                || line.starts_with('×')
-                || line.starts_with("ERR_")
-                || line.contains("失败")
+        .position(|line| line.starts_with("dsh: installation rejected"))
+        .or_else(|| {
+            lines
+                .iter()
+                .position(|line| line.starts_with("npm error code"))
+        })
+        .or_else(|| {
+            lines.iter().rposition(|line| {
+                line.starts_with("Error")
+                    || line.starts_with("ERR_")
+                    || line.starts_with("[ERR_")
+                    || line.starts_with("[ENOENT]")
+            })
+        })
+        .or_else(|| {
+            lines.iter().rposition(|line| {
+                line.starts_with('×') || line.starts_with('✗') || line.contains("失败")
+            })
         })
         .unwrap_or(lines.len().saturating_sub(1));
     let mut text = lines[start.min(lines.len())..].join(" ");
@@ -579,10 +671,15 @@ pub fn update(
 ) -> Result<UpdateOutcome, String> {
     match name {
         Some(name) => {
-            let (version, backup_dir) = update_one(app, config, profile, source, name)?;
+            let (version, backup_dir, note) = update_one(app, config, profile, source, name)?;
+            let mut message = format!("已把「{name}」更新到 {version}。重启 DSH 后生效。");
+            if let Some(note) = note {
+                message.push('\n');
+                message.push_str(&note);
+            }
             Ok(UpdateOutcome {
                 ok: true,
-                message: format!("已把「{name}」更新到 {version}。重启 DSH 后生效。"),
+                message,
                 backup_dir,
             })
         }
@@ -611,7 +708,7 @@ pub fn update(
                 );
                 let outcome = update_one(app, config, profile, source, name);
                 let event = match &outcome {
-                    Ok((version, dir)) => {
+                    Ok((version, dir, _note)) => {
                         if backup_dir.is_empty() {
                             backup_dir = dir.clone();
                         }
@@ -800,7 +897,7 @@ pub fn install_into(
         package: package.clone(),
     };
     let backup = plugin::backup_profile(app, &target, target_profile)?;
-    let run = run_plugin_op(config, target_profile, &op, &env)?;
+    let run = run_plugin_op(app, config, target_profile, &op, &env)?;
     // 命令回显要带上壳实际用过的放行开关（撞上 pnpm 供应链保护时会补参数）。
     let command_line = plugin::plugin_command_line_with(config, target_profile, &op, &run.relax)
         .unwrap_or_else(|_| {
@@ -819,16 +916,21 @@ pub fn install_into(
         Err(err) => format!("{err} ✗"),
     };
     let lockfile_broken = plugin_update::lockfile_needs_repair(&output);
-    let first_line = match (&verify, code) {
-        (Err(err), _) if lockfile_broken => format!(
-            "目标环境的依赖锁文件坏了（pnpm-lock.yaml 与已装依赖对不上），装在装之前就失败：{err}（退出码 {code}）：{}",
-            cli_error_digest(&output)
-        ),
-        (Err(err), _) => format!("已执行但校验未过：{err}（退出码 {code}）"),
-        (Ok(()), code) => format!(
-            "安装命令失败（退出码 {code}）：{}",
-            cli_error_digest(&output)
-        ),
+    // 与更新回执同一套口径：命令退了非零就先给退出码 + CLI 报错摘要，
+    // 校验不过只是它的后果。
+    let first_line = if ok {
+        format!("安装命令已完成，{version} 已就位")
+    } else if code != 0 {
+        let digest = cli_error_digest(&output);
+        if lockfile_broken {
+            format!("目标环境的依赖锁文件坏了（pnpm-lock.yaml 与已装依赖对不上），命令在装之前就失败（退出码 {code}）：{digest}")
+        } else {
+            format!("安装命令失败（退出码 {code}）：{digest}")
+        }
+    } else if let Err(err) = &verify {
+        format!("已执行但校验未过：{err}")
+    } else {
+        format!("安装到 {version} 的校验未通过")
     };
     let recover_note = match &note {
         Some(note) => format!(
@@ -859,10 +961,9 @@ pub fn install_into(
             backup_dir: backup.dir,
         })
     } else {
-        Err(format!(
-            "把「{name}」装进环境「{target_profile}」失败：
-{detail}"
-        ))
+        // 首行已经是完整结论（含退出码与 CLI 报错摘要），界面自己会补
+        // 「装进「目标环境」失败：」——这里再包一层只会让首行变成一句废话。
+        Err(detail)
     }
 }
 
@@ -1129,7 +1230,60 @@ mod tests {
         let digest = cli_error_digest(output);
         assert!(digest.starts_with("Error: ERR_PNPM_LOCKFILE_MISSING_DEPENDENCY"));
         assert!(digest.contains("Broken lockfile"));
-        assert!(digest.contains("diagnostics"));
+        // DSH 那条「日志在…」的尾巴是死的（CLI 模式下那文件里只有一行），不占摘要。
+        assert!(!digest.contains("diagnostics"), "{digest}");
+    }
+
+    /// 本机真实失败样本（2026-10-29 05:13，npx 缓存坏掉时的输出）：
+    /// 以前取到的是最后一行「完整日志在…」，真正的原因（ENOENT + 缺哪个文件）全丢了。
+    #[test]
+    fn digest_reads_npm_error_blocks() {
+        let output = "npm error code ENOENT\n\
+                      npm error syscall open\n\
+                      npm error path D:\\cache\\_npx\\4f99bf10e014d1ed\\package.json\n\
+                      npm error errno -4058\n\
+                      npm error enoent Could not read package.json: Error: ENOENT\n\
+                      npm error A complete log of this run can be found in: D:\\cache\\_logs\\x.log\n";
+        let digest = cli_error_digest(output);
+        assert!(digest.starts_with("npm error code ENOENT"), "{digest}");
+        assert!(digest.contains("4f99bf10e014d1ed"), "{digest}");
+    }
+
+    /// pnpm 12 的 miette 输出：错误码在 `×` 上下文行**上面**，摘要不能只捡到 `×`。
+    #[test]
+    fn digest_keeps_the_error_code_above_the_context_line() {
+        let output = "Error: ERR_PNPM_IGNORED_BUILDS\n\
+                      \n\
+                      \u{a0} \u{d7} adding a new package\n\
+                      \u{a0} \u{2570}\u{2500}\u{25b6} Ignored build scripts: esbuild@0.28.1\n";
+        let digest = cli_error_digest(output);
+        assert!(
+            digest.starts_with("Error: ERR_PNPM_IGNORED_BUILDS"),
+            "{digest}"
+        );
+        assert!(digest.contains("esbuild@0.28.1"), "{digest}");
+        // pnpm 11 的错误码带方括号；pnpm 11 读本地包失败的 `[ENOENT]` 也要认。
+        assert!(
+            cli_error_digest("x\n[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: a@1\n")
+                .starts_with("[ERR_PNPM_IGNORED_BUILDS]")
+        );
+        assert!(
+            cli_error_digest("x\n[ENOENT] ENOENT: no such file, open 'a.tgz'\n")
+                .starts_with("[ENOENT]")
+        );
+    }
+
+    /// DSH 自己拒绝插件（版本不兼容）时，回执要给它的原文，而不是一句 pnpm 报错。
+    #[test]
+    fn digest_surfaces_dsh_rejection_verdicts() {
+        let output = "Progress: resolved 3, reused 0\n\
+                      Error: ERR_PNPM_SOMETHING\n\
+                      dsh: installation rejected: @nanmicoder/dsh-agent-teams@0.1.27 requires dsh 0.2.1-rc.3, running 0.2.1-rc.4\n\
+                      dsh: to accept the risk, run: dsh plugin --profile desktop allow-version ...\n\
+                      dsh: plugin command failed; diagnostics: C:\\x\\pnpm.log\n";
+        let digest = cli_error_digest(output);
+        assert!(digest.starts_with("dsh: installation rejected"), "{digest}");
+        assert!(digest.contains("accept the risk"), "{digest}");
     }
 
     #[test]
@@ -1506,12 +1660,16 @@ mod tests {
         );
         assert!(text.contains("dsh-bad：boom"), "{text}");
 
+        // 全部失败：不说「成功 0 个（）」这对空括号，也不说「重启 DSH 后生效」
+        // ——什么都没换成，那句话会让人以为已经生效了。
         let all_bad = vec![("dsh-bad".to_string(), Err("boom".to_string()))];
         let text = summarize_results(&all_bad);
-        assert!(
-            text.contains("成功 0 个") && text.contains("失败 1 个"),
-            "{text}"
-        );
+        assert!(text.contains("1 个插件都没能更新"), "{text}");
+        assert!(!text.contains("成功 0 个"), "{text}");
+        assert!(!text.contains("重启 DSH 后生效"), "{text}");
+        // 有成功才说「重启 DSH 后生效」。
+        let text = summarize_results(&mixed);
+        assert!(text.contains("重启 DSH 后生效"), "{text}");
 
         assert_eq!(summarize_results(&[]), "没有需要更新的插件。");
     }

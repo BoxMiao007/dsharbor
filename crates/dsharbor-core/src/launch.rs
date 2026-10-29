@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::plugin_update::PackageSpec;
+
 /// npx 的固定前缀。
 /// `--yes`：npx 首次下载包时会交互确认；壳的子进程没有终端，不加会直接卡住。
 pub const NPX_PREFIX: &str = "npx --yes";
@@ -600,10 +602,13 @@ pub enum PluginOp {
 /// 本来就是用户指着某个版本点的，所以失败后放行一次再重装——放行了什么要写进回执。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PnpmRelax {
-    /// 放行发布时长限制：`--config.minimumReleaseAge=0`。
+    /// 放行发布时长限制：`--config.minimumReleaseAge=0`（只关这一次的闸门）。
     ReleaseAge,
-    /// 允许这个包的安装脚本执行：`--allow-build=<包名>`。
-    AllowBuild(String),
+    /// 允许这个包**这一版**的安装脚本执行：`--allow-build=name@version`。
+    ///
+    /// 版本一定要带上：只写包名等于给这个包以后的所有版本永久放行，而 pnpm 会把
+    /// 它记进环境 `pnpm-workspace.yaml` 的 `allowBuilds`（不是一次性开关）。
+    AllowBuild(PackageSpec),
 }
 
 impl PnpmRelax {
@@ -612,10 +617,14 @@ impl PnpmRelax {
         match self {
             // `--config.<键>=<值>` 是 pnpm 的通用配置覆盖写法，只影响这一次安装。
             PnpmRelax::ReleaseAge => Ok("--config.minimumReleaseAge=0".to_string()),
-            PnpmRelax::AllowBuild(name) => {
-                // 包名会进命令行，先按插件同一套规则校验，别让输出里的怪字符串变成参数。
-                crate::plugin_update::validate_package_name(name)?;
-                Ok(format!("--allow-build={name}"))
+            PnpmRelax::AllowBuild(spec) => {
+                // 包名与版本都会进命令行，先按插件同一套规则校验，
+                // 别让输出里的怪字符串变成参数。
+                crate::plugin_update::validate_package_name(&spec.name)?;
+                if !crate::registry::is_version_like(&spec.version) {
+                    return Err(format!("安装脚本放行的版本号不合法：{}", spec.version));
+                }
+                Ok(format!("--allow-build={}", spec.written()))
             }
         }
     }
@@ -1065,7 +1074,10 @@ mod tests {
             },
             &[
                 PnpmRelax::ReleaseAge,
-                PnpmRelax::AllowBuild("esbuild".into()),
+                PnpmRelax::AllowBuild(crate::plugin_update::PackageSpec {
+                    name: "esbuild".into(),
+                    version: "0.28.1".into(),
+                }),
             ],
         )
         .unwrap();
@@ -1073,7 +1085,7 @@ mod tests {
             SpawnPlan::ShellLine { line, .. } => assert_eq!(
                 line,
                 "dsh plugin --profile web add dsh-free-search@0.9.19 \
-                 --config.minimumReleaseAge=0 --allow-build=esbuild"
+                 --config.minimumReleaseAge=0 --allow-build=esbuild@0.28.1"
             ),
             other => panic!("unexpected plan: {other:?}"),
         }
@@ -1084,7 +1096,23 @@ mod tests {
             &PluginOp::Install {
                 package: "dsh-free-search@0.9.19".into(),
             },
-            &[PnpmRelax::AllowBuild("bad name; rm -rf".into())],
+            &[PnpmRelax::AllowBuild(PackageSpec {
+                name: "bad name; rm -rf".into(),
+                version: "1.0.0".into(),
+            })],
+        )
+        .is_err());
+        // 版本号同样要过校验：`@version` 会整段进命令行。
+        assert!(build_plugin_plan_with(
+            &cfg(LaunchMode::System, &[]),
+            PROFILE_NAME,
+            &PluginOp::Install {
+                package: "dsh-free-search@0.9.19".into(),
+            },
+            &[PnpmRelax::AllowBuild(PackageSpec {
+                name: "esbuild".into(),
+                version: "1.0.0; rm -rf".into(),
+            })],
         )
         .is_err());
     }
