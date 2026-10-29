@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DSHarbor",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "identifier": "com.boxmiao.dsharbor",
   "build": {
     "beforeDevCommand": "pnpm dev",
