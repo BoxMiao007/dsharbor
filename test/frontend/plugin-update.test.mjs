@@ -260,21 +260,29 @@ test("检查后行内出现版本号与更新按钮；范围外插件与查不�
   }
 });
 
-test("「检查更新」查所有环境：每张环境卡各自亮出可更新数，当前环境的清单照旧刷新", { skip: skipReason }, async () => {
+test("启动即自动检查所有环境：环境卡各自亮出可更新数；「检查更新」再查一次仍按环境分别刷新", { skip: skipReason }, async () => {
   const page = await openPluginPanel(browser);
   try {
-    // 进卡自动查只查正在管理的 web，其余环境卡还没查过、不该有微标。
-    const before = await readEnvBadges(page);
-    assert.equal(before.web, "3", "当前环境自动查过，微标是它的可更新数");
-    assert.equal(before.lab, null, "没查过的环境不该有微标");
-    assert.equal(before.desktop, null, "没查过的环境不该有微标");
+    // 启动时会自动跑一次「检查所有环境」：各环境卡的可更新数不用点按钮就已亮出。
+    const start = await readEnvBadges(page);
+    assert.equal(start.web, "3", "启动自动检查后 web 应亮出可更新数");
+    assert.equal(start.lab, "1", "启动自动检查后 lab 应亮出可更新数");
+    assert.equal(start.desktop, "1", "启动自动检查后 desktop 应亮出可更新数");
+    assert.equal(start.headless, null, "没有可更新插件的环境不挂微标");
 
+    const callsStart = await page.evaluate(() => ({
+      all: window.__MOCK_STATE__.calls["plugin_updates_check_all"] ?? 0,
+      single: Object.entries(window.__MOCK_STATE__.calls)
+        .filter(([key]) => key.startsWith("plugin_updates_list:"))
+        .reduce((sum, [, value]) => sum + value, 0),
+    }));
+    assert.equal(callsStart.all, 1, "启动应自动发一次「检查所有环境」的批量检查命令");
+    assert.equal(callsStart.single, 0, "启动的 per-env 单环境自动查让位给批量检查，不再额外发");
+
+    // 再点一次「检查更新」：仍是所有环境一次批量命令，各环境数字保持。
     await page.click("#btn-plugin-check-updates");
     await page.waitForFunction(
-      () => {
-        const badge = (env) => document.querySelector(`#profile-cards [data-env="${env}"] .btn-badge`);
-        return badge("lab")?.textContent === "1" && badge("desktop")?.textContent === "1";
-      },
+      () => (window.__MOCK_STATE__.calls["plugin_updates_check_all"] ?? 0) === 2,
       { timeout: 5000 },
     );
 
@@ -284,14 +292,14 @@ test("「检查更新」查所有环境：每张环境卡各自亮出可更新�
     assert.equal(after.desktop, "1", "desktop 查完应亮出它自己的可更新数");
     assert.equal(after.headless, null, "没有可更新插件的环境不挂微标");
 
-    const calls = await page.evaluate(() => ({
+    const callsAfter = await page.evaluate(() => ({
       all: window.__MOCK_STATE__.calls["plugin_updates_check_all"] ?? 0,
       single: Object.entries(window.__MOCK_STATE__.calls)
         .filter(([key]) => key.startsWith("plugin_updates_list:"))
         .reduce((sum, [, value]) => sum + value, 0),
     }));
-    assert.equal(calls.all, 1, "按钮应只发一次批量检查命令，而不是逐环境各发一次");
-    assert.equal(calls.single, 1, "单环境命令只该有进卡那一次自动查，按钮不再逐环境调用");
+    assert.equal(callsAfter.all, 2, "按钮应只发一次批量检查命令，而不是逐环境各发一次");
+    assert.equal(callsAfter.single, 0, "按钮不再逐环境调用单环境命令");
 
     // 当前环境的行内清单照旧刷新：版本号与可更新数都还在。
     const state = await readPanelState(page);
@@ -483,5 +491,70 @@ test("操作互斥：任一动作进行中全部操作锁死，发起的那枚�
     assert.equal(done.switchDisabled, false, "做完开关应解锁");
   } finally {
     await page3.close();
+  }
+});
+
+test("连续点多个「更新」：按点击顺序排队逐个执行，不用等前一个跑完", { skip: skipReason }, async () => {
+  // 每条 plugin_update 命令 260ms，给「第一行更新中、第二行排队」一个确定的中间态窗口。
+  const page = await openPluginPanel(browser, { pluginUpdateDelay: 260 });
+  try {
+    const phaseOf = (name) =>
+      page.evaluate(
+        (plugin) => document.querySelector(`#plugin-list [data-row="${plugin}"]`)?.getAttribute("data-phase") ?? null,
+        name,
+      );
+
+    // 点第一行，等它进入「更新中」。
+    await page.click('#plugin-list [data-row="billion-context"] .plugin-update');
+    await page.waitForFunction(
+      () => document.querySelector('#plugin-list [data-row="billion-context"]')?.getAttribute("data-phase") === "busy",
+      { timeout: 3000 },
+    );
+
+    // 第一行还在更新时，另一行的「更新」必须仍然可点（这正是「连续点击」要的效果）。
+    const secondEnabled = await page.$eval(
+      '#plugin-list [data-row="dsh-better-sidebar"] .plugin-update',
+      (el) => !el.disabled,
+    );
+    assert.equal(secondEnabled, true, "第一行更新中时，别的行「更新」应仍可点");
+
+    // 点第二行：它立刻进入「排队」，不会打断第一行。
+    await page.click('#plugin-list [data-row="dsh-better-sidebar"] .plugin-update');
+    await page.waitForFunction(
+      () => document.querySelector('#plugin-list [data-row="dsh-better-sidebar"]')?.getAttribute("data-phase") === "queue",
+      { timeout: 3000 },
+    );
+    assert.equal(await phaseOf("billion-context"), "busy", "第二行排队时第一行应仍在更新中");
+
+    // 两行先后完成。
+    await page.waitForFunction(
+      () => {
+        const a = document.querySelector('#plugin-list [data-row="billion-context"]')?.getAttribute("data-phase");
+        const b = document.querySelector('#plugin-list [data-row="dsh-better-sidebar"]')?.getAttribute("data-phase");
+        return a === "done" && b === "done";
+      },
+      { timeout: 8000 },
+    );
+
+    const first = await readUpdateCell(page, "billion-context");
+    const second = await readUpdateCell(page, "dsh-better-sidebar");
+    assert.equal(first.btnText, null, "第一行更新完按钮应消失");
+    assert.equal(first.ver, "v2.3.0-rc.1", "第一行版本应换成目标版本");
+    assert.equal(second.btnText, null, "第二行更新完按钮应消失");
+    assert.equal(second.ver, "v3.2.0", "第二行版本应换成目标版本");
+    assert.equal(second.off, true, "第二行本来停用，更新后仍应保持停用");
+
+    // 两条命令各发一次（串行排队，没有并发，也没有漏掉）。
+    const calls = await page.evaluate(() => ({
+      first: window.__MOCK_STATE__.calls["plugin_update:web/billion-context"] ?? 0,
+      second: window.__MOCK_STATE__.calls["plugin_update:web/dsh-better-sidebar"] ?? 0,
+    }));
+    assert.equal(calls.first, 1, "第一行应只发一次更新命令");
+    assert.equal(calls.second, 1, "第二行应只发一次更新命令");
+
+    const state = await readPanelState(page);
+    assert.match(state.summary, /1 个可更新/, `两行都更新后应剩 1 个可更新，实际「${state.summary}」`);
+  } finally {
+    await page.close();
   }
 });

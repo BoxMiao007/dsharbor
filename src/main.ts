@@ -3288,10 +3288,13 @@ async function main(): Promise<void> {
       failed: number;
       /** 收尾汇总文案（null＝这一轮还没跑完）。 */
       summary: string | null;
+      /** 是否显示顶部那条进度条：批量「全部更新」与「连续排队的多个单行更新」显示；
+       *  只点了一个插件的单行更新不显示（与旧行为一致，只靠行级状态胶囊与提示条反馈）。 */
+      show: boolean;
     }
 
     function emptyPluginProgress(): PluginProgressState {
-      return { phases: new Map(), total: 0, done: 0, failed: 0, summary: null };
+      return { phases: new Map(), total: 0, done: 0, failed: 0, summary: null, show: false };
     }
 
     /** 当前环境正在显示的那一份进度态（切环境时整份换成目标环境的那一份）。 */
@@ -3370,6 +3373,22 @@ async function main(): Promise<void> {
     let pluginUpdateRunningAll = false;
     /** 检查更新是否在跑（「检查更新」按钮发起的强制重查；进卡自动查不锁界面）。 */
     let pluginCheckBusy = false;
+    /** 启动时是否还会自动跑一次「检查所有环境」：首次挂载的 per-env 自动查让位给它，
+     *  避免同一批插件在启动时被连查两遍（见启动入口 autoCheckPluginUpdatesOnStartup）。 */
+    let startupUpdateCheckPending = true;
+
+    /**
+     * 单行更新的排队：点「更新」立刻入队，worker 一次只跑一个（同一个环境的 node_modules
+     * 不能被两路 pnpm 同时改），这样用户可以连着点多个插件的「更新」，按点击顺序逐个执行。
+     * 队列可跨环境（切走再点别的环境也会进同一条队列），worker 全局只有一个。
+     */
+    interface PendingPluginUpdate {
+      env: string;
+      plugin: string;
+    }
+    const pendingPluginUpdates: PendingPluginUpdate[] = [];
+    /** 队列 worker 是否在跑（含正在等待下一项）。 */
+    let pluginUpdateWorkerRunning = false;
     /** 刚落定成已更新／失败的那几行：接下来几次重画给小签挂一次性强调动画，
      *  到点自动出组。列表每次整块重画，纯 CSS 动画会跟着重画重演，
      *  所以「只演一次」由这组标记兜住，不靠样式记忆。
@@ -3404,6 +3423,15 @@ async function main(): Promise<void> {
      *  是的话开关与更新按钮全部置灰——维护者要求这些操作互斥，做完才放开。 */
     function pluginActionBusy(): boolean {
       return pluginUpdateBusy || pluginCheckBusy;
+    }
+
+    /**
+     * 单行「更新」按钮要不要锁死。与 `pluginActionBusy` 的区别：**排除单行更新队列自己**
+     * （`pluginUpdateBusy` 在跑时正是要允许继续点别的行入队）。批量「全部更新」「检查更新」
+     * 以及开关/环境操作/补丁层动作在跑时仍要锁死，避免两路同时改 node_modules。
+     */
+    function pluginSingleUpdateLocked(): boolean {
+      return pluginCheckBusy || pluginUpdateRunningAll || pluginBusy || manageBusy || patchBusy;
     }
 
     /**
@@ -3491,22 +3519,26 @@ async function main(): Promise<void> {
     }
 
     /** 行里的「更新」按钮：有更新才出现；目标版本在新版本徽章与气泡里，点不点由维护者定。
-     *  这一轮参与更新的行按状态改文案：排队/更新中置灰但不摘掉（互斥面要有可读的禁用态），
-     *  已更新摘掉（没得再更），失败换成「重试」（失败行留着，能单独再跑一次）。 */
+     *  参与本轮更新的行按状态改文案：排队/更新中置灰、已更新摘掉、失败换成「重试」。
+     *  **没参与本轮、但有更新的行始终可点**——连续点几行就排队逐个执行，不用等前一个跑完；
+     *  只有批量「全部更新」/「检查更新」/开关等互斥动作在跑时才整排锁死。 */
     function pluginUpdateCellHtml(item: PluginItem): string {
       const state = updatePhaseFor(item.name);
+      const locked = pluginSingleUpdateLocked();
       if (state?.phase === "done") {
         return "";
       }
       if (state) {
-        const busy = pluginActionBusy() || pluginBusy ? " disabled" : "";
-        const upd = updateItemFor(item.name);
+        // 排队 / 更新中不可重复点；失败行换成「重试」，只有在别的互斥动作跑着时才锁。
         const retry = state.phase === "fail";
-        const label = retry ? "重试" : "更新";
+        const disabled = retry ? locked : true;
+        const label = retry ? "重试" : updatePhaseLabel[state.phase];
         const hint = retry
           ? `重新更新「${item.name}」；失败原因在行内`
-          : `把 ${item.name} 从 v${upd?.current ?? "?"} 更新到 v${upd?.target ?? "?"}`;
-        return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="${escapeHtml(hint)}"${busy}>${label}</button>`;
+          : state.phase === "queue"
+            ? `「${item.name}」已排队，等前面的更新完成后再执行`
+            : `正在更新「${item.name}」`;
+        return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="${escapeHtml(hint)}"${disabled ? " disabled" : ""}>${label}</button>`;
       }
       if (!pluginUpdatesChecked) {
         return "";
@@ -3515,8 +3547,8 @@ async function main(): Promise<void> {
       if (!upd || !upd.hasUpdate || !upd.target) {
         return "";
       }
-      const busy = pluginActionBusy() || pluginBusy ? " disabled" : "";
-      return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${busy}>更新</button>`;
+      const disabled = locked ? " disabled" : "";
+      return `<button class="plugin-update" type="button" data-plugin-update="${escapeHtml(item.name)}" title="把 ${escapeHtml(item.name)} 从 v${escapeHtml(upd.current ?? "?")} 更新到 v${escapeHtml(upd.target)}；更新前会自动备份，装完回读校验"${disabled}>更新</button>`;
     }
 
     function pluginRowHtml(item: PluginItem, enterIndex = -1): string {
@@ -3591,7 +3623,7 @@ async function main(): Promise<void> {
       }
       for (const box of pluginList.querySelectorAll<HTMLButtonElement>("[data-plugin-update]")) {
         box.addEventListener("click", () => {
-          void updatePlugin(box.dataset.pluginUpdate ?? "");
+          enqueuePluginUpdate(box.dataset.pluginUpdate ?? "");
         });
       }
       // 右键一行：把这个插件装进别的环境。清单是整块重铺的，所以每次铺完重新绑。
@@ -3638,7 +3670,7 @@ async function main(): Promise<void> {
      * `aria-live="polite"`，完成一句话会被读屏读出来。失败数一并写进去，不藏在行里。
      */
     function renderPluginProgress(): void {
-      const visible = pluginRound.total > 0 || pluginRound.summary !== null;
+      const visible = pluginRound.show;
       pluginProgress.classList.toggle("hidden", !visible);
       const percent = pluginRound.total > 0 ? Math.round((pluginRound.done / pluginRound.total) * 100) : 0;
       pluginProgressBar.setAttribute("aria-valuenow", String(percent));
@@ -3791,7 +3823,9 @@ async function main(): Promise<void> {
         void refreshPluginList(target.name);
         // 更新清单跟环境走：已经查过（快照里有 checked）就只是重画，不重复查——
         // 后端有会话级缓存但重查仍要一次 IPC；第一进这张卡才自动查一次。
-        if (!pluginUpdatesChecked) {
+        // 启动那一次例外：启动会用「检查所有环境」统一查一遍（见启动入口），
+        // 这里让位给它，免得当前环境被连查两遍。
+        if (!pluginUpdatesChecked && !startupUpdateCheckPending) {
           void refreshPluginUpdates(target.name);
         }
         return;
@@ -3864,8 +3898,12 @@ async function main(): Promise<void> {
      * 某个环境读不到清单只算它自己失败，不牵连其余环境；各环境的结果分别落进
      * 自己的快照与环境卡微标，正在显示的那个环境同时刷新插件列表。跑完前插件卡
      * 整体互斥，跑完落勾 0.9 秒（与其余方钮同一套反馈）。
+     *
+     * `auto=true` 是启动时自动跑的那一次（见 [`autoCheckPluginUpdatesOnStartup`]）：
+     * 行为一致，但不弹 toast、不落勾、失败也不往卡上写提示——它是背景动作，用户没点它；
+     * 结果只写日志，免得每次离线启动都糊一条失败提示在脸上。
      */
-    async function checkAllPluginUpdates(): Promise<void> {
+    async function checkAllPluginUpdates(auto = false): Promise<void> {
       if (pluginCheckBusy) {
         return;
       }
@@ -3883,8 +3921,11 @@ async function main(): Promise<void> {
         });
         if (rows.length === 0) {
           // 一个环境都没有（例如环境清单还没读出来）：没什么可查的，别报成失败。
-          logAction("已重新检查插件更新：没有可检查的环境");
-          showToast("没有可检查的环境：先启动一次 DSH 会创建默认的 web 环境。", "info");
+          // 自动检查是背景动作，不写日志也不弹提示（免得每次启动都顶一条未读）。
+          if (!auto) {
+            logAction("已重新检查插件更新：没有可检查的环境");
+            showToast("没有可检查的环境：先启动一次 DSH 会创建默认的 web 环境。", "info");
+          }
           return;
         }
         let pending = 0;
@@ -3895,10 +3936,12 @@ async function main(): Promise<void> {
             failed.push(row.profile);
             const reason = row.error ?? "未知原因";
             // 正在看的这个环境要当场说清原因；别的环境靠日志——切过去也看不到那条说明。
-            if (prefs.profile === row.profile) {
+            if (!auto && prefs.profile === row.profile) {
               setPluginNote(`检查环境「${row.profile}」的插件更新失败：${reason}`);
             }
-            logAction(`检查环境「${row.profile}」的插件更新失败：${reason}`);
+            if (!auto) {
+              logAction(`检查环境「${row.profile}」的插件更新失败：${reason}`);
+            }
             continue;
           }
           applyPluginUpdateItems(row.profile, row.items);
@@ -3912,19 +3955,27 @@ async function main(): Promise<void> {
           : failed.length === 0
             ? `已重新检查 ${rows.length} 个环境的插件更新：${counts}`
             : `已重新检查 ${rows.length - failed.length}/${rows.length} 个环境的插件更新：${counts}（「${failed.join("」「")}」读取失败）`;
-        logAction(summary);
-        // 用户主动点的那一下才有回执；个别环境失败也照实写进同一句，不另弹一条。
-        showToast(summary, ok ? "info" : "error");
+        // 用户主动点的那一下才有回执与日志；自动检查（背景动作）保持静默，不顶未读。
+        if (auto) {
+          console.debug(`启动自动检查插件更新：${summary}`);
+        } else {
+          logAction(summary);
+          showToast(summary, ok ? "info" : "error");
+        }
       } catch (err) {
-        setPluginNote(`检查插件更新失败：${String(err)}`);
-        logAction(`检查插件更新失败：${String(err)}`);
-        showToast(`检查插件更新失败：${String(err)}`, "error");
+        if (!auto) {
+          setPluginNote(`检查插件更新失败：${String(err)}`);
+          logAction(`检查插件更新失败：${String(err)}`);
+          showToast(`检查插件更新失败：${String(err)}`, "error");
+        } else {
+          console.debug(`启动自动检查插件更新失败：${String(err)}`);
+        }
       } finally {
         pluginCheckBusy = false;
         renderPluginList();
       }
       // 用户主动点的「检查更新」成功后落一个勾停 0.9s；自动查（背景动作）不闪反馈。
-      if (ok) {
+      if (ok && !auto) {
         flashSquareDone(btnPluginCheckUpdates);
       }
     }
@@ -3938,6 +3989,11 @@ async function main(): Promise<void> {
      * 更新不碰补丁层：停用状态原样保留；但新版本若改了挂载点，停用可能失效，要提醒。
      */
     async function updatePlugin(name: string | null): Promise<void> {
+      // 单行更新一律走排队通道：可以连续点多个「更新」，按点击顺序逐个执行（见 enqueuePluginUpdate）。
+      if (name !== null) {
+        enqueuePluginUpdate(name);
+        return;
+      }
       const target = prefs.profile;
       if (!target || pluginBusy || pluginActionBusy() || manageBusy || patchBusy) {
         return;
@@ -3958,6 +4014,8 @@ async function main(): Promise<void> {
       const snapshot = ensurePluginUpdateSnapshot(target);
       snapshot.round = resetPluginProgress(target);
       const round = snapshot.round;
+      // 批量「全部更新」始终显示顶部进度条（与单行排队只点一个不同）。
+      round.show = true;
       if (name === null) {
         round.total = scope.length;
         for (const plugin of scope) {
@@ -4051,6 +4109,175 @@ async function main(): Promise<void> {
       // 全部更新成功：在工具条那枚按钮上落勾停 0.9s；失败直接还原，不做错误态图标。
       if (runningAll && ok) {
         flashSquareDone(btnPluginUpdateAll);
+      }
+    }
+
+    /** 启动时自动跑一次「检查所有环境」的更新检查（维护者要求每次启动查一遍）。
+     *  静默：不弹 toast、不落勾、不写统一日志（只在控制台留调试信息）；跑完前若有 per-env
+     *  的进卡自动查会先让位（见 syncPluginPanel 里对 startupUpdateCheckPending 的判断），避免重复查。 */
+    async function autoCheckPluginUpdatesOnStartup(): Promise<void> {
+      startupUpdateCheckPending = false;
+      await checkAllPluginUpdates(true);
+    }
+
+    /** 把某个插件加入单行更新队列：可以连续点多个「更新」，按点击顺序逐个执行。
+     *
+     * 空队列时先起一轮新进度；队列已在跑时只是追加。同一行重复点击忽略；失败行的
+     * 「重试」按同一项重新排队（退回它上次计入的完成/失败数，不新增总数）。
+     */
+    function enqueuePluginUpdate(plugin: string): void {
+      const env = prefs.profile;
+      if (!env || !plugin) {
+        return;
+      }
+      // 互斥：开关/环境操作/补丁层、「检查更新」、「全部更新」在跑时不接受单行入队。
+      if (pluginBusy || manageBusy || patchBusy || pluginCheckBusy || pluginUpdateRunningAll) {
+        return;
+      }
+      const snapshot = ensurePluginUpdateSnapshot(env);
+      // 新一轮：当前没有排队也没有 worker 在跑，或这一轮已收尾（summary 已定），
+      // 都清掉上一轮的行级残留，从干净的一轮开始。
+      if ((!pluginUpdateWorkerRunning && pendingPluginUpdates.length === 0) || snapshot.round.summary !== null) {
+        snapshot.round = resetPluginProgress(env);
+      }
+      const round = snapshot.round;
+      const existing = round.phases.get(plugin);
+      if (existing) {
+        if (existing.phase === "fail") {
+          // 同一行重试：退回上一次计过的完成/失败，仍按同一项排队（总数不变）。
+          round.done = Math.max(0, round.done - 1);
+          round.failed = Math.max(0, round.failed - 1);
+        } else {
+          return; // 排队/更新中/已更新：重复点击忽略
+        }
+      } else {
+        round.total += 1;
+        if (round.total > 1) {
+          round.show = true; // 连续排了多个才亮顶部进度条；只点一个不显示（同旧行为）
+        }
+      }
+      round.phases.set(plugin, { phase: "queue", message: null });
+      round.summary = null;
+      pendingPluginUpdates.push({ env, plugin });
+      if (prefs.profile === env) {
+        pluginRound = round;
+        renderPluginList();
+        renderPluginProgress();
+      }
+      void runPluginUpdateQueue();
+    }
+
+    /**
+     * 单行更新队列的 worker：一次只跑一个插件（同一环境的 node_modules 不能被两路 pnpm
+     * 同时改）。队列每次空下来先统一重查动过的环境（一次网络/缓存，而不是每个插件各查
+     * 一次），再确认期间没有新点击进来，才收工。
+     */
+    async function runPluginUpdateQueue(): Promise<void> {
+      if (pluginUpdateWorkerRunning) {
+        return;
+      }
+      pluginUpdateWorkerRunning = true;
+      pluginUpdateBusy = true;
+      pluginUpdateRunningAll = false;
+      const touched = new Set<string>();
+      try {
+        for (;;) {
+          if (pendingPluginUpdates.length === 0) {
+            if (touched.size > 0) {
+              const envs = [...touched];
+              touched.clear();
+              for (const env of envs) {
+                await refreshPluginUpdates(env);
+              }
+            }
+            if (pendingPluginUpdates.length === 0) {
+              break;
+            }
+            continue;
+          }
+          const job = pendingPluginUpdates.shift();
+          if (!job) {
+            continue;
+          }
+          touched.add(job.env);
+          await runSinglePluginUpdate(job.env, job.plugin);
+        }
+      } finally {
+        pluginUpdateWorkerRunning = false;
+        pluginUpdateBusy = false;
+        renderPluginList();
+        renderPluginProgress();
+        renderPluginSummary();
+        renderPluginUpdatesToolbar();
+      }
+    }
+
+    /** 更新单个插件（队列 worker 里的那一步）：结果只从返回值读，行级状态写回它自己那份快照。 */
+    async function runSinglePluginUpdate(env: string, plugin: string): Promise<void> {
+      const snapshot = ensurePluginUpdateSnapshot(env);
+      const round = snapshot.round;
+      const isCurrent = (): boolean => prefs.profile === env;
+      round.phases.set(plugin, { phase: "busy", message: null });
+      if (isCurrent()) {
+        pluginRound = round;
+        renderPluginList();
+        renderPluginProgress();
+      }
+      try {
+        const outcome = await invoke<UpdateOutcome>("plugin_update", {
+          config: collectConfig(),
+          name: env,
+          source: prefs.downloadSource,
+          plugin,
+          progress: null,
+        });
+        const receiptLine = firstLine(outcome.message);
+        if (isCurrent()) {
+          setPluginNote(receiptLine);
+        }
+        logAction(outcome.message);
+        if (isCurrent()) {
+          showToast(receiptLine, outcome.ok ? "ok" : "error");
+        }
+        round.phases.set(plugin, {
+          phase: outcome.ok ? "done" : "fail",
+          message: outcome.ok ? null : outcome.message,
+        });
+        markFreshPhase(plugin, env);
+        round.done += 1;
+        if (!outcome.ok) {
+          round.failed += 1;
+        }
+        if (outcome.ok) {
+          // 更新成功一个，环境卡微标实时递减一枚（随后重查回来的清单会覆盖成权威值）。
+          bumpPluginUpdateCount(-1, env);
+          const item = pluginItems.find((entry) => entry.name === plugin);
+          if (item?.enabled === false && isCurrent()) {
+            setPluginWarning(
+              `「${plugin}」目前处于停用状态，更新后保持停用；若新版本改了挂载点，停用可能失效。`,
+            );
+          }
+        }
+        finishPluginProgressIfComplete(round);
+      } catch (err) {
+        // 失败时后端返回整份回执（多行）：提示条与行内只放首行，全文进统一日志。
+        const text = String(err);
+        const head = firstLine(text);
+        if (isCurrent()) {
+          setPluginNote(`更新插件失败：${head}`);
+          showToast(`更新插件失败：${head}`, "error");
+        }
+        logAction(`更新插件失败：${text}`);
+        round.phases.set(plugin, { phase: "fail", message: text });
+        markFreshPhase(plugin, env);
+        round.done += 1;
+        round.failed += 1;
+        finishPluginProgressIfComplete(round);
+      }
+      if (isCurrent()) {
+        renderPluginList();
+        renderPluginProgress();
+        renderPluginSummary();
       }
     }
 
@@ -4750,7 +4977,9 @@ async function main(): Promise<void> {
     void refreshCliState();
     // 「已装 DSH 版本」要起 npm 子进程，不阻塞首次挂载。
     void refreshDshVersions();
-    void loadProfiles();
+    // 环境清单读回来后，自动跑一次「检查所有环境」的插件更新检查（每次启动一次）。
+    // 放到 loadProfiles 之后：后端要按环境清单枚举，清单没回来就会报「没有可检查的环境」。
+    void loadProfiles().then(() => autoCheckPluginUpdatesOnStartup());
     refreshNowHook = refresh;
     // 转动状态与计时在模块级（界面元素可能被重建），这里把类贴到当前这颗「重启 DSH」上。
     applyRestartSpin();

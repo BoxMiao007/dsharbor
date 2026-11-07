@@ -167,7 +167,7 @@ export function buildHtml(info: AppInfo): string {
   // 补丁层是「某个环境的」东西，所以入口收进环境三点菜单里，不在这里占一颗全局按钮。
   // 启动 DSH 永远用 web 环境（核心库 launch::PROFILE_NAME），这里选的只是「管理目标」。
   const profilesBody = `
-    ${colHead("环境与插件")}
+    ${colHead("环境")}
     <p id="profiles-windows-only" class="hint notice profiles-windows-only hidden">仅在 Windows 宿主可用：环境列表与管理要读写 DSH 自己的 <code>~/.dsh/profiles</code> 目录，这里不会改动任何文件。</p>
     <div id="profiles-content" class="profiles-content">
       <div class="env-row">
