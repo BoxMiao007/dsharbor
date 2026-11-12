@@ -99,13 +99,14 @@ const state = {
   savedShell: {
     trayClick: "launcher",
     lightDelaySecs: 0,
-    // 「环境 / 网络 / 集成」三张卡承载的六个字段：删掉任意键可预览「旧配置缺键取默认」，
+    // 「环境 / 网络 / 集成」与 WSL 开关这几项偏好：删掉任意键可预览「旧配置缺键取默认」，
     // 填个不存在的枚举值可预览「手改坏了也不影响开壳」。
     profile: "web",
     downloadSource: "mirror",
     proxyMode: "system",
     proxyAddress: "",
     cliIntegration: false,
+    wslEnabled: true,
   },
   /** 系统代理的假数据：url 改成 null 可预览「跟随系统但系统里没配」。
       bypass 就是系统里那份例外列表（回环地址由后端补，这里不列）。 */

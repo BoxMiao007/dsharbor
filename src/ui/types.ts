@@ -63,7 +63,7 @@ export interface DistroInfo {
 export type TrayClick = "launcher" | "dsh";
 
 /** 左侧导航的分区：点哪个，右侧面板就显哪一块（选择记在 localStorage）。 */
-export type PanelKey = "launch" | "env" | "integ" | "traynet" | "log" | "about";
+export type PanelKey = "launch" | "env" | "integ" | "log" | "settings" | "about";
 
 /** 与 Rust 侧 `dsharbor_core::prefs::DownloadSource` 对应：从哪儿取 DSH 包。 */
 export type DownloadSource = "inherit" | "mirror" | "official";
@@ -71,8 +71,7 @@ export type DownloadSource = "inherit" | "mirror" | "official";
 /** 与 Rust 侧 `dsharbor_core::prefs::ProxyMode` 对应：网络代理怎么走。 */
 export type ProxyMode = "system" | "manual" | "off";
 
-/** 与 Rust 侧 `dsharbor_core::prefs::ShellPrefs` 对应：三张新卡承载的六个字段。
-    这一版只做承载（读写、往返、默认值），各字段的实际作用由后续版本逐个接管。 */
+/** 与 Rust 侧 `dsharbor_core::prefs::ShellPrefs` 对应：界面各卡承载的持久偏好字段。 */
 export interface ShellPrefs {
   /** 当前环境名（DSH 的 profile 名），默认 `web`。 */
   profile: string;
@@ -84,6 +83,8 @@ export interface ShellPrefs {
   proxyAddress: string;
   /** 命令行集成开关，默认关闭。 */
   cliIntegration: boolean;
+  /** WSL 开关：关掉后「运行环境」只留 Windows 宿主，启动时也不再探测发行版。默认开。 */
+  wslEnabled: boolean;
 }
 
 

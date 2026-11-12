@@ -1,12 +1,12 @@
-//! 外壳配置里属于「环境 / 网络 / 集成」三张卡的五个字段。
+//! 外壳配置里属于界面各张卡的持久偏好字段（环境 / 网络 / 集成 / WSL 开关）。
 //!
-//! 为什么放在核心库：这五个字段的取值、默认值与宽容读取都是纯逻辑，放这里能在开发机上
+//! 为什么放在核心库：这些字段的取值、默认值与宽容读取都是纯逻辑，放这里能在开发机上
 //! 全自动验证。config.json 是用户可手改的文本——缺键、枚举写成认不出的名字（甚至类型不对）
 //! 都不该让整份配置解析失败、把用户的启动配置一起弄丢。
 //!
 //! 外壳（src-tauri/src/settings.rs）用 `#[serde(flatten)]` 把它平铺进 ShellConfig，
-//! 界面（src/main.ts 的 ShellConfig）的键名与这里的 JSON 键名一一对应：
-//! `profile`、`downloadSource`、`proxyMode`、`proxyAddress`、`cliIntegration`。
+//! 界面（src/main.ts 的 ShellPrefs）的键名与这里的 JSON 键名一一对应：
+//! `profile`、`downloadSource`、`proxyMode`、`proxyAddress`、`cliIntegration`、`wslEnabled`。
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -104,25 +104,28 @@ where
     Ok(raw.as_str().and_then(ProxyMode::parse).unwrap_or_default())
 }
 
-/// 「环境 / 网络 / 集成」三张卡承载的五个字段。
+/// 界面各张卡承载的持久偏好字段。
 ///
-/// 只承载取值与默认值：这三张卡各自的行为（列环境、下载源映射、写 PATH 垫片等）由后续实现，
-/// 本轮谁都不读它们，只保证「界面能读回、能原样写回、旧配置缺键也不炸」。
+/// 只承载取值与默认值：这些字段各自的行为（列环境、下载源映射、写 PATH 垫片、WSL 探测
+/// 开关等）由外壳与界面实现，这里保证「界面能读回、能原样写回、旧配置缺键也不炸」。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ShellPrefs {
     /// 当前环境名（DSH 的 profile 名，「环境」卡的下拉选它）；默认 `web`。
     pub profile: String,
-    /// 下载源（「网络」卡的下拉）；默认沿用 npm 全局配置。
+    /// 下载源（「设置」卡的下拉）；默认沿用 npm 全局配置。
     #[serde(deserialize_with = "lenient_download_source")]
     pub download_source: DownloadSource,
-    /// 代理模式（「网络」卡的下拉）；默认跟随系统。
+    /// 代理模式（「设置」卡的下拉）；默认跟随系统。
     #[serde(deserialize_with = "lenient_proxy_mode")]
     pub proxy_mode: ProxyMode,
     /// 手动代理地址；只有代理模式为「手动填写」时才用得上，默认空串。
     pub proxy_address: String,
     /// 命令行集成开关（「集成」卡的开关）；默认关。
     pub cli_integration: bool,
+    /// WSL 开关（「设置」卡的开关）：关掉后「运行环境」只留 Windows 宿主，启动时也不再
+    /// 探测 WSL 发行版。默认开——旧配置没有这个键时沿用此前的行为。
+    pub wsl_enabled: bool,
 }
 
 impl Default for ShellPrefs {
@@ -133,6 +136,7 @@ impl Default for ShellPrefs {
             proxy_mode: ProxyMode::default(),
             proxy_address: String::new(),
             cli_integration: false,
+            wsl_enabled: true,
         }
     }
 }
@@ -157,6 +161,7 @@ mod tests {
         assert_eq!(prefs.proxy_mode, ProxyMode::System, "默认跟随系统");
         assert_eq!(prefs.proxy_address, "", "默认没有手动代理地址");
         assert!(!prefs.cli_integration, "命令行集成默认关");
+        assert!(prefs.wsl_enabled, "WSL 开关默认开（旧配置沿用此前行为）");
     }
 
     #[test]
@@ -167,8 +172,9 @@ mod tests {
             proxy_mode: ProxyMode::Manual,
             proxy_address: "http://127.0.0.1:7890".to_string(),
             cli_integration: true,
+            wsl_enabled: false,
         };
-        // 键名与字面量是界面（src/main.ts）与后续票据的共同契约，写死在这里防漂移。
+        // 键名与字面量是界面与配置文件的共同契约，写死在这里防漂移。
         assert_eq!(
             json_of(&prefs),
             serde_json::json!({
@@ -177,6 +183,7 @@ mod tests {
                 "proxyMode": "manual",
                 "proxyAddress": "http://127.0.0.1:7890",
                 "cliIntegration": true,
+                "wslEnabled": false,
             })
         );
     }
@@ -189,6 +196,7 @@ mod tests {
             proxy_mode: ProxyMode::Off,
             proxy_address: String::new(),
             cli_integration: true,
+            wsl_enabled: false,
         };
         let text = serde_json::to_string(&prefs).expect("序列化");
         assert_eq!(parse(&text), prefs, "改 → 存 → 读回应完全一致");
@@ -202,6 +210,7 @@ mod tests {
         assert_eq!(partial.profile, "lab");
         assert_eq!(partial.download_source, DownloadSource::Inherit);
         assert_eq!(partial.proxy_mode, ProxyMode::System);
+        assert!(partial.wsl_enabled, "旧配置没有 wslEnabled 时按开处理");
     }
 
     #[test]

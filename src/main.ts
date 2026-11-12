@@ -82,8 +82,9 @@ async function main(): Promise<void> {
   // 全站动效偏好：与外观同族，存在 localStorage。关闭时 <html> 带 data-motion="off"，
   // 由 99-hidden.css 统一中和动画与过渡。
   let motion: MotionPref = readStoredMotion();
-  // 六个新字段的当前值：后端读回来之后换成它。本版只做承载，没有界面控件改它，
-  // 但保存链路上必须原样带上，否则界面上任何一次保存都会把用户已改的值抹回默认。
+  // 各张卡承载的持久偏好（环境 / 下载源 / 代理 / 命令行集成 / WSL 开关）：
+  // 后端读回来之后换成它。保存链路上必须整份原样带上，否则界面上任何一次保存都会
+  // 把用户已改、而界面没有控件的那几项抹回默认。
   let prefs: ShellPrefs = { ...DEFAULT_PREFS };
   // DOM 只在启动时生成一次：切浅色/深色只改 <html data-mode>，不重建界面。
   // 挂在 window / document 上的监听（窗口缩放、托盘轮询、自绘滚动条）也只注册一次，
@@ -167,7 +168,8 @@ async function main(): Promise<void> {
     /** 官方版本列表：按运行环境分别读；Rust 侧有 10 分钟缓存，这里不再叠一层。 */
     let registry: RegistryInfo | null = null;
     let registryError: string | null = null;
-    let registryLoading = false;
+    /** 启动时就开始后台读版本列表（不再阻塞界面），所以初值为 true，读完/失败才落回 false。 */
+    let registryLoading = true;
     /** 清单请求的世代号：换环境、切下载源、点刷新会连发几次，只有最后发出的那次能落地。 */
     let registryLoadSeq = 0;
     /**
@@ -197,6 +199,10 @@ async function main(): Promise<void> {
     /** 发行版列表就绪前先占位的禁用项（value 为空，选不到）。 */
     function runtimeChoices(): PickerChoice[] {
       const choices: PickerChoice[] = [{ value: RUNTIME_DEFAULT, label: "默认" }];
+      // WSL 总开关关着：只留 Windows 宿主，不列发行版、也不显示「正在读取」占位。
+      if (!prefs.wslEnabled) {
+        return choices;
+      }
       if (distroInfos === null) {
         choices.push({
           value: "",
@@ -256,6 +262,47 @@ async function main(): Promise<void> {
     npxRuntimePicker.setChoices([{ value: RUNTIME_DEFAULT, label: "默认" }]);
     const customRuntimePicker = new Picker("custom-runtime-picker", onRuntimeChange);
     customRuntimePicker.setChoices([{ value: RUNTIME_DEFAULT, label: "默认" }]);
+
+    // ---- WSL 总开关（「设置」卡）-------------------------------------------------
+    // 关掉后「运行环境」只留 Windows 宿主，启动时也不再读缓存/探测发行版；打开时才做。
+    const wslToggle = $<HTMLButtonElement>("wsl-toggle");
+    const wslError = $<HTMLParagraphElement>("wsl-error");
+
+    function renderWslToggle(): void {
+      wslToggle.setAttribute("aria-checked", prefs.wslEnabled ? "true" : "false");
+    }
+
+    async function applyWslEnabled(enabled: boolean): Promise<void> {
+      prefs = { ...prefs, wslEnabled: enabled };
+      wslError.classList.add("hidden");
+      renderWslToggle();
+      // 关掉 WSL：当前选着发行版就退回 Windows 宿主，免得留下一个选不到的值。
+      if (!enabled && runtime.kind === "wsl") {
+        onRuntimeChange(RUNTIME_DEFAULT);
+      }
+      // 打开时才去读缓存并探测；关着的时候这些动作一次都不该发生。
+      if (enabled) {
+        await loadCachedDistros();
+        void loadDistros();
+      }
+      syncRuntimePickers();
+      const err = await persistConfigQuiet();
+      if (err !== null) {
+        // 存盘失败要把开关拨回去：界面不能显示一个没存下来的值。
+        prefs = { ...prefs, wslEnabled: !enabled };
+        renderWslToggle();
+        syncRuntimePickers();
+        wslError.textContent = `WSL 开关没能保存：${err}`;
+        wslError.classList.remove("hidden");
+      }
+    }
+
+    // 与命令行集成开关同一套：button + role="switch"，状态在 aria-checked 上。
+    wslToggle.addEventListener("click", () => {
+      const next = wslToggle.getAttribute("aria-checked") !== "true";
+      void applyWslEnabled(next);
+    });
+    renderWslToggle();
 
     /** 当前选定的具体版本；null = 首项「自动最新版本」（不写死版本号）。 */
     const currentVersion = (): string | null => selectedVersion;
@@ -938,8 +985,10 @@ async function main(): Promise<void> {
     function readStoredPanel(): PanelKey {
       try {
         const saved = window.localStorage.getItem(PANEL_KEY);
-        if (PANELS.some((item) => item.key === saved)) {
-          return saved as PanelKey;
+        // 旧版本这个分区叫 traynet（托盘与网络），改名后继续认旧值，别让用户停在默认分区。
+        const key = saved === "traynet" ? "settings" : saved;
+        if (PANELS.some((item) => item.key === key)) {
+          return key as PanelKey;
         }
       } catch {
         // 存储被禁用：用默认分区。
@@ -4971,7 +5020,12 @@ async function main(): Promise<void> {
       }
       // 运行环境：旧配置没有 runtime 字段就是 default（后端 fallback 也是这个值）。
       runtime = launch.runtime ?? { kind: "default" };
+      // WSL 总开关关着时不允许留 WSL 值（旧配置或手改可能带着）：退回 Windows 宿主。
+      if (!prefs.wslEnabled && runtime.kind === "wsl") {
+        runtime = { kind: "default" };
+      }
       syncRuntimePickers();
+      renderWslToggle();
       if (launch.mode.kind === "npx") {
         // 版本是唯一真源：候选还没读回来也先记着，loadRegistry 会按它把下拉选回去。
         selectedVersion = launch.mode.version ?? null;
@@ -4999,9 +5053,16 @@ async function main(): Promise<void> {
     // 运行环境候选与官方版本列表都提前读好，切到对应面板即可直接选。
     // 发行版列表先铺磁盘缓存（毫秒级），探测本身挪到后台——冷启动的 wsl.exe 要先把
     // 整个 WSL 子系统拉起来（实测 8 秒），不能让它挡住界面初始化与状态轮询。
-    await loadCachedDistros();
-    void loadDistros();
-    await loadRegistry();
+    // WSL 总开关关着时这两步整段跳过（既不读缓存也不探测）。
+    if (prefs.wslEnabled) {
+      await loadCachedDistros();
+      void loadDistros();
+    } else {
+      syncRuntimePickers();
+    }
+    // 官方版本列表也是后台读：`npm view` 实测约 3 秒，不能让它挡住首次挂载。
+    // 读取期间版本下拉显示「正在读取版本列表…」，读回来自己重铺。
+    void loadRegistry();
     // 先扫一次本机 npx 缓存：既给「已缓存」徽章，也决定「本机已经装过」那条提示要不要显示。
     await refreshCachedVersions();
     await refreshPortHint();

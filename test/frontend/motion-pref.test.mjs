@@ -63,8 +63,8 @@ function startPreview() {
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-/** 新开一页、停在「托盘与网络」分区，并把偏好预置成 `motion`（null=清掉，模拟从没存过）。 */
-async function openTraynet(browser, motion) {
+/** 新开一页、停在「设置」分区，并把偏好预置成 `motion`（null=清掉，模拟从没存过）。 */
+async function openSettings(browser, motion) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1240, height: 900 });
   await page.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
@@ -77,8 +77,8 @@ async function openTraynet(browser, motion) {
     motion,
   );
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForSelector('[data-panel-btn="traynet"]');
-  await page.click('[data-panel-btn="traynet"]');
+  await page.waitForSelector('[data-panel-btn="settings"]');
+  await page.click('[data-panel-btn="settings"]');
   await page.waitForSelector("#motion-toggle");
   await sleep(150); // 等首帧内联脚本与挂载都跑完、样式重算
   return page;
@@ -133,7 +133,7 @@ after(async () => {
 });
 
 test("默认开：没存过偏好时根元素没有 data-motion，开关 aria-checked=true", { skip: skipReason }, async () => {
-  const page = await openTraynet(browser, null);
+  const page = await openSettings(browser, null);
   try {
     const state = await readMotionState(page);
     assert.equal(state.attr, null, "默认不该往 <html> 写 data-motion");
@@ -144,7 +144,7 @@ test("默认开：没存过偏好时根元素没有 data-motion，开关 aria-ch
 });
 
 test("关掉后根元素属性落地：data-motion=off 并写进 localStorage", { skip: skipReason }, async () => {
-  const page = await openTraynet(browser, null);
+  const page = await openSettings(browser, null);
   try {
     await page.click("#motion-toggle");
     await page.waitForFunction(() => document.documentElement.getAttribute("data-motion") === "off", { timeout: 3000 });
@@ -158,7 +158,7 @@ test("关掉后根元素属性落地：data-motion=off 并写进 localStorage", 
 });
 
 test("重载仍关：整页重新加载后首帧就是关闭态", { skip: skipReason }, async () => {
-  const page = await openTraynet(browser, null);
+  const page = await openSettings(browser, null);
   try {
     await page.click("#motion-toggle");
     await page.waitForFunction(() => document.documentElement.getAttribute("data-motion") === "off", { timeout: 3000 });
@@ -176,7 +176,7 @@ test("重载仍关：整页重新加载后首帧就是关闭态", { skip: skipRe
 });
 
 test("关掉后抽查三处被中和：重启转圈停、计数弹跳停、过渡时长归零", { skip: skipReason }, async () => {
-  const page = await openTraynet(browser, "off");
+  const page = await openSettings(browser, "off");
   try {
     // 1) 重启的无限转圈：挂上 is-restarting（元素在 DOM 里），动画应为 none 而不是 1ms 死循环。
     const spin = await page.evaluate(() => {
@@ -206,7 +206,7 @@ test("关掉后抽查三处被中和：重启转圈停、计数弹跳停、过�
 });
 
 test("系统 prefers-reduced-motion: reduce 不影响本项目：动效照常", { skip: skipReason }, async () => {
-  const page = await openTraynet(browser, "on");
+  const page = await openSettings(browser, "on");
   try {
     await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
     // 停止态下主按钮是 .swap，悬停有抖动动画；系统减少动画开着也应照常出现。

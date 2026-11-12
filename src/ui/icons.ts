@@ -7,7 +7,7 @@ import type { PanelKey } from "./types";
 export const ICON_LAUNCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5 3 21l4.5-1.5" /><path d="M14 4c3.5-1 6 1.5 5 5-1.2 4.2-5.6 7.6-8.4 9.1L8 15.4C9.5 12.6 11.3 5.2 14 4Z" /><circle cx="14.6" cy="9.4" r="1.6" /></svg>`;
 export const ICON_ENV = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5" /><path d="M12 12v9" /></svg>`;
 export const ICON_INTEG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2.5" /><path d="m6.5 10 2.5 2.5L6.5 15" /><path d="M12 15.5h5" /></svg>`;
-export const ICON_TRAYNET = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="10" r="6.5" /><path d="M5.5 10h13" /><path d="M12 3.5a10.5 10.5 0 0 1 2.6 6.5 10.5 10.5 0 0 1-2.6 6.5 10.5 10.5 0 0 1-2.6-6.5A10.5 10.5 0 0 1 12 3.5z" /><path d="M4 19.5h4l1.2 2h5.6l1.2-2h4" /></svg>`;
+export const ICON_SETTINGS = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1" /><path d="M19.7 12a7.7 7.7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7.7 7.7 0 0 0-2-1.2l-.3-2.5h-4l-.3 2.5a7.7 7.7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5a7.7 7.7 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-1a7.7 7.7 0 0 0 2 1.2l.3 2.5h4l.3-2.5a7.7 7.7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z" /></svg>`;
 export const ICON_ABOUT = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" /></svg>`;
 /** 日志分区：方块里几行字——与「集成」的终端框区分开（那边有 > 与下划线）。 */
 export const ICON_LOG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M6.6 9.4h10.8" /><path d="M6.6 12.4h10.8" /><path d="M6.6 15.4h6" /></svg>`;
@@ -24,8 +24,8 @@ export const PANELS: ReadonlyArray<{ key: PanelKey; label: string; icon: string 
   { key: "launch", label: "启动方式", icon: ICON_LAUNCH },
   { key: "env", label: "环境/插件", icon: ICON_ENV },
   { key: "integ", label: "集成", icon: ICON_INTEG },
-  { key: "traynet", label: "托盘与网络", icon: ICON_TRAYNET },
   { key: "log", label: "日志", icon: ICON_LOG },
+  { key: "settings", label: "设置", icon: ICON_SETTINGS },
   { key: "about", label: "关于", icon: ICON_ABOUT },
 ];
 

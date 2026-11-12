@@ -161,15 +161,15 @@ test("切换分区后指示块换位：序号与位移都跟着选中项走", { 
     assert.equal(start.i, 0, "启动时指示块应停在第一个分区（启动方式）");
     assert.equal(start.transitionProperty, "transform", "指示块应只对 transform 做过渡（不整块淡入）");
 
-    // 托盘与网络是第 4 项（序号 3，从 0 起）。
-    await page.click('[data-panel-btn="traynet"]');
+    // 设置是第 5 项（序号 4，从 0 起：启动方式 / 环境 / 集成 / 日志 / 设置 / 关于）。
+    await page.click('[data-panel-btn="settings"]');
     await sleep(500); // 等过渡跑完（含回弹），读静止态
     const moved = await readIndicator(page);
-    assert.equal(moved.i, 3, "点第 4 项后序号应为 3");
+    assert.equal(moved.i, 4, "点第 5 项后序号应为 4");
     assert.ok(moved.step > 0, "应能量到两个分区按钮的间距");
     assert.ok(
-      Math.abs(moved.ty - moved.step * 3) < 0.6,
-      `指示块应滑到第 4 项的位置（期望 ${moved.step * 3}px，实测 ${moved.ty}px）`,
+      Math.abs(moved.ty - moved.step * 4) < 0.6,
+      `指示块应滑到第 5 项的位置（期望 ${moved.step * 4}px，实测 ${moved.ty}px）`,
     );
     assert.notEqual(moved.transitionDuration, "0s", "动效开着时位移应有过渡，不是硬跳");
   } finally {
@@ -186,10 +186,10 @@ test("快速连续点不同分区：指示块跟上，最终停在最后那个�
     await page.click('[data-panel-btn="log"]');
     await sleep(500);
     const state = await readIndicator(page);
-    assert.equal(state.i, 4, "最后点的是日志（序号 4）");
+    assert.equal(state.i, 3, "最后点的是日志（序号 3）");
     assert.ok(
-      Math.abs(state.ty - state.step * 4) < 0.6,
-      `指示块最终应停在第 5 项（期望 ${state.step * 4}px，实测 ${state.ty}px）`,
+      Math.abs(state.ty - state.step * 3) < 0.6,
+      `指示块最终应停在第 4 项（期望 ${state.step * 3}px，实测 ${state.ty}px）`,
     );
     // 选中态只留一块指示，按钮自身不再各自铺底色。
     // 先把指针挪开：全局 `button:hover` 会在点过之后留一层悬停底色，那是 #28 的悬停反馈，
@@ -209,9 +209,9 @@ test("快速连续点不同分区：指示块跟上，最终停在最后那个�
 test("内容区切换：新分区整块淡入、旧分区留在下面当底衬，大卡片自己不跑动画", { skip: skipReason }, async () => {
   const page = await openApp(browser, { panel: "launch" });
   try {
-    await page.click('[data-panel-btn="traynet"]');
+    await page.click('[data-panel-btn="settings"]');
     const entering = await page.evaluate(() => {
-      const panel = document.querySelector('.panel[data-panel="traynet"]');
+      const panel = document.querySelector('.panel[data-panel="settings"]');
       const card = panel?.querySelector(".main-card");
       const inner = card?.querySelector(":scope > *");
       if (!panel || !card || !inner) return null;
@@ -223,7 +223,7 @@ test("内容区切换：新分区整块淡入、旧分区留在下面当底衬�
         height: inner.getBoundingClientRect().height,
       };
     });
-    assert.ok(entering, "应能读到托盘与网络分区");
+    assert.ok(entering, "应能读到设置分区");
     assert.match(entering.className, /(^|\s)is-enter(\s|$)/, "切入的分区应挂上入场类");
     // 交叉淡化的粒度是「整个分区」：新块整块淡入，不做子项逐个错开（那会让画面里
     // 一块块轮流冒出来，反而不像「换了一页」）。卡里的内容不各自跑动画。
@@ -235,7 +235,7 @@ test("内容区切换：新分区整块淡入、旧分区留在下面当底衬�
     // 旧分区在过渡期间仍在 DOM 里当底衬（绝对定位、不吃点击），否则两块都淡会漏底色。
     const stack = await page.evaluate(() => {
       const old = document.querySelector('.panel[data-panel="launch"]');
-      const next = document.querySelector('.panel[data-panel="traynet"]');
+      const next = document.querySelector('.panel[data-panel="settings"]');
       const cs = old ? getComputedStyle(old) : null;
       return {
         oldLeaving: old?.classList.contains("is-leaving") ?? false,
@@ -255,7 +255,7 @@ test("内容区切换：新分区整块淡入、旧分区留在下面当底衬�
     await sleep(500);
     const settled = await page.evaluate(() => {
       const old = document.querySelector('.panel[data-panel="launch"]');
-      const next = document.querySelector('.panel[data-panel="traynet"]');
+      const next = document.querySelector('.panel[data-panel="settings"]');
       const card = next?.querySelector(".main-card");
       const inner = card?.querySelector(":scope > *");
       return {

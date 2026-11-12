@@ -145,6 +145,17 @@ export function buildHtml(info: AppInfo): string {
     <p class="hint">只看这里的设置，不跟随系统的「减少动画」偏好。</p>
   `;
 
+  // WSL 总开关：关掉后「运行环境」只留 Windows 宿主、启动时也不再探测发行版。
+  const wslFields = `
+    ${colHead("WSL")}
+    <div class="switch-row">
+      <span class="switch-label" id="wsl-toggle-label">使用 WSL 运行环境</span>
+      <button class="switch" type="button" role="switch" id="wsl-toggle" aria-checked="true" aria-labelledby="wsl-toggle-label"><span class="switch-knob"></span></button>
+    </div>
+    <p class="hint">开启后「运行环境」里可选 WSL 发行版；关闭则只用 Windows 宿主，启动时也不再探测发行版（省几秒）。</p>
+    <p id="wsl-error" class="error hidden"></p>
+  `;
+
   // 两条托盘设置（单击打开 / 释放界面内存）在「托盘设置」块里，说明直接写在控件下方。
   const trayFields = `
     ${colHead("托盘设置")}
@@ -454,16 +465,16 @@ export function buildHtml(info: AppInfo): string {
     ),
     panelSection("env", mainCard([cell(profilesBody), cell(pluginBody)])),
     panelSection("integ", mainCard([cell(cliBlockBody), cell(dshVersionsBody)])),
-    panelSection(
-      "traynet",
-      // 左列上下两张小卡（托盘设置 / 动效）、右列一张长卡（网络与代理，含测试连接）。
-      // 两列等宽：网络那边的说明长得多，宽窄不一控件就左右对不齐；等宽后两列的标题、
-      // 下拉框、说明都从同一条竖线起。左列两张卡的间距与外层卡片间距同一取值（--gap-card）。
-      mainCard([cardRow("1-1", cellColumn(trayFields, motionFields), cell(networkFieldsBody))]),
-    ),
     // 日志分区是唯一不走「每项一张小卡」的分区：标题与按钮直接在大卡上，
     // 正文单独一层，所以这里把 logBody 直接铺进主卡，不套 cell。
     panelSection("log", mainCard([logBody], "main-card-log")),
+    panelSection(
+      "settings",
+      // 左列上下三张小卡（WSL / 托盘设置 / 动效）、右列一张长卡（网络与代理，含测试连接）。
+      // 两列等宽：网络那边的说明长得多，宽窄不一控件就左右对不齐；等宽后两列的标题、
+      // 下拉框、说明都从同一条竖线起。左列卡间距与外层卡片间距同一取值（--gap-card）。
+      mainCard([cardRow("1-1", cellColumn(wslFields, trayFields, motionFields), cell(networkFieldsBody))]),
+    ),
     panelSection("about", mainCard([cell(aboutBody)])),
   ].join("\n");
 
