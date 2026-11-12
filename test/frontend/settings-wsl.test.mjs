@@ -224,3 +224,89 @@ test("在设置里重新打开 WSL：发行版选项回来", { skip: skipReason 
     await page.close();
   }
 });
+
+/** 展开运行环境下拉，点掉文字里带 `needle` 的那一项。 */
+async function chooseRuntime(page, needle) {
+  // 运行环境下拉在「启动方式」分区里；同一浏览器里 localStorage 记着上次的分区，
+  // 新页可能直接落在「设置」上，所以先切回去。
+  await page.click('[data-panel-btn="launch"]');
+  await sleep(250); // 等交叉淡化把启动方式分区交出来
+  await page.click("#npx-runtime-picker .picker-btn");
+  await page.evaluate((text) => {
+    const option = Array.from(document.querySelectorAll("#npx-runtime-picker .picker-option")).find((li) =>
+      (li.textContent ?? "").includes(text),
+    );
+    if (!option) throw new Error("没找到运行环境候选：" + text);
+    option.click();
+  }, needle);
+  await sleep(150);
+}
+
+test("存盘失败：开关与运行环境一起回滚，并把原因显示出来", { skip: skipReason }, async () => {
+  // rejectShellSave 让假后端的 save_shell_config 一律拒收，模拟「配置写不进去」。
+  const page = await openPage(browser, {
+    savedShell: shellPrefs(),
+    rejectShellSave: "代理地址没法下发到子进程",
+  });
+  try {
+    await waitRuntimeOption(page, "WSL - Ubuntu");
+    await chooseRuntime(page, "WSL - Ubuntu");
+    const picked = await page.evaluate(() => document.querySelector("#npx-runtime-picker .picker-label")?.textContent ?? "");
+    assert.ok(picked.includes("WSL - Ubuntu"), `运行环境应已切到发行版，实际「${picked}」`);
+
+    await openSettings(page);
+    await page.click("#wsl-toggle");
+    // 先等错误行出来（说明这次保存确实失败、回滚已经跑完），再断言终态。
+    await page.waitForFunction(() => !document.querySelector("#wsl-error")?.classList.contains("hidden"), {
+      timeout: 3000,
+    });
+
+    assert.equal(await wslChecked(page), "true", "存盘失败后开关应拨回「开」");
+    const label = await page.evaluate(() => document.querySelector("#npx-runtime-picker .picker-label")?.textContent ?? "");
+    assert.ok(
+      label.includes("WSL - Ubuntu"),
+      `存盘失败后运行环境也要回到原来的发行版，实际「${label}」`,
+    );
+    const errorText = await page.evaluate(() => document.querySelector("#wsl-error")?.textContent ?? "");
+    assert.ok(errorText.includes("没能保存"), `应说明没保存成功，实际「${errorText}」`);
+    assert.equal(
+      await page.evaluate(() => window.__MOCK_STATE__.lastSavedShell ?? null),
+      null,
+      "被拒收的配置不该落进保存记录",
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+test("关掉 WSL 会作废在途探测：重新打开先回到「读取中」而不是拿到旧结果", { skip: skipReason }, async () => {
+  const page = await openPage(browser, {
+    savedShell: shellPrefs(),
+    distrosCached: null,
+    distros: [{ distro: "Ubuntu", hasNode: true }],
+    distroProbeDelay: 2500,
+  });
+  try {
+    await openSettings(page);
+    // 探测还在路上就关掉开关。
+    await page.click("#wsl-toggle");
+    await page.waitForFunction(() => document.querySelector("#wsl-toggle")?.getAttribute("aria-checked") === "false", {
+      timeout: 3000,
+    });
+    // 等在途探测「跑完」——它的结果应当被丢弃，不该留在候选里。
+    await sleep(3000);
+
+    await page.click("#wsl-toggle");
+    await page.waitForFunction(() => document.querySelector("#wsl-toggle")?.getAttribute("aria-checked") === "true", {
+      timeout: 3000,
+    });
+    const justAfter = await runtimeOptions(page);
+    assert.ok(
+      justAfter.some((text) => text.includes("正在读取发行版列表")),
+      `在途结果应被丢弃：重新打开该回到读取中，实际 ${JSON.stringify(justAfter)}`,
+    );
+    await waitRuntimeOption(page, "WSL - Ubuntu");
+  } finally {
+    await page.close();
+  }
+});

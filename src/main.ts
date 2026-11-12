@@ -164,6 +164,8 @@ async function main(): Promise<void> {
     let runtime: LaunchRuntime = { kind: "default" };
     /** null = 还没读到；读取失败时也是 null，靠 distrosError 区分「加载中」与「失败」。 */
     let distroInfos: DistroInfo[] | null = null;
+    /** 发行版读取的世代号：关掉 WSL（或又发起一次读取）时推进一格，让在途结果自行丢弃。 */
+    let distroLoadSeq = 0;
     let distrosError: string | null = null;
     /** 官方版本列表：按运行环境分别读；Rust 侧有 10 分钟缓存，这里不再叠一层。 */
     let registry: RegistryInfo | null = null;
@@ -240,10 +242,22 @@ async function main(): Promise<void> {
       }
     }
 
-    function onRuntimeChange(value: string): void {
-      runtime = runtimeOf(value);
+    /**
+     * 换成另一个运行环境：改值、重铺下拉，并作废上一个环境的清单与「按环境」的缓存结论。
+     *
+     * `persist` 为真时顺手写盘（用户手动换环境）。WSL 总开关传假：它要「一次保存、
+     * 失败整体回滚」，中间不能夹一次已经成功的写盘，否则回滚后磁盘与界面会对不上。
+     */
+    function setRuntime(next: LaunchRuntime, persist: boolean): void {
+      const changed = runtimeValue(next) !== runtimeValue(runtime);
+      runtime = next;
       syncRuntimePickers();
-      void persistConfigQuiet();
+      if (persist) {
+        void persistConfigQuiet();
+      }
+      if (!changed) {
+        return;
+      }
       void refreshPortHint();
       void refreshBridgeState();
       // 先清掉上一个环境的清单，否则换发行版后到新清单回来之前，版本下拉里
@@ -256,6 +270,10 @@ async function main(): Promise<void> {
       // 提示说反（缓存过的环境切到没缓存的发行版，启动时看不出在下载）。
       resetCachedVersions();
       void loadRegistry();
+    }
+
+    function onRuntimeChange(value: string): void {
+      setRuntime(runtimeOf(value), true);
     }
 
     const npxRuntimePicker = new Picker("npx-runtime-picker", onRuntimeChange);
@@ -273,25 +291,33 @@ async function main(): Promise<void> {
     }
 
     async function applyWslEnabled(enabled: boolean): Promise<void> {
+      // 存盘失败要整体回滚，所以先记下这两样：开关本身与它连带改掉的运行环境。
+      const previous = { wslEnabled: prefs.wslEnabled, runtime };
       prefs = { ...prefs, wslEnabled: enabled };
       wslError.classList.add("hidden");
       renderWslToggle();
       // 关掉 WSL：当前选着发行版就退回 Windows 宿主，免得留下一个选不到的值。
+      // 这一步不单独写盘——保存统一走下面那一次，失败时能连同运行环境一起回滚。
       if (!enabled && runtime.kind === "wsl") {
-        onRuntimeChange(RUNTIME_DEFAULT);
+        setRuntime({ kind: "default" }, false);
       }
-      // 打开时才去读缓存并探测；关着的时候这些动作一次都不该发生。
       if (enabled) {
+        // 打开时才去读缓存并探测；关着的时候这些动作一次都不该发生。
         await loadCachedDistros();
         void loadDistros();
+      } else {
+        // 关掉时作废在途读取：已经发出去的 wsl.exe 拦不住，但它回来时对不上世代号，
+        // 不会再落进候选、也不会重铺下拉（免得关掉后还闪一下发行版）。
+        distroLoadSeq += 1;
       }
       syncRuntimePickers();
       const err = await persistConfigQuiet();
       if (err !== null) {
-        // 存盘失败要把开关拨回去：界面不能显示一个没存下来的值。
-        prefs = { ...prefs, wslEnabled: !enabled };
+        // 只回滚开关是不够的：运行环境已经被打回「默认」，界面显示「开」而实际不是，
+        // 用户原来选的发行版就这么丢了。两样一起拨回去，并把原因说清楚。
+        prefs = { ...prefs, wslEnabled: previous.wslEnabled };
         renderWslToggle();
-        syncRuntimePickers();
+        setRuntime(previous.runtime, false);
         wslError.textContent = `WSL 开关没能保存：${err}`;
         wslError.classList.remove("hidden");
       }
@@ -570,12 +596,20 @@ async function main(): Promise<void> {
      * 后台（见 [`loadDistros`]），没有缓存时照旧等后台结果。
      */
     async function loadCachedDistros(): Promise<void> {
+      const seq = ++distroLoadSeq;
       try {
         const cached = await invoke<DistroInfo[] | null>("wsl_distro_info_cached");
+        // 过期（这中间关掉了 WSL，或又发起了新一次读取）：这次结果不落地。
+        if (seq !== distroLoadSeq || !prefs.wslEnabled) {
+          return;
+        }
         if (cached !== null) {
           distroInfos = cached;
         }
       } catch (err) {
+        if (seq !== distroLoadSeq) {
+          return;
+        }
         // 缓存读不到只影响「先铺一下」，后台探测照旧；日志里留痕即可。
         console.error("读取 WSL 发行版缓存失败:", err);
       }
@@ -584,10 +618,18 @@ async function main(): Promise<void> {
 
     /** 后台重探一次发行版列表；失败时保留已铺出来的缓存，不把候选清空。 */
     async function loadDistros(): Promise<void> {
+      const seq = ++distroLoadSeq;
       try {
-        distroInfos = await invoke<DistroInfo[]>("wsl_distro_info");
+        const distros = await invoke<DistroInfo[]>("wsl_distro_info");
+        if (seq !== distroLoadSeq || !prefs.wslEnabled) {
+          return;
+        }
+        distroInfos = distros;
         distrosError = null;
       } catch (err) {
+        if (seq !== distroLoadSeq) {
+          return;
+        }
         // 探测失败（超时、发行版起不来）不清空已有候选：列表里那几条是上次真探测
         // 到的，比换成一句「读取发行版列表失败」对用户有用。没有缓存时才留占位。
         distrosError = String(err);
