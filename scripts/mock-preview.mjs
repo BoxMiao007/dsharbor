@@ -50,6 +50,13 @@ const state = {
     { distro: "Ubuntu", hasNode: true },
     { distro: "Debian", hasNode: false },
   ],
+  /** 上次探测到、落盘缓存的发行版（`wsl_distro_info_cached`）：null = 第一次启动没有缓存。
+      改成另一组列表可预览「先铺缓存、后台探测回来再换掉」的样子。 */
+  distrosCached: null,
+  /** 发行版探测的人工延时（毫秒）：验证「缓存铺出来之后界面不再等探测」。 */
+  distroProbeDelay: 0,
+  /** 让发行版探测失败（模拟 wsl.exe 超时）：验证失败时保留已铺出来的缓存。 */
+  distroProbeFails: false,
   /** 官方版本列表（`query_dsh_versions`）：改成 null 可预览读取失败 / 断网时的分支。 */
   registry: {
     // distTags.tags 是全量 dist-tag：版本下拉按它给每个版本挂 tag 徽章（标签名 → 版本号）。
@@ -228,6 +235,8 @@ const state = {
   /** 把插件清单这条命令改成读取失败：预览「骨架撤掉、只留失败提示」那条分支。 */
   pluginListFails: false,
   calls: {},
+  /** 最近一次「检查所有环境」带的是不是 force（true = 按钮强制重查，false = 启动走缓存）。 */
+  lastCheckAllForce: null,
 };
 
 const stub = `<script>
@@ -709,8 +718,11 @@ window.__mockUnimplemented = [];
     },
     // 「检查更新」按钮：真后端枚举所有环境、绕过会话缓存强制重查（同一包只查一次
     // 网络的去重在 Rust 侧）。预览只按环境各回一份假清单，形状照 ProfileUpdates。
-    plugin_updates_check_all: () => {
+    plugin_updates_check_all: (a) => {
       seen("plugin_updates_check_all");
+      // 记下这次是强制重查（按钮）还是走缓存（启动自动检查）：接缝测试据此断言
+      // 启动那次不重打网络。
+      S.lastCheckAllForce = !!(a && a.force);
       const rows = (S.profiles || []).map((profile) => ({
         profile: profile.name,
         items: (S.pluginUpdates && S.pluginUpdates[profile.name]) || [],
@@ -872,7 +884,23 @@ window.__mockUnimplemented = [];
         : settle();
     },
     // 预览里不再单独提供 list_wsl_distros：运行环境下拉走带 node/npm 标记的 wsl_distro_info。
-    wsl_distro_info: () => S.distros,
+    // 启动先铺上次探测的落盘缓存（真后端只读磁盘、不碰 wsl.exe；null = 第一次启动没有缓存）。
+    wsl_distro_info_cached: () => {
+      seen("wsl_distro_info_cached");
+      return S.distrosCached;
+    },
+    // 探测本身：真后端里首次要拉起整个 WSL 子系统（8 秒级），预览用延时模拟，
+    // 好检验「缓存铺出来之后界面不必等它」。S.distroProbeFails 可预览探测失败那条分支。
+    wsl_distro_info: async () => {
+      seen("wsl_distro_info");
+      if (S.distroProbeDelay > 0) {
+        await new Promise((done) => setTimeout(done, S.distroProbeDelay));
+      }
+      if (S.distroProbeFails) {
+        throw "探测 WSL 发行版 Ubuntu 的 Node.js 超时（20 秒）";
+      }
+      return S.distros;
+    },
     // 官方版本列表：S.registry 改成 null 就能预览「读取失败 + 刷新按钮转圈」。
     // 下载源记进 calls（键名形如 query_dsh_versions:official），预览时一眼能看出这次请求带的是哪个源。
     query_dsh_versions: (a) => {

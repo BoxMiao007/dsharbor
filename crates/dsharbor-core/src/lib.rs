@@ -18,6 +18,7 @@ pub mod overlay;
 pub mod patch_layer;
 pub mod path_shim;
 pub mod paths;
+pub mod plugin_check_cache;
 pub mod plugin_switch;
 pub mod plugin_update;
 pub mod prefs;

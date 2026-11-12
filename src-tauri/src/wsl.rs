@@ -3,21 +3,74 @@
 //! 注意：wsl.exe 的输出是 UTF-16LE（首条带 BOM），必须走 ConsoleDecoder，
 //! 否则界面上的发行版列表会全是乱码。
 
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use dsharbor_core::console::ConsoleDecoder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 界面下拉框要的一条：发行版名 + 里面能不能跑 `npx`。
 ///
 /// `has_node` 只用来在选项文字上标一句「（未检测到 Node.js）」提醒用户，
 /// 不阻止选择——用户可能正打算进发行版里装，或者只是想先把配置存下来。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DistroInfo {
     pub distro: String,
     pub has_node: bool,
+}
+
+/// 探测结果的落盘缓存文件名（放在壳的数据根目录，见 `app_data_root`）。
+///
+/// 为什么要缓存：探测要进每个发行版跑一次 `bash -lc`，首次会拉起整个 WSL 子系统
+/// （实测 8 秒）。启动时先用上次这份把下拉框铺出来，探测挪到后台再刷——否则
+/// 「运行环境」会一直卡在「正在读取发行版列表…」。
+pub const CACHE_FILE: &str = "wsl-distros.json";
+
+/// 缓存文件内容：探测结果 + 探测时刻（Unix 秒）。
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DistroCache {
+    fetched_at: u64,
+    distros: Vec<DistroInfo>,
+}
+
+/// 读上次探测到的发行版列表。
+///
+/// 没有缓存、读不懂、结构对不上都返回 `None`：缓存只负责先把下拉框铺出来，
+/// 读不到就照旧等后台探测，不该让启动失败。
+pub fn read_cache(path: &Path) -> Option<Vec<DistroInfo>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<DistroCache>(&text)
+        .ok()
+        .map(|cache| cache.distros)
+}
+
+/// 把这次探测结果落盘（尽力而为：写不进去只记日志，不影响这一次的下拉框）。
+///
+/// 走 `atomic::write_host`：壳被强杀时不能留下半截 JSON，否则下次启动读到坏缓存。
+pub fn write_cache(path: &Path, distros: &[DistroInfo]) {
+    let fetched_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.as_secs())
+        .unwrap_or(0);
+    let cache = DistroCache {
+        fetched_at,
+        distros: distros.to_vec(),
+    };
+    let Ok(text) = serde_json::to_string(&cache) else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(err) = crate::atomic::write_host(path, text.as_bytes()) {
+        eprintln!(
+            "[dsharbor] 写 WSL 发行版缓存失败（{}）：{err}",
+            path.display()
+        );
+    }
 }
 
 /// 探测 node/npm 的超时：首次调用要拉起整个 WSL 子系统（秒级），给足余量。
@@ -138,4 +191,71 @@ fn printenv(distro: &str, name: &str) -> Result<String, String> {
         return Err(format!("读取 WSL 发行版环境变量 {name} 失败（{distro}）"));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 本进程专用的临时目录（与其它模块的测试同一套做法）。
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("dsharbor-wsl-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn sample() -> Vec<DistroInfo> {
+        vec![
+            DistroInfo {
+                distro: "Ubuntu".to_string(),
+                has_node: true,
+            },
+            DistroInfo {
+                distro: "Debian".to_string(),
+                has_node: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn cache_round_trips_distro_names_and_node_flags() {
+        let root = scratch("roundtrip");
+        let path = root.join(CACHE_FILE);
+        write_cache(&path, &sample());
+        assert_eq!(read_cache(&path), Some(sample()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cache_is_written_as_camel_case_json_with_a_timestamp() {
+        // 缓存文件是壳自己的私有格式，但保持 camelCase 与界面上看到的一致，
+        // 出问题时能直接打开文件核对。
+        let root = scratch("shape");
+        let path = root.join(CACHE_FILE);
+        write_cache(&path, &sample());
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(value.get("fetchedAt").and_then(|v| v.as_u64()).is_some());
+        assert_eq!(value["distros"][0]["distro"], "Ubuntu");
+        assert_eq!(value["distros"][0]["hasNode"], true);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_or_broken_cache_reads_as_none() {
+        let root = scratch("missing");
+        let path = root.join(CACHE_FILE);
+        assert_eq!(read_cache(&path), None, "没有缓存时返回 None");
+
+        std::fs::write(&path, "{ 半截").unwrap();
+        assert_eq!(read_cache(&path), None, "坏 JSON 不该让启动失败");
+
+        std::fs::write(&path, r#"{"distros":[]}"#).unwrap();
+        assert_eq!(read_cache(&path), None, "缺字段的结构对不上，也当没有缓存");
+
+        std::fs::write(&path, r#"{"fetchedAt":1,"distros":[]}"#).unwrap();
+        assert_eq!(read_cache(&path), Some(Vec::new()), "空列表是合法缓存");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

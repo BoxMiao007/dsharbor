@@ -515,12 +515,34 @@ async function main(): Promise<void> {
       npxVersionPicker.relayout();
     }
 
+    /**
+     * 启动时先铺上次探测到的发行版列表（后端只读磁盘缓存，不碰 wsl.exe）。
+     *
+     * 冷启动的探测要 8 秒（首次要拉起整个 WSL 子系统），原来是启动时 `await` 的，
+     * 「运行环境」下拉框就一直卡在「正在读取发行版列表…」。现在先铺缓存、探测挪到
+     * 后台（见 [`loadDistros`]），没有缓存时照旧等后台结果。
+     */
+    async function loadCachedDistros(): Promise<void> {
+      try {
+        const cached = await invoke<DistroInfo[] | null>("wsl_distro_info_cached");
+        if (cached !== null) {
+          distroInfos = cached;
+        }
+      } catch (err) {
+        // 缓存读不到只影响「先铺一下」，后台探测照旧；日志里留痕即可。
+        console.error("读取 WSL 发行版缓存失败:", err);
+      }
+      syncRuntimePickers();
+    }
+
+    /** 后台重探一次发行版列表；失败时保留已铺出来的缓存，不把候选清空。 */
     async function loadDistros(): Promise<void> {
       try {
         distroInfos = await invoke<DistroInfo[]>("wsl_distro_info");
         distrosError = null;
       } catch (err) {
-        distroInfos = null;
+        // 探测失败（超时、发行版起不来）不清空已有候选：列表里那几条是上次真探测
+        // 到的，比换成一句「读取发行版列表失败」对用户有用。没有缓存时才留占位。
         distrosError = String(err);
         console.error("读取 WSL 发行版失败:", err);
       }
@@ -3893,7 +3915,7 @@ async function main(): Promise<void> {
     }
 
     /**
-     * 「检查更新」按钮：强制重查**所有环境**（后端枚举环境、绕过会话缓存真发网络）。
+     * 「检查更新」按钮：重查**所有环境**（后端枚举环境；按钮走强制重查，真发网络）。
      *
      * 某个环境读不到清单只算它自己失败，不牵连其余环境；各环境的结果分别落进
      * 自己的快照与环境卡微标，正在显示的那个环境同时刷新插件列表。跑完前插件卡
@@ -3902,6 +3924,9 @@ async function main(): Promise<void> {
      * `auto=true` 是启动时自动跑的那一次（见 [`autoCheckPluginUpdatesOnStartup`]）：
      * 行为一致，但不弹 toast、不落勾、失败也不往卡上写提示——它是背景动作，用户没点它；
      * 结果只写日志，免得每次离线启动都糊一条失败提示在脸上。
+     *
+     * 两者还差一个 `force`：启动那次不强制，后端 30 分钟内的落盘结论直接复用（重启
+     * 壳不再把十几个插件重查一遍）；用户点按钮才是强制真查。
      */
     async function checkAllPluginUpdates(auto = false): Promise<void> {
       if (pluginCheckBusy) {
@@ -3918,6 +3943,9 @@ async function main(): Promise<void> {
         const rows = await invoke<ProfileUpdates[]>("plugin_updates_check_all", {
           config: collectConfig(),
           source: prefs.downloadSource,
+          // 启动的自动检查走缓存（后端 30 分钟内查过的结论直接用），按钮才强制真查：
+          // 否则每开一次界面就要把十几个插件的 `npm view` 重发一遍。
+          force: !auto,
         });
         if (rows.length === 0) {
           // 一个环境都没有（例如环境清单还没读出来）：没什么可查的，别报成失败。
@@ -4114,7 +4142,9 @@ async function main(): Promise<void> {
 
     /** 启动时自动跑一次「检查所有环境」的更新检查（维护者要求每次启动查一遍）。
      *  静默：不弹 toast、不落勾、不写统一日志（只在控制台留调试信息）；跑完前若有 per-env
-     *  的进卡自动查会先让位（见 syncPluginPanel 里对 startupUpdateCheckPending 的判断），避免重复查。 */
+     *  的进卡自动查会先让位（见 syncPluginPanel 里对 startupUpdateCheckPending 的判断），避免重复查。
+     *  这次检查不强制：后端 30 分钟内的落盘结论直接复用，重启壳不必把十几个插件重查一遍
+     *  （用户点「检查更新」才强制真查，见 [`checkAllPluginUpdates`]）。 */
     async function autoCheckPluginUpdatesOnStartup(): Promise<void> {
       startupUpdateCheckPending = false;
       await checkAllPluginUpdates(true);
@@ -4967,7 +4997,10 @@ async function main(): Promise<void> {
 
     await loadSavedConfig();
     // 运行环境候选与官方版本列表都提前读好，切到对应面板即可直接选。
-    await loadDistros();
+    // 发行版列表先铺磁盘缓存（毫秒级），探测本身挪到后台——冷启动的 wsl.exe 要先把
+    // 整个 WSL 子系统拉起来（实测 8 秒），不能让它挡住界面初始化与状态轮询。
+    await loadCachedDistros();
+    void loadDistros();
     await loadRegistry();
     // 先扫一次本机 npx 缓存：既给「已缓存」徽章，也决定「本机已经装过」那条提示要不要显示。
     await refreshCachedVersions();

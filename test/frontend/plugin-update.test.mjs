@@ -278,12 +278,22 @@ test("启动即自动检查所有环境：环境卡各自亮出可更新数；�
     }));
     assert.equal(callsStart.all, 1, "启动应自动发一次「检查所有环境」的批量检查命令");
     assert.equal(callsStart.single, 0, "启动的 per-env 单环境自动查让位给批量检查，不再额外发");
+    assert.equal(
+      await page.evaluate(() => window.__MOCK_STATE__.lastCheckAllForce),
+      false,
+      "启动的自动检查不强制：后端 30 分钟内的落盘结论直接复用，重启壳不重打一遍网络",
+    );
 
     // 再点一次「检查更新」：仍是所有环境一次批量命令，各环境数字保持。
     await page.click("#btn-plugin-check-updates");
     await page.waitForFunction(
       () => (window.__MOCK_STATE__.calls["plugin_updates_check_all"] ?? 0) === 2,
       { timeout: 5000 },
+    );
+    assert.equal(
+      await page.evaluate(() => window.__MOCK_STATE__.lastCheckAllForce),
+      true,
+      "用户点「检查更新」要强制真查（绕过后端缓存）",
     );
 
     const after = await readEnvBadges(page);

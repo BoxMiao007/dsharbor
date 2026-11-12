@@ -859,13 +859,33 @@ async fn dsh_status(
 
 /// 枚举 WSL 发行版并标注里面有没有 node/npm（配置界面的运行环境下拉框）。
 ///
-/// async 命令：wsl.exe 首次要拉起整个 WSL 子系统（秒级），同步命令会让窗口发僵。
+/// async 命令：wsl.exe 首次要拉起整个 WSL 子系统（实测 8 秒），同步命令会让窗口发僵。
+/// 每次成功探测都把结果落盘：下次启动先用 [`wsl_distro_info_cached`] 那份铺下拉框，
+/// 探测挪到后台跑完再刷新（界面侧见 `loadCachedDistros` / `loadDistros`）。
 #[tauri::command]
-async fn wsl_distro_info() -> Result<Vec<wsl::DistroInfo>, String> {
+async fn wsl_distro_info(app: tauri::AppHandle) -> Result<Vec<wsl::DistroInfo>, String> {
     let distros = tauri::async_runtime::spawn_blocking(wsl::distro_info)
         .await
         .map_err(|err| format!("后台枚举 WSL 发行版失败：{err}"))??;
+    if let Ok(path) = wsl_cache_path(&app) {
+        wsl::write_cache(&path, &distros);
+    }
     Ok(distros)
+}
+
+/// 上次探测到的 WSL 发行版列表（只读磁盘缓存，不触发任何 wsl.exe）。
+///
+/// 启动时先调它把「运行环境」下拉框铺出来：冷启动的探测要 8 秒，不能让它挡住
+/// 界面初始化。没有缓存（第一次启动、缓存被删）时返回 `None`，界面照旧显示
+/// 「正在读取发行版列表…」等后台探测。
+#[tauri::command]
+fn wsl_distro_info_cached(app: tauri::AppHandle) -> Option<Vec<wsl::DistroInfo>> {
+    wsl::read_cache(&wsl_cache_path(&app).ok()?)
+}
+
+/// 发行版缓存的落盘位置（壳自己的数据根目录，与配置、备份同一处）。
+fn wsl_cache_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app_data_root(app)?.join(wsl::CACHE_FILE))
 }
 
 /// 查 npm 上的 DSH 版本清单（带 10 分钟缓存）。
@@ -1525,21 +1545,28 @@ async fn plugin_updates_list(
         .map_err(|err| format!("后台检查插件更新失败：{err}"))?
 }
 
-/// 强制重查**所有环境**的插件更新（「检查更新」按钮）。
+/// 检查**所有环境**的插件更新（启动自动检查与「检查更新」按钮共用）。
 ///
 /// 环境由后端自己枚举，逐个环境各回一份清单：某个环境读不到清单只算它自己失败，
 /// 不牵连其余环境。同一包在多个环境里的目标版本只查一次网络（见
 /// [`plugin_update::list_all`]）。
+///
+/// `force` 决定绕不绕过落盘缓存：启动时的自动检查传 false（30 分钟内的结论直接
+/// 复用，重启壳不重打一遍网络），用户点「检查更新」传 true（真查一次）。
 #[tauri::command]
 async fn plugin_updates_check_all(
     app: tauri::AppHandle,
     config: LaunchConfig,
     source: String,
+    force: Option<bool>,
 ) -> Result<Vec<plugin_update::ProfileUpdates>, String> {
     let source = parse_source_arg(source);
-    tauri::async_runtime::spawn_blocking(move || plugin_update::list_all(&app, &config, source))
-        .await
-        .map_err(|err| format!("后台检查所有环境的插件更新失败：{err}"))?
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        plugin_update::list_all(&app, &config, source, force)
+    })
+    .await
+    .map_err(|err| format!("后台检查所有环境的插件更新失败：{err}"))?
 }
 
 /// 更新某个环境里的第三方插件：`plugin` 有值更新单个，`None` 更新全部有更新的
@@ -2043,6 +2070,7 @@ pub fn run() {
             stop_dsh,
             dsh_status,
             wsl_distro_info,
+            wsl_distro_info_cached,
             query_dsh_versions,
             npx_cached_versions,
             open_dsh_window,

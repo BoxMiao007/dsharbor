@@ -2,13 +2,15 @@
 //!
 //! 纯规则（更新范围、包名校验、目标版本、新旧比较）在 `dsharbor_core::plugin_update`；
 //! 这里做系统相关的事：读各插件已装版本（宿主直读 / WSL 经 wsl.exe）、跑
-//! `npm view` 查目标版本（会话级缓存）、复用官方插件安装链路执行更新、装完回读
-//! 磁盘确认版本真的换了。
+//! `npm view` 查目标版本（带 TTL 的落盘缓存）、复用官方插件安装链路执行更新、装完
+//! 回读磁盘确认版本真的换了。
 
-use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dsharbor_core::launch::{self, LaunchConfig};
+use dsharbor_core::plugin_check_cache::{CheckCache, CheckValue};
 use dsharbor_core::plugin_switch;
 use dsharbor_core::plugin_switch::PluginItem;
 use dsharbor_core::plugin_update::{self, PackageSpec, PluginUpdateItem};
@@ -99,22 +101,76 @@ fn check_cache_key(runtime: &launch::Runtime, source: DownloadSource, name: &str
     format!("{base}:{name}")
 }
 
-/// 检查结果的会话缓存（键见 [`check_cache_key`]，值 = 目标版本或失败原因）。
+/// 检查结果的缓存（键见 [`check_cache_key`]）。
 ///
-/// 不设时间 TTL：同一插件本次使用会话内只在第一次进插件卡时查一次，之后由
-/// 「检查更新」按钮走 [`list_all`] 强制重查一遍；更新成功后把对应条目挪掉，让
-/// 收尾重查真的发网络、看到装好的新版本。
-type CheckCache = HashMap<String, Result<Option<String>, String>>;
-
+/// 内存里一份，同时落盘一份：启动时的自动检查先用上次查到的结论（30 分钟内算新鲜，
+/// 见 `dsharbor_core::plugin_check_cache::TTL`），只有过期或没查过的包才真发
+/// `npm view`——否则每次重启壳都要把十几个插件的网络查询重打一遍。界面上的
+/// 「检查更新」按钮走 `force` 强制真查，不受缓存影响。
+///
+/// 读盘只在第一次用到时做一次（[`ensure_cache_loaded`]），之后内存就是权威：反过
+/// 来先读盘会把本进程刚查到的新结论盖回旧文件。
 fn check_cache() -> &'static Mutex<CheckCache> {
     static CACHE: OnceLock<Mutex<CheckCache>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    CACHE.get_or_init(|| Mutex::new(CheckCache::default()))
 }
 
-/// 查一个插件在 registry 上的目标版本（会话缓存优先，`force` 绕过）。
+/// 缓存的落盘文件名（壳的数据根目录）。
+const CACHE_FILE: &str = "plugin-check-cache.json";
+
+fn cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::app_data_root(app)?.join(CACHE_FILE))
+}
+
+/// 当前 Unix 秒；取不到（系统时钟早于 1970）时按 0 处理，缓存仍算新鲜。
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|span| span.as_secs())
+        .unwrap_or(0)
+}
+
+/// 第一次用到检查缓存时，把上次启动落盘的结论读进内存（读不到就当空缓存）。
+fn ensure_cache_loaded(app: &tauri::AppHandle) {
+    static LOADED: OnceLock<()> = OnceLock::new();
+    LOADED.get_or_init(|| {
+        let Ok(path) = cache_path(app) else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let cache = CheckCache::parse(&text);
+        if let Ok(mut guard) = check_cache().lock() {
+            *guard = cache;
+        }
+    });
+}
+
+/// 把当前内存缓存写回磁盘：先清掉过期条目，再原子写。
 ///
-/// 失败也缓存：断网或私有包 404 不值得每个动作都重打一次网络；界面上的
-/// 「检查更新」随时可以强制重查。
+/// 尽力而为——写不进去只记日志。缓存只影响下次启动要不要重查，丢了也能照常工作。
+fn flush_disk_cache(app: &tauri::AppHandle) {
+    let Ok(path) = cache_path(app) else {
+        return;
+    };
+    let Ok(mut snapshot) = check_cache().lock().map(|guard| guard.clone()) else {
+        return;
+    };
+    snapshot.prune(now_secs());
+    let text = snapshot.to_json();
+    if let Err(err) = crate::atomic::write_host(&path, text.as_bytes()) {
+        eprintln!("[dsharbor] 写插件检查缓存失败（{}）：{err}", path.display());
+    }
+}
+
+/// 查一个插件在 registry 上的目标版本（新鲜缓存优先，`force` 绕过）。
+///
+/// 「新鲜」按 [`dsharbor_core::plugin_check_cache::TTL`] 判：刚启动的自动检查用它省网络；用户点
+/// 「检查更新」时 `force` 为真，绕开缓存真查一次。
+///
+/// 失败也缓存：断网或私有包 404 不值得每次动作都重打一次网络，界面上的「检查更新」
+/// 随时可以强制重查，过期后也会自然重查。
 fn query_latest(
     runtime: &launch::Runtime,
     source: DownloadSource,
@@ -123,16 +179,24 @@ fn query_latest(
     force: bool,
 ) -> Result<Option<String>, String> {
     let key = check_cache_key(runtime, source, name);
+    let now = now_secs();
     if !force {
         if let Ok(cache) = check_cache().lock() {
-            if let Some(hit) = cache.get(&key) {
-                return hit.clone();
+            if let Some(value) = cache.fresh(&key, now) {
+                return match value {
+                    CheckValue::Target { version } => Ok(version.clone()),
+                    CheckValue::Failed { error } => Err(error.clone()),
+                };
             }
         }
     }
     let result = query_registry(runtime, env, name);
+    let value = match &result {
+        Ok(version) => CheckValue::target(version.clone()),
+        Err(error) => CheckValue::failed(error.clone()),
+    };
     if let Ok(mut cache) = check_cache().lock() {
-        cache.insert(key, result.clone());
+        cache.put(key, value, now);
     }
     result
 }
@@ -157,7 +221,7 @@ fn query_registry(
     Ok(plugin_update::target_version(&info.versions))
 }
 
-/// 更新完把会话缓存里的旧目标版本挪掉：界面收尾重查会真发网络、看到装上的新版本。
+/// 更新完把缓存里的旧目标版本挪掉：界面收尾重查会真发网络、看到装上的新版本。
 fn forget_check(runtime: &launch::Runtime, source: DownloadSource, name: &str) {
     let key = check_cache_key(runtime, source, name);
     if let Ok(mut cache) = check_cache().lock() {
@@ -1120,11 +1184,11 @@ fn unique_names(scans: &[&[String]]) -> Vec<String> {
 
 /// 检查一个环境全部第三方插件的更新，按登记顺序返回一行一个结果。
 ///
-/// 会话级缓存优先：同一插件本次使用会话内只在第一次进插件卡时查一次；要拿最新
-/// 结论走 [`list_all`]（界面「检查更新」按钮）。官方内置骨架包与桥接插件不在
-/// 清单里（[`plugin_update::in_update_scope`]），整表读不到清单时直接报错。
-/// 查询最多 [`CHECK_CONCURRENCY`] 路并发跑（见该常量的安全论证），结果仍按
-/// 清单登记顺序返回。
+/// 新鲜缓存优先（TTL 见 `dsharbor_core::plugin_check_cache`）：同一插件 30 分钟内
+/// 只查一次网络；要拿最新结论走 [`list_all`]（界面「检查更新」按钮，强制重查）。
+/// 官方内置骨架包与桥接插件不在清单里（[`plugin_update::in_update_scope`]），整表
+/// 读不到清单时直接报错。查询最多 [`CHECK_CONCURRENCY`] 路并发跑（见该常量的安全
+/// 论证），结果仍按清单登记顺序返回。
 ///
 /// 扫描范围见 [`update_scan_names`]：**停用的插件也查**，断网或私有包失败按行记原因。
 pub fn list(
@@ -1133,6 +1197,7 @@ pub fn list(
     profile: &str,
     source: DownloadSource,
 ) -> Result<Vec<PluginUpdateItem>, String> {
+    ensure_cache_loaded(app);
     let target = Target::of(config);
     let dir = plugin::profile_dir(&target, profile)?;
     let names = scan_names(&target, &dir)
@@ -1141,7 +1206,10 @@ pub fn list(
     let prefs = crate::settings::load(app).prefs;
     let env = crate::proxy::child_env(&prefs, source);
     let runtime = launch::runtime_of(config);
-    Ok(check_names(&target, &dir, runtime, source, &env, &names))
+    let rows = check_names(&target, &dir, runtime, source, &env, &names);
+    // 这一轮查到的结论落盘：下次启动先用它们，不必重打一遍网络。
+    flush_disk_cache(app);
+    Ok(rows)
 }
 
 /// 一次「检查所有环境」里某个环境的结果（界面按环境分别落可更新数徽标）。
@@ -1159,20 +1227,25 @@ pub struct ProfileUpdates {
 /// 「检查所有环境」第一阶段（读名单）的结果：环境名 + 目录与要查的包名，或读不到的原因。
 type PreparedEnv = (String, Result<(String, Vec<String>), String>);
 
-/// 强制重查**所有环境**的插件更新（界面「检查更新」按钮发起的一次动作）。
+/// 检查**所有环境**的插件更新（启动自动检查与界面「检查更新」按钮共用）。
 ///
 /// 与 [`list`] 的差别有两点：
 ///  1. 环境由后端自己枚举（界面看到的那份清单可能刚变过），逐个环境各出一行
 ///     结果；某个环境读不到清单只算它自己失败，不牵连其余环境；
-///  2. 目标版本与环境无关，所以先对所有环境去重后的包名**各强制查一次**并写进
-///     会话缓存，再逐环境装配行。否则 N 个环境会把同一批 `npm view` 重复发 N
-///     遍——十几个插件乘几个环境，界面要空转明显更久。这也是会话缓存键不含
-///     环境名的同一前提（见 [`check_cache_key`]）。
+///  2. 目标版本与环境无关，所以先对所有环境去重后的包名**各查一次**并写进缓存，
+///     再逐环境装配行。否则 N 个环境会把同一批 `npm view` 重复发 N 遍——十几个
+///     插件乘几个环境，界面要空转明显更久。这也是缓存键不含环境名的同一前提
+///     （见 [`check_cache_key`]）。
+///
+/// `force` 决定第二阶段要不要绕过缓存：启动时的自动检查传 `false`（30 分钟内的
+/// 结论直接复用，重启壳不重打网络），用户点「检查更新」传 `true`（真查一遍）。
 pub fn list_all(
     app: &tauri::AppHandle,
     config: &LaunchConfig,
     source: DownloadSource,
+    force: bool,
 ) -> Result<Vec<ProfileUpdates>, String> {
+    ensure_cache_loaded(app);
     let listing = plugin::list_profiles(config)?;
     if !listing.supported {
         return Ok(Vec::new());
@@ -1199,17 +1272,18 @@ pub fn list_all(
     let prefs = crate::settings::load(app).prefs;
     let env = crate::proxy::child_env(&prefs, source);
     let runtime = launch::runtime_of(config);
-    // 第二阶段：所有环境去重后的包名各强制查一次，结果写进会话缓存。
+    // 第二阶段：所有环境去重后的包名各查一次（`force` 为假时新鲜缓存直接命中），
+    // 结果写进缓存。
     let lists: Vec<&[String]> = prepared
         .iter()
         .filter_map(|(_, scan)| scan.as_ref().ok().map(|(_, names)| names.as_slice()))
         .collect();
     let fresh = unique_names(&lists);
     run_concurrently(&fresh, |name| {
-        let _ = query_latest(runtime, source, &env, name, true);
+        let _ = query_latest(runtime, source, &env, name, force);
     });
     // 第三阶段：逐环境装配（读已装版本 + 命中刚写好的缓存），顺序照环境枚举顺序。
-    Ok(prepared
+    let rows: Vec<ProfileUpdates> = prepared
         .into_iter()
         .map(|(profile, scan)| match scan {
             Ok((dir, names)) => ProfileUpdates {
@@ -1223,7 +1297,10 @@ pub fn list_all(
                 error: Some(error),
             },
         })
-        .collect())
+        .collect();
+    // 这一轮查到的结论落盘：下次启动先用它们，不必重打一遍网络。
+    flush_disk_cache(app);
+    Ok(rows)
 }
 
 #[cfg(test)]
