@@ -29,6 +29,9 @@ pub struct DistroInfo {
 pub const CACHE_FILE: &str = "wsl-distros.json";
 
 /// 缓存文件内容：探测结果 + 探测时刻（Unix 秒）。
+///
+/// 时刻只用于排查「这份候选是不是太旧」，界面不做 TTL 判断——这里的策略是
+/// stale-while-revalidate：有缓存就先铺出来，后台探测回来即覆盖。
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DistroCache {
